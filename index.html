@@ -37,7 +37,7 @@
       crs: crs,
       minZoom: 2,
       maxZoom: 8
-    }).setView([39.5, -98.35], 4);
+    });
 
     // ----------------------
     // Layers
@@ -60,6 +60,9 @@
     // CONUS bounds in meters (EPSG:2163)
     var CONUS_sw = [-2360000, -2200000];
     var CONUS_ne = [2360000, 1900000];
+
+    // Zoom map to CONUS
+    map.fitBounds([ [CONUS_sw[1], CONUS_sw[0]], [CONUS_ne[1], CONUS_ne[0]] ]);
 
     // Optional background rectangle for visual reference
     L.rectangle([ [CONUS_sw[1], CONUS_sw[0]], [CONUS_ne[1], CONUS_ne[0]] ], {
