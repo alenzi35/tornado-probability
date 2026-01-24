@@ -26,23 +26,18 @@
 
   <script>
     // ----------------------
-    // Define EPSG:2163 CRS
+    // EPSG:2163 CRS
     var crs = new L.Proj.CRS('EPSG:2163',
       '+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +units=m +no_defs',
       { resolutions: [8192,4096,2048,1024,512,256,128,64,32,16,8,4,2,1,0.5] }
     );
 
-    // Initialize map with EPSG:2163 CRS
+    // Initialize map
     var map = L.map('map', {
       crs: crs,
       minZoom: 2,
       maxZoom: 8
     }).setView([39.5, -98.35], 4);
-
-    // Add OpenStreetMap tiles (Web Mercator)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
 
     // ----------------------
     // Layers
@@ -50,11 +45,8 @@
     var normalLayer = L.layerGroup();
 
     // ----------------------
-    // Placeholder probability and color functions
-    function randomProb() {
-      return (Math.random() * 0.002).toFixed(5);
-    }
-
+    // Placeholder probability and color
+    function randomProb() { return (Math.random() * 0.002).toFixed(5); }
     function getColor(prob) {
       var p = parseFloat(prob);
       if (p > 0.0015) return '#800026';
@@ -65,17 +57,23 @@
     }
 
     // ----------------------
-    // CONUS approximate bounds in meters (EPSG:2163)
-    // These are approximate coordinates for SW/NE corners of CONUS
-    var CONUS_sw = [-2360000, -2200000]; // x, y in meters
+    // CONUS bounds in meters (EPSG:2163)
+    var CONUS_sw = [-2360000, -2200000];
     var CONUS_ne = [2360000, 1900000];
 
+    // Optional background rectangle for visual reference
+    L.rectangle([ [CONUS_sw[1], CONUS_sw[0]], [CONUS_ne[1], CONUS_ne[0]] ], {
+      color: "#999",
+      weight: 0,
+      fillOpacity: 0.05
+    }).addTo(map);
+
     // ----------------------
-    // Draw aggregate 130km cells
-    var aggSize = 130000; // 130 km in meters
+    // Draw aggregate 130 km cells
+    var aggSize = 130000; // in meters
     for (var x = CONUS_sw[0]; x < CONUS_ne[0]; x += aggSize) {
       for (var y = CONUS_sw[1]; y < CONUS_ne[1]; y += aggSize) {
-        var bounds = [[y, x], [y + aggSize, x + aggSize]]; // [southWest, northEast]
+        var bounds = [[y, x], [y + aggSize, x + aggSize]];
         L.rectangle(bounds, {color: "#0000FF", weight: 1, fillOpacity: 0.2})
           .addTo(aggregateLayer)
           .on('click', function(e) {
@@ -86,7 +84,7 @@
     }
 
     // ----------------------
-    // Draw normal 13km cells inside aggregate
+    // Draw normal 13 km cells inside aggregate
     function drawNormalCells(aggregateBounds) {
       normalLayer.clearLayers();
       var x1 = aggregateBounds.getWest();
@@ -94,7 +92,7 @@
       var x2 = aggregateBounds.getEast();
       var y2 = aggregateBounds.getNorth();
 
-      var cellSize = 13000; // 13 km in meters
+      var cellSize = 13000; // 13 km
 
       for (var xi = x1; xi < x2; xi += cellSize) {
         for (var yi = y1; yi < y2; yi += cellSize) {
