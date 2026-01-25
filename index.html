@@ -5,60 +5,110 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
   <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #f4f4f4;
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+    #map { height: 600px; margin: 20px; }
+    h1, p { text-align: center; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Tornado Probability Project</h1>
+  <p>If you can read this, GitHub Pages is working.</p>
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // ----------------------
+    // CONUS bounds
+    var CONUS_bounds = [[24.5, -125], [49.5, -66.5]];
+
+    // Initialize map
+    var map = L.map('map', {
+        maxBounds: CONUS_bounds,
+        maxBoundsViscosity: 1.0,
+        minZoom: 4,
+        maxZoom: 8
+    }).setView([39.5, -98.35], 4);
+
+    // Add OpenStreetMap tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // ----------------------
+    // Layers
+    var aggregateLayer = L.layerGroup().addTo(map);
+    var normalLayer = L.layerGroup();
+
+    // ----------------------
+    // Helper: random probability
+    function randomProb() {
+      return (Math.random() * 0.002).toFixed(5); // placeholder probability
     }
 
-    h1 {
-      text-align: center;
-      margin: 10px 0;
+    // Helper: color based on probability
+    function getColor(prob) {
+      var p = parseFloat(prob);
+      if (p > 0.0015) return '#800026';
+      else if (p > 0.001) return '#BD0026';
+      else if (p > 0.0005) return '#E31A1C';
+      else if (p > 0.0002) return '#FC4E2A';
+      else return '#FFEDA0';
     }
 
-    #map {
-      height: 650px;
-      margin: 10px;
-      border-radius: 8px;
+    // ----------------------
+    // Draw aggregate 130km cells
+    var latStep = 1.18; // ~130km in degrees latitude
+    var lngStep = 1.94; // ~130km in degrees longitude
+
+    for (var lat = 24.5; lat < 49.5; lat += latStep) {
+      for (var lng = -125; lng < -66.5; lng += lngStep) {
+        var bounds = [[lat, lng], [lat + latStep, lng + lngStep]];
+        L.rectangle(bounds, {color: "#0000FF", weight: 1, fillOpacity: 0.2})
+          .addTo(aggregateLayer)
+          .on('click', function(e) {
+            aggregateLayer.clearLayers(); // hide aggregates
+            drawNormalCells(e.target.getBounds());
+          });
+      }
     }
 
-    .control-panel {
-      position: absolute;
-      top: 90px;
-      left: 20px;
-      z-index: 1000;
-      background: white;
-      padding: 10px;
-      border-radius: 6px;
-      box-shadow: 0 0 6px rgba(0,0,0,0.3);
-      font-size: 14px;
+    // ----------------------
+    // Draw normal 13km cells inside an aggregate
+    function drawNormalCells(aggregateBounds) {
+      normalLayer.clearLayers(); // clear previous normal cells
+      var lat1 = aggregateBounds.getSouthWest().lat;
+      var lng1 = aggregateBounds.getSouthWest().lng;
+      var lat2 = aggregateBounds.getNorthEast().lat;
+      var lng2 = aggregateBounds.getNorthEast().lng;
+
+      var latStepSmall = (lat2 - lat1) / 10;
+      var lngStepSmall = (lng2 - lng1) / 10;
+
+      for (var i = 0; i < 10; i++) {
+        for (var j = 0; j < 10; j++) {
+          var cellBounds = [
+            [lat1 + i*latStepSmall, lng1 + j*lngStepSmall],
+            [lat1 + (i+1)*latStepSmall, lng1 + (j+1)*lngStepSmall]
+          ];
+          var prob = randomProb();
+          L.rectangle(cellBounds, {
+            fillColor: getColor(prob),
+            color: "#000",
+            weight: 0.5,
+            fillOpacity: 0.7
+          }).bindPopup(`Probability: ${prob}`).addTo(normalLayer);
+        }
+      }
+      normalLayer.addTo(map);
     }
 
-    .control-panel button {
-      margin: 4px 0;
-      width: 100%;
-      cursor: pointer;
-      height: 30px;           /* match Leaflet zoom buttons */
-      line-height: 30px;
-    }
-
-    #backBtn {
-      margin-top: 6px;
-      display: none;
-    }
-
-    /* VALID TIME BUTTON */
-    #validTime {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 30px;           /* match Leaflet zoom buttons */
-      line-height: 30px;
-      font-size: 14px;
-      font-weight: bold;
+  </script>
+</body>
+</html>
       text-align: center;
       background: white;
       border: 1px solid #ccc;
