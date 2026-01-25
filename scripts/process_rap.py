@@ -3,7 +3,6 @@ import json
 from datetime import datetime, timedelta
 import numpy as np
 import xarray as xr
-import cfgrib
 import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
@@ -14,15 +13,14 @@ from botocore.client import Config
 BUCKET = "noaa-rap-pds"
 DATA_DIR = "data"
 FORECAST_OFFSET_HOURS = 2  # RAP init = target - 2h
-
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Logistic regression coefficients (replace with your real ones)
+# Logistic regression coefficients for 1-hour tornado probability
 COEFS = {
-    "cape": 0.0005,       # placeholder
-    "cin": -0.0003,       # placeholder
-    "srh": 0.0012,        # placeholder
-    "intercept": -4.0     # placeholder
+    "intercept": -1.5686,
+    "cape": 2.88592370e-03,
+    "cin": 2.38728498e-05,
+    "srh": 8.85192696e-03
 }
 
 # ----------------------------
@@ -53,55 +51,44 @@ s3.download_file(BUCKET, s3_key, local_file)
 print("Downloaded RAP file successfully")
 
 # ----------------------------
-# FIND VARIABLES AUTOMATICALLY
+# OPEN GRIB VARIABLES AT CORRECT LEVELS
 # ----------------------------
-grib_vars = cfgrib.open_file(local_file).variables
-print("Available GRIB variables:")
-for k in grib_vars.keys():
-    print(k)
+# CAPE 0-90 mb
+ds_cape = xr.open_dataset(local_file, engine="cfgrib", backend_kwargs={
+    "filter_by_keys": {"shortName": "cape"},
+    "indexpath": ""
+})
+cape = ds_cape.isel(pressure_level=0).values  # 0–90 mb
 
-# Function to pick a variable containing certain keywords
-def find_var(keywords):
-    for k in grib_vars.keys():
-        for kw in keywords:
-            if kw.lower() in k.lower():
-                return k
-    raise ValueError(f"No variable found for keywords {keywords}")
+# CIN 0-90 mb
+ds_cin = xr.open_dataset(local_file, engine="cfgrib", backend_kwargs={
+    "filter_by_keys": {"shortName": "cin"},
+    "indexpath": ""
+})
+cin = ds_cin.isel(pressure_level=0).values  # 0–90 mb
 
-cape_var = find_var(["cape", "0to90"])     # 0–90mb CAPE
-cin_var  = find_var(["cin", "0to90"])      # 0–90mb CIN
-srh_var  = find_var(["srh", "0to1"])      # 0–1km SRH
-
-print(f"Using variables: CAPE={cape_var}, CIN={cin_var}, SRH={srh_var}")
+# SRH 0-1 km
+ds_srh = xr.open_dataset(local_file, engine="cfgrib", backend_kwargs={
+    "filter_by_keys": {"shortName": "hlcy"},
+    "indexpath": ""
+})
+srh = ds_srh.isel(height_level=0).values  # 0–1 km
 
 # ----------------------------
-# EXTRACT VARIABLES
+# FLATTEN GRIDS
 # ----------------------------
-def extract_var(var_name):
-    ds = xr.open_dataset(
-        local_file,
-        engine="cfgrib",
-        backend_kwargs={"filter_by_keys": {"shortName": var_name}}
-    )
-    return ds[list(ds.data_vars)[0]].values
-
-cape = extract_var(cape_var)
-cin  = extract_var(cin_var)
-srh  = extract_var(srh_var)
-
-# Flatten arrays
 cape_flat = cape.flatten()
-cin_flat  = cin.flatten()
-srh_flat  = srh.flatten()
+cin_flat = cin.flatten()
+srh_flat = srh.flatten()
 
 # ----------------------------
 # LOGISTIC REGRESSION
 # ----------------------------
 def logistic_prob(cape, cin, srh):
-    z = (COEFS["cape"] * cape +
+    z = (COEFS["intercept"] +
+         COEFS["cape"] * cape +
          COEFS["cin"] * cin +
-         COEFS["srh"] * srh +
-         COEFS["intercept"])
+         COEFS["srh"] * srh)
     p = 1 / (1 + np.exp(-z))
     return np.clip(p, 0, 1)
 
