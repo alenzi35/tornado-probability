@@ -7,6 +7,13 @@ import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
 
+import cfgrib
+
+all_vars = cfgrib.open_file(local_file).variables
+print("Available GRIB variables (keys):")
+for k in all_vars.keys():
+    print(k)
+
 # ----------------------------
 # CONFIG
 # ----------------------------
