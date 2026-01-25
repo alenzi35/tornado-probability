@@ -3,16 +3,10 @@ import json
 from datetime import datetime, timedelta
 import numpy as np
 import xarray as xr
+import cfgrib
 import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
-
-import cfgrib
-
-all_vars = cfgrib.open_file(local_file).variables
-print("Available GRIB variables (keys):")
-for k in all_vars.keys():
-    print(k)
 
 # ----------------------------
 # CONFIG
@@ -59,25 +53,46 @@ s3.download_file(BUCKET, s3_key, local_file)
 print("Downloaded RAP file successfully")
 
 # ----------------------------
-# FUNCTION TO EXTRACT VARIABLE
+# FIND VARIABLES AUTOMATICALLY
 # ----------------------------
-def extract_var(var_shortname):
+grib_vars = cfgrib.open_file(local_file).variables
+print("Available GRIB variables:")
+for k in grib_vars.keys():
+    print(k)
+
+# Function to pick a variable containing certain keywords
+def find_var(keywords):
+    for k in grib_vars.keys():
+        for kw in keywords:
+            if kw.lower() in k.lower():
+                return k
+    raise ValueError(f"No variable found for keywords {keywords}")
+
+cape_var = find_var(["cape", "0to90"])     # 0–90mb CAPE
+cin_var  = find_var(["cin", "0to90"])      # 0–90mb CIN
+srh_var  = find_var(["srh", "0to1"])      # 0–1km SRH
+
+print(f"Using variables: CAPE={cape_var}, CIN={cin_var}, SRH={srh_var}")
+
+# ----------------------------
+# EXTRACT VARIABLES
+# ----------------------------
+def extract_var(var_name):
     ds = xr.open_dataset(
         local_file,
         engine="cfgrib",
-        backend_kwargs={"filter_by_keys": {"shortName": var_shortname}}
+        backend_kwargs={"filter_by_keys": {"shortName": var_name}}
     )
-    return ds[list(ds.data_vars)[0]].values  # return numpy array
+    return ds[list(ds.data_vars)[0]].values
 
-# Extract CAPE, CIN, SRH
-cape = extract_var("cape0to90mb")  # replace with exact RAP shortName if different
-cin = extract_var("cin0to90mb")
-srh = extract_var("srh0to1km")
+cape = extract_var(cape_var)
+cin  = extract_var(cin_var)
+srh  = extract_var(srh_var)
 
-# Flatten arrays to 1D for probability calculation
+# Flatten arrays
 cape_flat = cape.flatten()
-cin_flat = cin.flatten()
-srh_flat = srh.flatten()
+cin_flat  = cin.flatten()
+srh_flat  = srh.flatten()
 
 # ----------------------------
 # LOGISTIC REGRESSION
@@ -88,32 +103,27 @@ def logistic_prob(cape, cin, srh):
          COEFS["srh"] * srh +
          COEFS["intercept"])
     p = 1 / (1 + np.exp(-z))
-    return np.clip(p, 0, 1)  # probability between 0 and 1
+    return np.clip(p, 0, 1)
 
 probabilities = logistic_prob(cape_flat, cin_flat, srh_flat)
-
-# Reshape back to grid
-grid_shape = cape.shape
-prob_grid = probabilities.reshape(grid_shape)
+prob_grid = probabilities.reshape(cape.shape)
 
 # ----------------------------
-# AGGREGATE CELLS (example 1°x2°)
+# AGGREGATE CELLS (1°x2° example)
 # ----------------------------
 lat_step = 1.18
 lng_step = 1.94
-
 lat_min, lat_max = 24.5, 49.5
 lng_min, lng_max = -125, -66.5
 
 aggregates = []
+grid_shape = cape.shape
 
 lats = np.arange(lat_min, lat_max, lat_step)
 lngs = np.arange(lng_min, lng_max, lng_step)
 
-# Simple nearest-neighbor aggregation
 for lat in lats:
     for lng in lngs:
-        # Find indices corresponding to this cell
         lat_idx = int((lat - lat_min) / (lat_max - lat_min) * grid_shape[0])
         lng_idx = int((lng - lng_min) / (lng_max - lng_min) * grid_shape[1])
         prob = prob_grid[lat_idx, lng_idx]
