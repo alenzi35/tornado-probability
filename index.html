@@ -37,41 +37,35 @@
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
   // ------------------------------------
-  // Expanded CONUS bounds (~8% padding)
   var CONUS_bounds = [[22, -128], [51.5, -64]];
 
   var map = L.map('map', {
     maxBounds: CONUS_bounds,
     maxBoundsViscosity: 0.8,
     minZoom: 4,
-    maxZoom: 8
+    maxZoom: 18   // 🔧 RESTORED STREET-LEVEL ZOOM
   }).setView([39.5, -98.35], 4);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map);
 
-  // ------------------------------------
   var aggregateLayer = L.layerGroup().addTo(map);
   var normalLayer = L.layerGroup();
-
   var backBtn = document.getElementById("backBtn");
 
-  // ------------------------------------
   function randomProb() {
     return Math.random() * 0.002;
   }
 
-  function getColor(p) {
-    if (p > 0.01) return '#800026';
-    if (p > 0.005) return '#BD0026';
-    if (p > 0.002) return '#E31A1C';
-    if (p > 0.001) return '#FC4E2A';
+  function getColorNorm(x) {
+    if (x > 0.8) return '#800026';
+    if (x > 0.6) return '#BD0026';
+    if (x > 0.4) return '#E31A1C';
+    if (x > 0.2) return '#FC4E2A';
     return '#FFEDA0';
   }
 
-  // ------------------------------------
-  // Draw aggregate cells
   var latStep = 1.18;
   var lngStep = 1.94;
 
@@ -80,61 +74,75 @@
     normalLayer.clearLayers();
     backBtn.style.display = "none";
 
-    for (var lat = 24.5; lat < 49.5; lat += latStep) {
-      for (var lng = -125; lng < -66.5; lng += lngStep) {
+    let aggregates = [];
 
-        // Remove far-east ocean-only column
-        if (lng > -70) continue;
+    // ---- First pass: compute probabilities
+    for (let lat = 24.5; lat < 49.5; lat += latStep) {
+      for (let lng = -125; lng < -66.5; lng += lngStep) {
 
-        let bounds = [[lat, lng], [lat + latStep, lng + lngStep]];
+        // 🔧 FIXED east cutoff (only remove 1 column)
+        if (lng > -68) continue;
 
-        // Precompute aggregate probability
         let probs = [];
         for (let i = 0; i < 100; i++) probs.push(randomProb());
 
-        let aggProb = 1 - probs.reduce((acc, p) => acc * (1 - p), 1);
+        let aggProb = 1 - probs.reduce((a, p) => a * (1 - p), 1);
 
-        let rect = L.rectangle(bounds, {
-          fillColor: getColor(aggProb),
-          color: "#333",
-          weight: 1,
-          fillOpacity: 0.6
-        }).addTo(aggregateLayer);
-
-        rect.bindPopup(
-          `Aggregate Probability:<br><b>${aggProb.toFixed(4)}</b><br><small>Double-click to drill down</small>`
-        );
-
-        rect.on('dblclick', function(e) {
-          aggregateLayer.clearLayers();
-          drawNormalCells(e.target.getBounds());
-          backBtn.style.display = "block";
-        });
+        aggregates.push({ lat, lng, aggProb });
       }
     }
+
+    let minP = Math.min(...aggregates.map(a => a.aggProb));
+    let maxP = Math.max(...aggregates.map(a => a.aggProb));
+
+    // ---- Second pass: draw
+    aggregates.forEach(a => {
+      let norm = (a.aggProb - minP) / (maxP - minP + 1e-9);
+
+      let bounds = [
+        [a.lat, a.lng],
+        [a.lat + latStep, a.lng + lngStep]
+      ];
+
+      let rect = L.rectangle(bounds, {
+        fillColor: getColorNorm(norm),
+        color: "#333",
+        weight: 1,
+        fillOpacity: 0.65
+      }).addTo(aggregateLayer);
+
+      rect.bindPopup(
+        `Aggregate Probability:<br><b>${a.aggProb.toFixed(4)}</b><br><small>Double-click to drill down</small>`
+      );
+
+      rect.on('dblclick', function(e) {
+        aggregateLayer.clearLayers();
+        drawNormalCells(e.target.getBounds());
+        backBtn.style.display = "block";
+      });
+    });
   }
 
-  // ------------------------------------
-  function drawNormalCells(aggregateBounds) {
+  function drawNormalCells(bounds) {
     normalLayer.clearLayers();
 
-    var sw = aggregateBounds.getSouthWest();
-    var ne = aggregateBounds.getNorthEast();
+    let sw = bounds.getSouthWest();
+    let ne = bounds.getNorthEast();
 
-    var latStepSmall = (ne.lat - sw.lat) / 10;
-    var lngStepSmall = (ne.lng - sw.lng) / 10;
+    let latS = (ne.lat - sw.lat) / 10;
+    let lngS = (ne.lng - sw.lng) / 10;
 
-    for (var i = 0; i < 10; i++) {
-      for (var j = 0; j < 10; j++) {
-        var bounds = [
-          [sw.lat + i * latStepSmall, sw.lng + j * lngStepSmall],
-          [sw.lat + (i + 1) * latStepSmall, sw.lng + (j + 1) * lngStepSmall]
+    for (let i = 0; i < 10; i++) {
+      for (let j = 0; j < 10; j++) {
+        let cell = [
+          [sw.lat + i * latS, sw.lng + j * lngS],
+          [sw.lat + (i + 1) * latS, sw.lng + (j + 1) * lngS]
         ];
 
         let p = randomProb();
 
-        L.rectangle(bounds, {
-          fillColor: getColor(p),
+        L.rectangle(cell, {
+          fillColor: getColorNorm(p / 0.002),
           color: "#000",
           weight: 0.4,
           fillOpacity: 0.8
@@ -144,15 +152,11 @@
     }
 
     normalLayer.addTo(map);
-    map.fitBounds(aggregateBounds);
+    map.fitBounds(bounds);
   }
 
-  // ------------------------------------
-  backBtn.onclick = function() {
-    drawAggregates();
-  };
+  backBtn.onclick = drawAggregates;
 
-  // Initial draw
   drawAggregates();
 </script>
 
