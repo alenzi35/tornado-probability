@@ -1,9 +1,12 @@
 import os
+import json
 from datetime import datetime, timedelta
+
 import boto3
+import numpy as np
+import pygrib
 from botocore import UNSIGNED
 from botocore.client import Config
-import cfgrib
 
 # ----------------------------
 # CONFIG
@@ -12,6 +15,12 @@ BUCKET = "noaa-rap-pds"
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Logistic regression (1-hour)
+INTERCEPT = -1.5686
+B_CAPE = 2.88592370e-03
+B_CIN  = 2.38728498e-05
+B_SRH  = 8.85192696e-03
+
 # ----------------------------
 # TIME LOGIC
 # ----------------------------
@@ -19,53 +28,106 @@ now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
 target_time = now
 init_time = target_time - timedelta(hours=2)
 
-cycle_hour = init_time.strftime("%H")
 cycle_date = init_time.strftime("%Y%m%d")
+cycle_hour = init_time.strftime("%H")
 
-print(f"Target time: {target_time}")
-print(f"Using RAP init: {init_time}Z")
+print(f"Target UTC: {target_time}")
+print(f"RAP init: {init_time}Z")
 
 # ----------------------------
-# S3 PATH
+# DOWNLOAD RAP GRIB
 # ----------------------------
 s3_key = f"rap.{cycle_date}/rap.t{cycle_hour}z.awp130pgrbf00.grib2"
 local_file = os.path.join(DATA_DIR, "rap_latest.grib2")
 
-print(f"S3 key: {s3_key}")
-
-# ----------------------------
-# DOWNLOAD
-# ----------------------------
 s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
 s3.download_file(BUCKET, s3_key, local_file)
-print("Downloaded RAP file successfully")
+
+print("Downloaded RAP GRIB")
 
 # ----------------------------
-# RAW MESSAGE INSPECTION
+# OPEN GRIB
 # ----------------------------
-print("\n--- RAW GRIB MESSAGE INSPECTION (CAPE / CIN / SRH) ---\n")
+grbs = pygrib.open(local_file)
 
-seen = set()
+# ---- CAPE 0–90 mb ----
+cape_msg = grbs.select(
+    name="Convective available potential energy",
+    typeOfLevel="pressureFromGroundLayer"
+)[0]
+cape = cape_msg.values
 
-with cfgrib.open_file(local_file) as grib:
-    for msg in grib.message_iter():
-        a = msg.attributes
-        if a.get("shortName") in ["cape", "cin", "hlcy"]:
-            key = (
-                a.get("shortName"),
-                a.get("typeOfLevel"),
-                a.get("level"),
-                a.get("stepType"),
-                a.get("forecastTime"),
-            )
-            if key not in seen:
-                seen.add(key)
-                print(
-                    f"shortName={a.get('shortName')}, "
-                    f"typeOfLevel={a.get('typeOfLevel')}, "
-                    f"level={a.get('level')}, "
-                    f"stepType={a.get('stepType')}, "
-                    f"forecastTime={a.get('forecastTime')}"
-                )
+# ---- CIN 0–90 mb ----
+cin_msg = grbs.select(
+    name="Convective inhibition",
+    typeOfLevel="pressureFromGroundLayer"
+)[0]
+cin = cin_msg.values
 
-print("\n--- END RAW INSPECTION ---")
+# ---- SRH 0–1 km ----
+srh_msg = grbs.select(
+    name="Storm relative helicity",
+    typeOfLevel="heightAboveGroundLayer"
+)[0]
+srh = srh_msg.values
+
+lats, lons = cape_msg.latlons()
+grbs.close()
+
+print("Extracted CAPE, CIN, SRH")
+
+# ----------------------------
+# LOGISTIC REGRESSION
+# ----------------------------
+z = (
+    INTERCEPT
+    + B_CAPE * cape
+    + B_CIN  * cin
+    + B_SRH  * srh
+)
+
+prob = 1 / (1 + np.exp(-z))
+prob = np.clip(prob, 0, 1)
+
+# ----------------------------
+# AGGREGATE TO YOUR MAP CELLS
+# ----------------------------
+lat_step = 1.18
+lon_step = 1.94
+
+lat_bins = np.arange(24.5, 49.5, lat_step)
+lon_bins = np.arange(-125, -66.5, lon_step)
+
+aggregates = []
+
+for lat0 in lat_bins:
+    for lon0 in lon_bins:
+        mask = (
+            (lats >= lat0) & (lats < lat0 + lat_step) &
+            (lons >= lon0) & (lons < lon0 + lon_step)
+        )
+
+        if np.any(mask):
+            p = float(np.mean(prob[mask]))
+            aggregates.append({
+                "lat": float(lat0),
+                "lng": float(lon0),
+                "probability": p
+            })
+
+# ----------------------------
+# SAVE JSON
+# ----------------------------
+output = {
+    "generated_utc": datetime.utcnow().isoformat() + "Z",
+    "valid_utc": target_time.isoformat() + "Z",
+    "rap_init_utc": init_time.isoformat() + "Z",
+    "lead_hours": 1,
+    "aggregates": aggregates
+}
+
+out_file = os.path.join(DATA_DIR, "tornado_prob.json")
+with open(out_file, "w") as f:
+    json.dump(output, f, indent=2)
+
+print(f"Wrote {out_file}")
