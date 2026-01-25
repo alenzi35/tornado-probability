@@ -49,9 +49,18 @@
     }
 
     #validTime {
-      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 28px;        /* matches default Leaflet zoom button height */
+      line-height: 28px;   /* vertical centering */
+      padding: 0 6px;
       font-size: 13px;
       font-weight: bold;
+      background: #eaeaea;
+      border: 1px solid #999;
+      border-radius: 4px;
+      margin-top: 6px;
       text-align: center;
     }
   </style>
@@ -120,124 +129,4 @@
 
   function updateValidTime() {
     let now = new Date();
-    let startHour = now.getUTCHours();
-    let endHour = (startHour + currentLeadTime) % 24;
-
-    document.getElementById("validTime").innerText =
-      `Valid Time: ${startHour.toString().padStart(2,'0')}:00–${endHour.toString().padStart(2,'0')}:00 UTC`;
-  }
-
-  function setLeadTime(h) {
-    currentLeadTime = h;
-    drawAggregates();
-  }
-
-  function toggleCells() {
-    cellsVisible = !cellsVisible;
-
-    aggregateLayer.eachLayer(l => {
-      l.setStyle({
-        fillOpacity: cellsVisible ? 0.6 : 0,
-        weight: cellsVisible ? 1 : 0
-      });
-      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
-    });
-
-    normalLayer.eachLayer(l => {
-      l.setStyle({
-        fillOpacity: cellsVisible ? 0.75 : 0,
-        weight: cellsVisible ? 0.4 : 0
-      });
-      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
-    });
-  }
-
-  function drawAggregates() {
-    aggregateLayer.clearLayers();
-    normalLayer.clearLayers();
-    document.getElementById("backBtn").style.display = "none";
-
-    let aggregates = [];
-
-    for (let lat = 24.5; lat < 49.5; lat += latStep) {
-      for (let lng = -125; lng < -66.5; lng += lngStep) {
-        if (lng > -68) continue;
-
-        let probs = [];
-        for (let i = 0; i < 100; i++) probs.push(randomProb());
-
-        let aggProb = 1 - probs.reduce((a, p) => a * (1 - p), 1);
-        aggregates.push({ lat, lng, aggProb });
-      }
-    }
-
-    let minP = Math.min(...aggregates.map(a => a.aggProb));
-    let maxP = Math.max(...aggregates.map(a => a.aggProb));
-
-    aggregates.forEach(a => {
-      let norm = (a.aggProb - minP) / (maxP - minP + 1e-9);
-
-let rect = L.rectangle(
-  [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
-  {
-    fillColor: getColorNorm(norm),
-    fillOpacity: cellsVisible ? 0.6 : 0,
-    color: "#000",
-    weight: cellsVisible ? 1 : 0
-  }
-).addTo(aggregateLayer);
-
-rect.bindPopup(
-  `<b>Aggregate Probability</b><br>
-   ${a.aggProb.toFixed(4)}<br><br>
-   <i>Double-click to view 13 km cells</i>`
-);
-
-rect.on('dblclick', function(e) {
-  if (!cellsVisible) return;
-  aggregateLayer.clearLayers();
-  drawNormalCells(e.target.getBounds());
-  document.getElementById("backBtn").style.display = "block";
-});
-    });
-
-    updateValidTime();
-  }
-
-  function drawNormalCells(bounds) {
-    normalLayer.clearLayers();
-
-    let sw = bounds.getSouthWest();
-    let ne = bounds.getNorthEast();
-
-    let latS = (ne.lat - sw.lat) / 10;
-    let lngS = (ne.lng - sw.lng) / 10;
-
-    for (let i = 0; i < 10; i++) {
-      for (let j = 0; j < 10; j++) {
-        let p = randomProb();
-
-        L.rectangle(
-          [
-            [sw.lat + i * latS, sw.lng + j * lngS],
-            [sw.lat + (i + 1) * latS, sw.lng + (j + 1) * lngS]
-          ],
-          {
-            fillColor: getColorNorm(p / 0.006),
-            fillOpacity: cellsVisible ? 0.75 : 0,
-            color: "#000",
-            weight: cellsVisible ? 0.4 : 0
-          }
-        ).addTo(normalLayer);
-      }
-    }
-
-    normalLayer.addTo(map);
-    map.fitBounds(bounds);
-  }
-
-  drawAggregates();
-</script>
-
-</body>
-</html>
+    let start
