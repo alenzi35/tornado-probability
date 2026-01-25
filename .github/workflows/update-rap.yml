@@ -1,1 +1,36 @@
+name: Update RAP Tornado Data
+
+on:
+  schedule:
+    - cron: '15 * * * *'   # runs at :15 past every hour
+  workflow_dispatch:      # allows manual run
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 xarray netCDF4 numpy
+
+      - name: Run RAP processing
+        run: |
+          python scripts/process_rap.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/
+          git commit -m "Update RAP tornado data" || echo "No changes"
+          git push
 
