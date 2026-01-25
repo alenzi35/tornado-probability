@@ -177,22 +177,28 @@
     aggregates.forEach(a => {
       let norm = (a.aggProb - minP) / (maxP - minP + 1e-9);
 
-      let rect = L.rectangle(
-        [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
-        {
-          fillColor: getColorNorm(norm),
-          fillOpacity: cellsVisible ? 0.6 : 0,
-          color: "#000",
-          weight: cellsVisible ? 1 : 0
-        }
-      ).addTo(aggregateLayer);
+let rect = L.rectangle(
+  [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
+  {
+    fillColor: getColorNorm(norm),
+    fillOpacity: cellsVisible ? 0.6 : 0,
+    color: "#000",
+    weight: cellsVisible ? 1 : 0
+  }
+).addTo(aggregateLayer);
 
-      rect.on('dblclick', function(e) {
-        if (!cellsVisible) return;
-        aggregateLayer.clearLayers();
-        drawNormalCells(e.target.getBounds());
-        document.getElementById("backBtn").style.display = "block";
-      });
+rect.bindPopup(
+  `<b>Aggregate Probability</b><br>
+   ${a.aggProb.toFixed(4)}<br><br>
+   <i>Double-click to view 13 km cells</i>`
+);
+
+rect.on('dblclick', function(e) {
+  if (!cellsVisible) return;
+  aggregateLayer.clearLayers();
+  drawNormalCells(e.target.getBounds());
+  document.getElementById("backBtn").style.display = "block";
+});
     });
 
     updateValidTime();
