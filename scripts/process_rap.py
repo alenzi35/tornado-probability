@@ -12,19 +12,25 @@ from botocore.client import Config
 # ----------------------------
 BUCKET = "noaa-rap-pds"
 DATA_DIR = "data"
-FORECAST_OFFSET_HOURS = 2  # target valid time minus init time
+FORECAST_OFFSET_HOURS = 2  # RAP init = target - 2h
 
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Logistic regression coefficients (replace with your real ones)
+COEFS = {
+    "cape": 0.0005,       # placeholder
+    "cin": -0.0003,       # placeholder
+    "srh": 0.0012,        # placeholder
+    "intercept": -4.0     # placeholder
+}
 
 # ----------------------------
 # TIME LOGIC
 # ----------------------------
-# Target valid time = current hour
 now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
 target_time = now
-
-# RAP init = target - 2 hours
 init_time = target_time - timedelta(hours=FORECAST_OFFSET_HOURS)
+
 cycle_hour = init_time.strftime("%H")
 cycle_date = init_time.strftime("%Y%m%d")
 
@@ -34,10 +40,8 @@ print(f"Using RAP init: {init_time}Z")
 # ----------------------------
 # S3 FILE PATH
 # ----------------------------
-# Example: rap.20260125/rap.t12z.awp130pgrbf00.grib2
 s3_key = f"rap.{cycle_date}/rap.t{cycle_hour}z.awp130pgrbf00.grib2"
 local_file = os.path.join(DATA_DIR, "rap_latest.grib2")
-
 print(f"S3 key: {s3_key}")
 
 # ----------------------------
@@ -48,29 +52,79 @@ s3.download_file(BUCKET, s3_key, local_file)
 print("Downloaded RAP file successfully")
 
 # ----------------------------
-# OPEN & EXTRACT DATA (placeholder field)
+# FUNCTION TO EXTRACT VARIABLE
 # ----------------------------
-ds = xr.open_dataset(local_file, engine="cfgrib")
+def extract_var(var_shortname):
+    ds = xr.open_dataset(
+        local_file,
+        engine="cfgrib",
+        backend_kwargs={"filter_by_keys": {"shortName": var_shortname}}
+    )
+    return ds[list(ds.data_vars)[0]].values  # return numpy array
 
-# Use first variable as placeholder
-var_name = list(ds.data_vars)[0]
-field = ds[var_name].values
+# Extract CAPE, CIN, SRH
+cape = extract_var("cape0to90mb")  # replace with exact RAP shortName if different
+cin = extract_var("cin0to90mb")
+srh = extract_var("srh0to1km")
+
+# Flatten arrays to 1D for probability calculation
+cape_flat = cape.flatten()
+cin_flat = cin.flatten()
+srh_flat = srh.flatten()
 
 # ----------------------------
-# GRID PROBABILITY CALCULATION (dummy)
+# LOGISTIC REGRESSION
 # ----------------------------
-# For demo: average and normalize to max 0.006
-prob_value = float(np.clip(np.mean(field)/np.max(field), 0, 0.006))
+def logistic_prob(cape, cin, srh):
+    z = (COEFS["cape"] * cape +
+         COEFS["cin"] * cin +
+         COEFS["srh"] * srh +
+         COEFS["intercept"])
+    p = 1 / (1 + np.exp(-z))
+    return np.clip(p, 0, 1)  # probability between 0 and 1
+
+probabilities = logistic_prob(cape_flat, cin_flat, srh_flat)
+
+# Reshape back to grid
+grid_shape = cape.shape
+prob_grid = probabilities.reshape(grid_shape)
 
 # ----------------------------
-# SAVE JSON FOR WEBSITE
+# AGGREGATE CELLS (example 1°x2°)
+# ----------------------------
+lat_step = 1.18
+lng_step = 1.94
+
+lat_min, lat_max = 24.5, 49.5
+lng_min, lng_max = -125, -66.5
+
+aggregates = []
+
+lats = np.arange(lat_min, lat_max, lat_step)
+lngs = np.arange(lng_min, lng_max, lng_step)
+
+# Simple nearest-neighbor aggregation
+for lat in lats:
+    for lng in lngs:
+        # Find indices corresponding to this cell
+        lat_idx = int((lat - lat_min) / (lat_max - lat_min) * grid_shape[0])
+        lng_idx = int((lng - lng_min) / (lng_max - lng_min) * grid_shape[1])
+        prob = prob_grid[lat_idx, lng_idx]
+        aggregates.append({
+            "lat": lat,
+            "lng": lng,
+            "probability": float(prob)
+        })
+
+# ----------------------------
+# SAVE JSON
 # ----------------------------
 output = {
     "generated_utc": datetime.utcnow().isoformat() + "Z",
     "cycle_utc": init_time.isoformat() + "Z",
     "forecast_hour": FORECAST_OFFSET_HOURS,
     "valid_utc": target_time.isoformat() + "Z",
-    "probability": round(prob_value, 5)
+    "aggregates": aggregates
 }
 
 json_file = os.path.join(DATA_DIR, "tornado_prob.json")
