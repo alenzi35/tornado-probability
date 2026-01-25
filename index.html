@@ -116,13 +116,17 @@
     return '#FFEDA0';
   }
 
-  function updateValidTime() {
-    let now = new Date();
-    let utcHour = now.getUTCHours();
-    let nextHour = (utcHour + 1) % 24;
-    document.getElementById("validTime").innerText =
-      `Valid Time: ${utcHour.toString().padStart(2,'0')}:00–${nextHour.toString().padStart(2,'0')}:00 UTC`;
-  }
+function updateValidTime() {
+  let now = new Date();
+  let startHour = now.getUTCHours();
+  let endHour = (startHour + currentLeadTime) % 24;
+
+  let startStr = startHour.toString().padStart(2, '0');
+  let endStr = endHour.toString().padStart(2, '0');
+
+  document.getElementById("validTime").innerText =
+    `Valid Time: ${startStr}:00–${endStr}:00 UTC`;
+}
 
   function setLeadTime(h) {
     currentLeadTime = h;
