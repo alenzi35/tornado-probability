@@ -48,11 +48,21 @@
       display: none;
     }
 
+    /* VALID TIME BUTTON FIX */
     #validTime {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 28px;        /* match + / - buttons */
+      line-height: 28px;   /* vertical centering */
+      padding: 0 6px;
       margin-top: 6px;
       font-size: 13px;
       font-weight: bold;
       text-align: center;
+      background: #eaeaea;
+      border: 1px solid #999;
+      border-radius: 4px;
     }
   </style>
 </head>
@@ -79,18 +89,19 @@
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
   // ------------------------------------
-  var CONUS_bounds = [[22, -128], [51.5, -64]];
+  var CONUS_bounds = [[21, -130], [53, -63]]; // slightly expanded for zoom 19
 
   var map = L.map('map', {
-  maxBounds: CONUS_bounds,
-  maxBoundsViscosity: 0,  // allows zooming beyond edges
-  minZoom: 4,
-  maxZoom: 19,
-  zoomSnap: 0.25,          // allows smoother zooming
-  zoomControl: true
-}).setView([39.5, -98.35], 4);
+    maxBounds: CONUS_bounds,
+    maxBoundsViscosity: 0,  
+    minZoom: 4,
+    maxZoom: 19,
+    zoomSnap: 0.25,          
+    zoomControl: true
+  }).setView([39.5, -98.35], 4);
 
-map.zoomControl.setPosition('topright');
+  // Move zoom control to top right
+  map.zoomControl.setPosition('topright');
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
@@ -178,30 +189,28 @@ map.zoomControl.setPosition('topright');
     aggregates.forEach(a => {
       let norm = (a.aggProb - minP) / (maxP - minP + 1e-9);
 
-  let rect = L.rectangle(
-  [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
-  {
-    fillColor: getColorNorm(norm),
-    fillOpacity: cellsVisible ? 0.6 : 0,
-    color: "#000",
-    weight: cellsVisible ? 1 : 0
-  }
-).addTo(aggregateLayer);
+      let rect = L.rectangle(
+        [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
+        {
+          fillColor: getColorNorm(norm),
+          fillOpacity: cellsVisible ? 0.6 : 0,
+          color: "#000",
+          weight: cellsVisible ? 1 : 0
+        }
+      ).addTo(aggregateLayer);
 
-// Single-click: show probability + instruction
-rect.bindPopup(
-  `<b>Aggregate Probability</b><br>
-   ${a.aggProb.toFixed(4)}<br><br>
-   <i>Double-click to view 13 km cells</i>`
-);
+      rect.bindPopup(
+        `<b>Aggregate Probability</b><br>
+         ${a.aggProb.toFixed(4)}<br><br>
+         <i>Double-click to view 13 km cells</i>`
+      );
 
-// Double-click: drill down
-rect.on('dblclick', function(e) {
-  if (!cellsVisible) return;
-  aggregateLayer.clearLayers();
-  drawNormalCells(e.target.getBounds());
-  document.getElementById("backBtn").style.display = "block";
-});
+      rect.on('dblclick', function(e) {
+        if (!cellsVisible) return;
+        aggregateLayer.clearLayers();
+        drawNormalCells(e.target.getBounds());
+        document.getElementById("backBtn").style.display = "block";
+      });
     });
 
     updateValidTime();
