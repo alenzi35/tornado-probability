@@ -14,9 +14,9 @@
       background: #f4f4f4;
     }
 
-    h1 {
+    h1, p {
       text-align: center;
-      margin: 10px 0;
+      margin: 6px;
     }
 
     #map {
@@ -54,25 +54,12 @@
       font-weight: bold;
       text-align: center;
     }
-
-    #infoBox {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 1001;
-      background: rgba(255,255,255,0.9);
-      padding: 6px 12px;
-      border-radius: 4px;
-      font-size: 14px;
-      box-shadow: 0 0 5px rgba(0,0,0,0.3);
-      pointer-events: none;
-    }
   </style>
 </head>
 <body>
 
 <h1>Tornado Probability Project</h1>
+<p>If you can read this, GitHub Pages is working.</p>
 
 <div class="control-panel">
   <b>Lead Time</b><br>
@@ -89,22 +76,18 @@
 </div>
 
 <div id="map"></div>
-<div id="infoBox">Click an aggregate to see probability</div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  // -------------------------------
+  // ------------------------------------
   var CONUS_bounds = [[22, -128], [51.5, -64]];
 
   var map = L.map('map', {
     maxBounds: CONUS_bounds,
     maxBoundsViscosity: 0.8,
     minZoom: 4,
-    maxZoom: 19,
-    zoomControl: false
+    maxZoom: 18
   }).setView([39.5, -98.35], 4);
-
-  L.control.zoom({ position: 'topright' }).addTo(map);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
@@ -115,7 +98,6 @@
 
   var cellsVisible = true;
   var currentLeadTime = 1;
-  var infoBox = document.getElementById("infoBox");
 
   var latStep = 1.18;
   var lngStep = 1.94;
@@ -156,7 +138,7 @@
         fillOpacity: cellsVisible ? 0.6 : 0,
         weight: cellsVisible ? 1 : 0
       });
-      if(l.getElement()) l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
+      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
     });
 
     normalLayer.eachLayer(l => {
@@ -164,7 +146,7 @@
         fillOpacity: cellsVisible ? 0.75 : 0,
         weight: cellsVisible ? 0.4 : 0
       });
-      if(l.getElement()) l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
+      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
     });
   }
 
@@ -172,7 +154,6 @@
     aggregateLayer.clearLayers();
     normalLayer.clearLayers();
     document.getElementById("backBtn").style.display = "none";
-    infoBox.innerText = "Click an aggregate to see probability";
 
     let aggregates = [];
 
@@ -204,20 +185,11 @@
         }
       ).addTo(aggregateLayer);
 
-      // Single click updates info box
-      rect.on('click', function(e) {
-        if (!cellsVisible) return;
-        infoBox.innerText =
-          `Aggregate Probability: ${a.aggProb.toFixed(4)}\nDouble-click to view 13 km cells`;
-      });
-
-      // Double-click drilldown
       rect.on('dblclick', function(e) {
         if (!cellsVisible) return;
         aggregateLayer.clearLayers();
         drawNormalCells(e.target.getBounds());
         document.getElementById("backBtn").style.display = "block";
-        infoBox.innerText = "";
       });
     });
 
@@ -237,7 +209,7 @@
       for (let j = 0; j < 10; j++) {
         let p = randomProb();
 
-        L.rectangle(
+        let rect = L.rectangle(
           [
             [sw.lat + i * latS, sw.lng + j * lngS],
             [sw.lat + (i + 1) * latS, sw.lng + (j + 1) * lngS]
