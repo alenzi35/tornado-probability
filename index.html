@@ -12,7 +12,7 @@
       margin: 0;
       background: #0b0f14;
       color: #eaeaea;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: system-ui, sans-serif;
     }
 
     #map {
@@ -37,10 +37,6 @@
       cursor: pointer;
       border-radius: 4px;
     }
-
-    button:hover {
-      background: #2b3b52;
-    }
   </style>
 </head>
 
@@ -48,7 +44,7 @@
 
 <div id="toolbar">
   <button id="backBtn" disabled>Back</button>
-  <span>EPSG:2163 · True 13 km Tornado Probability Grid</span>
+  <span>EPSG:2163 · True 13 km Grid</span>
 </div>
 
 <div id="map"></div>
@@ -69,14 +65,13 @@ const crs = new L.Proj.CRS(
 );
 
 /* =========================
-   MAP INIT
+   MAP
 ========================= */
 
 const map = L.map("map", {
   crs,
   minZoom: 2,
-  maxZoom: 8,
-  zoomSnap: 0.5
+  maxZoom: 8
 });
 
 /* =========================
@@ -90,27 +85,28 @@ const cellLayer = L.layerGroup().addTo(map);
    CONSTANTS
 ========================= */
 
-const CELL_SIZE = 13000;      // 13 km
-const AGG_SIZE  = 130000;     // 130 km
+const CELL = 13000;
+const AGG  = 130000;
 
-// Expanded CONUS bounds (~10%)
 const CONUS_SW = [-2600000, -2400000];
 const CONUS_NE = [ 2600000,  2100000];
 
-// Hard east cutoff to remove ocean aggregates
-const EAST_CUTOFF = 1600000; // meters in EPSG:2163
+const EAST_CUTOFF = 1600000;
 
-map.fitBounds([[CONUS_SW[1], CONUS_SW[0]], [CONUS_NE[1], CONUS_NE[0]]]);
+map.fitBounds([
+  [CONUS_SW[1], CONUS_SW[0]],
+  [CONUS_NE[1], CONUS_NE[0]]
+]);
 
 /* =========================
-   UTILITIES
+   UTIL
 ========================= */
 
-function randomProb() {
+function randProb() {
   return Math.random() * 0.002;
 }
 
-function colorScale(p) {
+function color(p) {
   if (p > 0.0015) return "#800026";
   if (p > 0.0010) return "#BD0026";
   if (p > 0.0005) return "#E31A1C";
@@ -122,37 +118,37 @@ function colorScale(p) {
    STATE
 ========================= */
 
-let currentView = "aggregate";
+let view = "aggregate";
+const backBtn = document.getElementById("backBtn");
 
 /* =========================
-   AGGREGATE GRID
+   AGGREGATES
 ========================= */
 
 function drawAggregates() {
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
-  currentView = "aggregate";
+  view = "aggregate";
   backBtn.disabled = true;
 
-  for (let x = CONUS_SW[0]; x < CONUS_NE[0]; x += AGG_SIZE) {
+  for (let x = CONUS_SW[0]; x < CONUS_NE[0]; x += AGG) {
     if (x > EAST_CUTOFF) continue;
 
-    for (let y = CONUS_SW[1]; y < CONUS_NE[1]; y += AGG_SIZE) {
+    for (let y = CONUS_SW[1]; y < CONUS_NE[1]; y += AGG) {
 
-      // Precompute child cell probabilities
-      let probs = [];
-      for (let i = 0; i < 100; i++) probs.push(randomProb());
+      const probs = Array.from({length:100}, randProb);
+      const mean = probs.reduce((a,b)=>a+b,0) / probs.length;
 
-      const meanProb =
-        probs.reduce((a,b) => a + b, 0) / probs.length;
+      const bounds = [
+        [y, x],
+        [y + AGG, x + AGG]
+      ];
 
-      const bounds = [[y, x], [y + AGG_SIZE, x + AGG_SIZE]];
-
-      L.rectangle(bounds, {
+      new L.Proj.Rectangle(bounds, {
+        fillColor: color(mean),
+        fillOpacity: 0.7,
         color: "#111",
-        weight: 1,
-        fillColor: colorScale(meanProb),
-        fillOpacity: 0.65
+        weight: 1
       })
       .on("click", () => drawCells(bounds))
       .addTo(aggregateLayer);
@@ -161,46 +157,46 @@ function drawAggregates() {
 }
 
 /* =========================
-   NORMAL CELLS
+   CELLS
 ========================= */
 
-function drawCells(aggBounds) {
+function drawCells(bounds) {
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
-  currentView = "cells";
+  view = "cells";
   backBtn.disabled = false;
 
-  const west  = aggBounds[0][1];
-  const south = aggBounds[0][0];
-  const east  = aggBounds[1][1];
-  const north = aggBounds[1][0];
+  const west  = bounds[0][1];
+  const south = bounds[0][0];
+  const east  = bounds[1][1];
+  const north = bounds[1][0];
 
-  for (let x = west; x < east; x += CELL_SIZE) {
-    for (let y = south; y < north; y += CELL_SIZE) {
+  for (let x = west; x < east; x += CELL) {
+    for (let y = south; y < north; y += CELL) {
 
-      const p = randomProb();
+      const p = randProb();
 
-      L.rectangle([[y, x], [y + CELL_SIZE, x + CELL_SIZE]], {
-        color: "#000",
-        weight: 0.4,
-        fillColor: colorScale(p),
-        fillOpacity: 0.85
-      })
-      .bindPopup(
-        `<b>Tornado Probability</b><br>${(p * 100).toFixed(4)}%`
+      new L.Proj.Rectangle(
+        [[y, x], [y + CELL, x + CELL]],
+        {
+          fillColor: color(p),
+          fillOpacity: 0.85,
+          color: "#000",
+          weight: 0.4
+        }
       )
+      .bindPopup(`<b>${(p*100).toFixed(4)}%</b>`)
       .addTo(cellLayer);
     }
   }
 }
 
 /* =========================
-   BACK BUTTON
+   BACK
 ========================= */
 
-const backBtn = document.getElementById("backBtn");
 backBtn.onclick = () => {
-  if (currentView === "cells") drawAggregates();
+  if (view === "cells") drawAggregates();
 };
 
 /* =========================
