@@ -1,210 +1,160 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability</title>
+  <title>Tornado Probability Map</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 
   <style>
-    body {
-      margin: 0;
-      background: #0b0f14;
-      color: #eaeaea;
-      font-family: system-ui, sans-serif;
-    }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f4f4f4; }
+    h1, p { text-align: center; margin: 10px; }
+    #map { height: 650px; margin: 10px; border-radius: 8px; }
 
-    #map {
-      height: 85vh;
-      width: 100%;
-    }
-
-    #toolbar {
-      padding: 10px;
-      background: #121821;
-      border-bottom: 1px solid #1f2a38;
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-
-    button {
-      background: #1f2a38;
-      color: #fff;
-      border: 1px solid #2e3f55;
-      padding: 6px 12px;
-      cursor: pointer;
+    #backBtn {
+      position: absolute;
+      top: 90px;
+      left: 20px;
+      z-index: 1000;
+      padding: 8px 12px;
+      background: white;
+      border: 1px solid #999;
       border-radius: 4px;
+      cursor: pointer;
+      display: none;
     }
   </style>
 </head>
-
 <body>
 
-<div id="toolbar">
-  <button id="backBtn" disabled>Back</button>
-  <span>EPSG:2163 · True 13 km Grid</span>
-</div>
+<h1>Tornado Probability Project</h1>
+<p>If you can read this, GitHub Pages is working.</p>
 
+<div id="backBtn">← Back to aggregates</div>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4/2.8.0/proj4.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
-
 <script>
-/* =========================
-   PROJECTION
-========================= */
+  // ------------------------------------
+  // Expanded CONUS bounds (~8% padding)
+  var CONUS_bounds = [[22, -128], [51.5, -64]];
 
-const crs = new L.Proj.CRS(
-  "EPSG:2163",
-  "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +units=m +no_defs",
-  { resolutions: [8192,4096,2048,1024,512,256,128,64,32,16,8,4,2,1] }
-);
+  var map = L.map('map', {
+    maxBounds: CONUS_bounds,
+    maxBoundsViscosity: 0.8,
+    minZoom: 4,
+    maxZoom: 8
+  }).setView([39.5, -98.35], 4);
 
-/* =========================
-   MAP
-========================= */
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
 
-const map = L.map("map", {
-  crs,
-  minZoom: 2,
-  maxZoom: 8
-});
+  // ------------------------------------
+  var aggregateLayer = L.layerGroup().addTo(map);
+  var normalLayer = L.layerGroup();
 
-/* =========================
-   LAYERS
-========================= */
+  var backBtn = document.getElementById("backBtn");
 
-const aggregateLayer = L.layerGroup().addTo(map);
-const cellLayer = L.layerGroup().addTo(map);
+  // ------------------------------------
+  function randomProb() {
+    return Math.random() * 0.002;
+  }
 
-/* =========================
-   CONSTANTS
-========================= */
+  function getColor(p) {
+    if (p > 0.01) return '#800026';
+    if (p > 0.005) return '#BD0026';
+    if (p > 0.002) return '#E31A1C';
+    if (p > 0.001) return '#FC4E2A';
+    return '#FFEDA0';
+  }
 
-const CELL = 13000;
-const AGG  = 130000;
+  // ------------------------------------
+  // Draw aggregate cells
+  var latStep = 1.18;
+  var lngStep = 1.94;
 
-const CONUS_SW = [-2600000, -2400000];
-const CONUS_NE = [ 2600000,  2100000];
+  function drawAggregates() {
+    aggregateLayer.clearLayers();
+    normalLayer.clearLayers();
+    backBtn.style.display = "none";
 
-const EAST_CUTOFF = 1600000;
+    for (var lat = 24.5; lat < 49.5; lat += latStep) {
+      for (var lng = -125; lng < -66.5; lng += lngStep) {
 
-map.fitBounds([
-  [CONUS_SW[1], CONUS_SW[0]],
-  [CONUS_NE[1], CONUS_NE[0]]
-]);
+        // Remove far-east ocean-only column
+        if (lng > -70) continue;
 
-/* =========================
-   UTIL
-========================= */
+        let bounds = [[lat, lng], [lat + latStep, lng + lngStep]];
 
-function randProb() {
-  return Math.random() * 0.002;
-}
+        // Precompute aggregate probability
+        let probs = [];
+        for (let i = 0; i < 100; i++) probs.push(randomProb());
 
-function color(p) {
-  if (p > 0.0015) return "#800026";
-  if (p > 0.0010) return "#BD0026";
-  if (p > 0.0005) return "#E31A1C";
-  if (p > 0.0002) return "#FC4E2A";
-  return "#FFEDA0";
-}
+        let aggProb = 1 - probs.reduce((acc, p) => acc * (1 - p), 1);
 
-/* =========================
-   STATE
-========================= */
+        let rect = L.rectangle(bounds, {
+          fillColor: getColor(aggProb),
+          color: "#333",
+          weight: 1,
+          fillOpacity: 0.6
+        }).addTo(aggregateLayer);
 
-let view = "aggregate";
-const backBtn = document.getElementById("backBtn");
+        rect.bindPopup(
+          `Aggregate Probability:<br><b>${aggProb.toFixed(4)}</b><br><small>Double-click to drill down</small>`
+        );
 
-/* =========================
-   AGGREGATES
-========================= */
-
-function drawAggregates() {
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-  view = "aggregate";
-  backBtn.disabled = true;
-
-  for (let x = CONUS_SW[0]; x < CONUS_NE[0]; x += AGG) {
-    if (x > EAST_CUTOFF) continue;
-
-    for (let y = CONUS_SW[1]; y < CONUS_NE[1]; y += AGG) {
-
-      const probs = Array.from({length:100}, randProb);
-      const mean = probs.reduce((a,b)=>a+b,0) / probs.length;
-
-      const bounds = [
-        [y, x],
-        [y + AGG, x + AGG]
-      ];
-
-      new L.Proj.Rectangle(bounds, {
-        fillColor: color(mean),
-        fillOpacity: 0.7,
-        color: "#111",
-        weight: 1
-      })
-      .on("click", () => drawCells(bounds))
-      .addTo(aggregateLayer);
+        rect.on('dblclick', function(e) {
+          aggregateLayer.clearLayers();
+          drawNormalCells(e.target.getBounds());
+          backBtn.style.display = "block";
+        });
+      }
     }
   }
-}
 
-/* =========================
-   CELLS
-========================= */
+  // ------------------------------------
+  function drawNormalCells(aggregateBounds) {
+    normalLayer.clearLayers();
 
-function drawCells(bounds) {
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-  view = "cells";
-  backBtn.disabled = false;
+    var sw = aggregateBounds.getSouthWest();
+    var ne = aggregateBounds.getNorthEast();
 
-  const west  = bounds[0][1];
-  const south = bounds[0][0];
-  const east  = bounds[1][1];
-  const north = bounds[1][0];
+    var latStepSmall = (ne.lat - sw.lat) / 10;
+    var lngStepSmall = (ne.lng - sw.lng) / 10;
 
-  for (let x = west; x < east; x += CELL) {
-    for (let y = south; y < north; y += CELL) {
+    for (var i = 0; i < 10; i++) {
+      for (var j = 0; j < 10; j++) {
+        var bounds = [
+          [sw.lat + i * latStepSmall, sw.lng + j * lngStepSmall],
+          [sw.lat + (i + 1) * latStepSmall, sw.lng + (j + 1) * lngStepSmall]
+        ];
 
-      const p = randProb();
+        let p = randomProb();
 
-      new L.Proj.Rectangle(
-        [[y, x], [y + CELL, x + CELL]],
-        {
-          fillColor: color(p),
-          fillOpacity: 0.85,
+        L.rectangle(bounds, {
+          fillColor: getColor(p),
           color: "#000",
-          weight: 0.4
-        }
-      )
-      .bindPopup(`<b>${(p*100).toFixed(4)}%</b>`)
-      .addTo(cellLayer);
+          weight: 0.4,
+          fillOpacity: 0.8
+        }).bindPopup(`Cell Probability: ${p.toFixed(5)}`)
+          .addTo(normalLayer);
+      }
     }
+
+    normalLayer.addTo(map);
+    map.fitBounds(aggregateBounds);
   }
-}
 
-/* =========================
-   BACK
-========================= */
+  // ------------------------------------
+  backBtn.onclick = function() {
+    drawAggregates();
+  };
 
-backBtn.onclick = () => {
-  if (view === "cells") drawAggregates();
-};
-
-/* =========================
-   START
-========================= */
-
-drawAggregates();
-
+  // Initial draw
+  drawAggregates();
 </script>
+
 </body>
 </html>
