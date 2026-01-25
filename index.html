@@ -69,7 +69,7 @@
 
   <hr>
 
-  <button onclick="toggleAggregateHeatmap()">Toggle Aggregate Heatmap</button>
+  <button onclick="toggleCells()">Toggle Cells</button>
   <button id="backBtn" onclick="drawAggregates()">← Back to Aggregates</button>
 
   <div id="validTime"></div>
@@ -79,7 +79,7 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  // -----------------------------
+  // ------------------------------------
   var CONUS_bounds = [[22, -128], [51.5, -64]];
 
   var map = L.map('map', {
@@ -96,7 +96,7 @@
   var aggregateLayer = L.layerGroup().addTo(map);
   var normalLayer = L.layerGroup();
 
-  var showAggregateHeatmap = true;
+  var cellsVisible = true;
   var currentLeadTime = 1;
 
   var latStep = 1.18;
@@ -116,26 +116,38 @@
     return '#FFEDA0';
   }
 
-function updateValidTime() {
-  let now = new Date();
-  let startHour = now.getUTCHours();
-  let endHour = (startHour + currentLeadTime) % 24;
+  function updateValidTime() {
+    let now = new Date();
+    let startHour = now.getUTCHours();
+    let endHour = (startHour + currentLeadTime) % 24;
 
-  let startStr = startHour.toString().padStart(2, '0');
-  let endStr = endHour.toString().padStart(2, '0');
-
-  document.getElementById("validTime").innerText =
-    `Valid Time: ${startStr}:00–${endStr}:00 UTC`;
-}
+    document.getElementById("validTime").innerText =
+      `Valid Time: ${startHour.toString().padStart(2,'0')}:00–${endHour.toString().padStart(2,'0')}:00 UTC`;
+  }
 
   function setLeadTime(h) {
     currentLeadTime = h;
     drawAggregates();
   }
 
-  function toggleAggregateHeatmap() {
-    showAggregateHeatmap = !showAggregateHeatmap;
-    drawAggregates();
+  function toggleCells() {
+    cellsVisible = !cellsVisible;
+
+    aggregateLayer.eachLayer(l => {
+      l.setStyle({
+        fillOpacity: cellsVisible ? 0.6 : 0,
+        weight: cellsVisible ? 1 : 0
+      });
+      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
+    });
+
+    normalLayer.eachLayer(l => {
+      l.setStyle({
+        fillOpacity: cellsVisible ? 0.75 : 0,
+        weight: cellsVisible ? 0.4 : 0
+      });
+      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
+    });
   }
 
   function drawAggregates() {
@@ -147,7 +159,6 @@ function updateValidTime() {
 
     for (let lat = 24.5; lat < 49.5; lat += latStep) {
       for (let lng = -125; lng < -66.5; lng += lngStep) {
-
         if (lng > -68) continue;
 
         let probs = [];
@@ -167,18 +178,15 @@ function updateValidTime() {
       let rect = L.rectangle(
         [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
         {
-          fillColor: showAggregateHeatmap ? getColorNorm(norm) : 'transparent',
-          fillOpacity: showAggregateHeatmap ? 0.6 : 0,
+          fillColor: getColorNorm(norm),
+          fillOpacity: cellsVisible ? 0.6 : 0,
           color: "#000",
-          weight: 1
+          weight: cellsVisible ? 1 : 0
         }
       ).addTo(aggregateLayer);
 
-      rect.bindPopup(
-        `Aggregate Probability:<br><b>${a.aggProb.toFixed(4)}</b><br>Double-click to drill down`
-      );
-
       rect.on('dblclick', function(e) {
+        if (!cellsVisible) return;
         aggregateLayer.clearLayers();
         drawNormalCells(e.target.getBounds());
         document.getElementById("backBtn").style.display = "block";
@@ -201,19 +209,18 @@ function updateValidTime() {
       for (let j = 0; j < 10; j++) {
         let p = randomProb();
 
-        L.rectangle(
+        let rect = L.rectangle(
           [
             [sw.lat + i * latS, sw.lng + j * lngS],
             [sw.lat + (i + 1) * latS, sw.lng + (j + 1) * lngS]
           ],
           {
             fillColor: getColorNorm(p / 0.006),
-            fillOpacity: 0.75,
+            fillOpacity: cellsVisible ? 0.75 : 0,
             color: "#000",
-            weight: 0.4
+            weight: cellsVisible ? 0.4 : 0
           }
-        ).bindPopup(`Cell Probability: ${p.toFixed(5)}`)
-         .addTo(normalLayer);
+        ).addTo(normalLayer);
       }
     }
 
