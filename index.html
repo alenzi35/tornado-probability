@@ -26,7 +26,7 @@
 
     .control-panel {
       position: absolute;
-      top: 90px;
+      top: 10px;   /* aligns vertically with Leaflet zoom buttons */
       left: 20px;
       z-index: 1000;
       background: white;
@@ -36,16 +36,17 @@
       font-size: 14px;
     }
 
-    .control-panel button {
+    .control-panel button,
+    #validTime {
+      height: 30px;        /* match Leaflet + / – buttons */
+      line-height: 30px;   /* vertical text alignment */
       margin: 4px 0;
       width: 100%;
       cursor: pointer;
-      height: 30px; /* match Leaflet zoom buttons */
-      line-height: 30px;
+      text-align: center;
     }
 
     #backBtn {
-      margin-top: 6px;
       display: none;
     }
   </style>
@@ -64,6 +65,8 @@
 
   <button onclick="toggleCells()">Toggle Cells</button>
   <button id="backBtn" onclick="drawAggregates()">← Back to Aggregates</button>
+
+  <div id="validTime">00:00–01:00</div>
 </div>
 
 <div id="map"></div>
@@ -77,35 +80,16 @@
     maxBounds: CONUS_bounds,
     maxBoundsViscosity: 0,
     minZoom: 4,
-    maxZoom: 18, // reliable max zoom
+    maxZoom: 18, // avoid white tiles at zoom 19
     zoomSnap: 0.25,
     zoomControl: true
   }).setView([39.5, -98.35], 4);
 
-  // Move zoom to top right
   map.zoomControl.setPosition('topright');
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map);
-
-  // ------------------------
-  // Add Valid Time as Leaflet Control (perfectly aligned)
-  var ValidTimeControl = L.Control.extend({
-    onAdd: function(map) {
-      var div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-      div.style.width = '30px';
-      div.style.height = '30px';
-      div.style.lineHeight = '30px';
-      div.style.textAlign = 'center';
-      div.style.fontWeight = 'bold';
-      div.id = 'validTimeControl';
-      div.innerText = '00:00–01:00';
-      return div;
-    }
-  });
-  var validTime = new ValidTimeControl({position: 'topright'});
-  validTime.addTo(map);
 
   // ------------------------
   var aggregateLayer = L.layerGroup().addTo(map);
@@ -134,7 +118,7 @@
     let now = new Date();
     let startHour = now.getUTCHours();
     let endHour = (startHour + currentLeadTime) % 24;
-    document.getElementById('validTimeControl').innerText =
+    document.getElementById('validTime').innerText =
       `${startHour.toString().padStart(2,'0')}:00–${endHour.toString().padStart(2,'0')}:00`;
   }
 
@@ -238,4 +222,4 @@
 </script>
 
 </body>
-</html>
+  </html>
