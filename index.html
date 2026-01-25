@@ -22,18 +22,207 @@
       height: 650px;
       margin: 10px;
       border-radius: 8px;
+      position: relative; /* required for child absolute positioning */
     }
 
+    /* Control panel styled like a Leaflet control */
     .control-panel {
       position: absolute;
-      top: 10px;    /* aligns vertically with Leaflet zoom buttons */
-      left: 60px;   /* horizontally aligned with zoom buttons */
+      top: 10px;    /* same vertical alignment as zoom buttons */
+      right: 10px;  /* aligned next to zoom buttons */
       z-index: 1000;
       background: white;
       padding: 10px;
       border-radius: 6px;
       box-shadow: 0 0 6px rgba(0,0,0,0.3);
       font-size: 14px;
+    }
+
+    .control-panel button,
+    #validTime {
+      height: 30px;       /* match Leaflet + / – buttons */
+      line-height: 30px;  /* vertical text alignment */
+      margin: 4px 0;
+      width: 100%;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    #backBtn {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Tornado Probability Project</h1>
+
+<div id="map">
+  <div class="control-panel">
+    <b>Lead Time</b><br>
+    <button onclick="setLeadTime(1)">1 Hour</button>
+    <button onclick="setLeadTime(3)">3 Hour</button>
+    <button onclick="setLeadTime(6)">6 Hour</button>
+
+    <hr>
+
+    <button onclick="toggleCells()">Toggle Cells</button>
+    <button id="backBtn" onclick="drawAggregates()">← Back to Aggregates</button>
+
+    <div id="validTime">Valid time - 00:00–01:00</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+  var CONUS_bounds = [[22, -128], [51.5, -64]];
+
+  var map = L.map('map', {
+    maxBounds: CONUS_bounds,
+    maxBoundsViscosity: 0,
+    minZoom: 4,
+    maxZoom: 18,
+    zoomSnap: 0.25,
+    zoomControl: true
+  }).setView([39.5, -98.35], 4);
+
+  map.zoomControl.setPosition('topright');
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  var aggregateLayer = L.layerGroup().addTo(map);
+  var normalLayer = L.layerGroup();
+  var cellsVisible = true;
+  var currentLeadTime = 1;
+
+  var latStep = 1.18;
+  var lngStep = 1.94;
+
+  function randomProb() {
+    if (currentLeadTime === 1) return Math.random() * 0.002;
+    if (currentLeadTime === 3) return Math.random() * 0.004;
+    return Math.random() * 0.006;
+  }
+
+  function getColorNorm(x) {
+    if (x > 0.8) return '#800026';
+    if (x > 0.6) return '#BD0026';
+    if (x > 0.4) return '#E31A1C';
+    if (x > 0.2) return '#FC4E2A';
+    return '#FFEDA0';
+  }
+
+  function updateValidTime() {
+    let now = new Date();
+    let startHour = now.getUTCHours();
+    let endHour = (startHour + currentLeadTime) % 24;
+    document.getElementById('validTime').innerText =
+      `Valid time - ${startHour.toString().padStart(2,'0')}:00–${endHour.toString().padStart(2,'0')}:00`;
+  }
+
+  function setLeadTime(h) {
+    currentLeadTime = h;
+    drawAggregates();
+  }
+
+  function toggleCells() {
+    cellsVisible = !cellsVisible;
+
+    aggregateLayer.eachLayer(l => {
+      l.setStyle({
+        fillOpacity: cellsVisible ? 0.6 : 0,
+        weight: cellsVisible ? 1 : 0
+      });
+      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
+    });
+
+    normalLayer.eachLayer(l => {
+      l.setStyle({
+        fillOpacity: cellsVisible ? 0.75 : 0,
+        weight: cellsVisible ? 0.4 : 0
+      });
+      l.getElement().style.pointerEvents = cellsVisible ? 'auto' : 'none';
+    });
+  }
+
+  function drawAggregates() {
+    aggregateLayer.clearLayers();
+    normalLayer.clearLayers();
+    document.getElementById("backBtn").style.display = "none";
+
+    let aggregates = [];
+
+    for (let lat = 24.5; lat < 49.5; lat += latStep) {
+      for (let lng = -125; lng < -66.5; lng += lngStep) {
+        if (lng > -68) continue;
+
+        let probs = [];
+        for (let i = 0; i < 100; i++) probs.push(randomProb());
+        let aggProb = 1 - probs.reduce((a, p) => a * (1 - p), 1);
+        aggregates.push({lat, lng, aggProb});
+      }
+    }
+
+    let minP = Math.min(...aggregates.map(a => a.aggProb));
+    let maxP = Math.max(...aggregates.map(a => a.aggProb));
+
+    aggregates.forEach(a => {
+      let norm = (a.aggProb - minP) / (maxP - minP + 1e-9);
+      let rect = L.rectangle([[a.lat, a.lng], [a.lat+latStep, a.lng+lngStep]], {
+        fillColor: getColorNorm(norm),
+        fillOpacity: cellsVisible ? 0.6 : 0,
+        color: "#000",
+        weight: cellsVisible ? 1 : 0
+      }).addTo(aggregateLayer);
+
+      rect.bindPopup(
+        `<b>Aggregate Probability</b><br>${a.aggProb.toFixed(4)}<br><br><i>Double-click to view 13 km cells</i>`
+      );
+
+      rect.on('dblclick', function(e) {
+        if (!cellsVisible) return;
+        aggregateLayer.clearLayers();
+        drawNormalCells(e.target.getBounds());
+        document.getElementById("backBtn").style.display = "block";
+      });
+    });
+
+    updateValidTime();
+  }
+
+  function drawNormalCells(bounds) {
+    normalLayer.clearLayers();
+
+    let sw = bounds.getSouthWest();
+    let ne = bounds.getNorthEast();
+
+    let latS = (ne.lat - sw.lat)/10;
+    let lngS = (ne.lng - sw.lng)/10;
+
+    for (let i=0;i<10;i++){
+      for (let j=0;j<10;j++){
+        let p = randomProb();
+        L.rectangle(
+          [[sw.lat + i*latS, sw.lng + j*lngS],
+           [sw.lat + (i+1)*latS, sw.lng + (j+1)*lngS]],
+          {fillColor: getColorNorm(p/0.006),
+           fillOpacity: cellsVisible?0.75:0,
+           color:"#000", weight: cellsVisible?0.4:0}
+        ).addTo(normalLayer);
+      }
+    }
+
+    normalLayer.addTo(map);
+    map.fitBounds(bounds);
+  }
+
+  drawAggregates();
+</script>
+
+</body>
+</html>
     }
 
     .control-panel button,
