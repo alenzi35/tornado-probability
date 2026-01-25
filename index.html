@@ -8,21 +8,51 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 
   <style>
-    body { margin: 0; font-family: Arial, sans-serif; background: #f4f4f4; }
-    h1, p { text-align: center; margin: 10px; }
-    #map { height: 650px; margin: 10px; border-radius: 8px; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+    }
 
-    #backBtn {
+    h1, p {
+      text-align: center;
+      margin: 6px;
+    }
+
+    #map {
+      height: 650px;
+      margin: 10px;
+      border-radius: 8px;
+    }
+
+    .control-panel {
       position: absolute;
       top: 90px;
       left: 20px;
       z-index: 1000;
-      padding: 8px 12px;
       background: white;
-      border: 1px solid #999;
-      border-radius: 4px;
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.3);
+      font-size: 14px;
+    }
+
+    .control-panel button {
+      margin: 4px 0;
+      width: 100%;
       cursor: pointer;
+    }
+
+    #backBtn {
+      margin-top: 6px;
       display: none;
+    }
+
+    #validTime {
+      margin-top: 6px;
+      font-size: 13px;
+      font-weight: bold;
+      text-align: center;
     }
   </style>
 </head>
@@ -31,19 +61,32 @@
 <h1>Tornado Probability Project</h1>
 <p>If you can read this, GitHub Pages is working.</p>
 
-<div id="backBtn">← Back to aggregates</div>
+<div class="control-panel">
+  <b>Lead Time</b><br>
+  <button onclick="setLeadTime(1)">1 Hour</button>
+  <button onclick="setLeadTime(3)">3 Hour</button>
+  <button onclick="setLeadTime(6)">6 Hour</button>
+
+  <hr>
+
+  <button onclick="toggleAggregateHeatmap()">Toggle Aggregate Heatmap</button>
+  <button id="backBtn" onclick="drawAggregates()">← Back to Aggregates</button>
+
+  <div id="validTime"></div>
+</div>
+
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  // ------------------------------------
+  // -----------------------------
   var CONUS_bounds = [[22, -128], [51.5, -64]];
 
   var map = L.map('map', {
     maxBounds: CONUS_bounds,
     maxBoundsViscosity: 0.8,
     minZoom: 4,
-    maxZoom: 18   // 🔧 RESTORED STREET-LEVEL ZOOM
+    maxZoom: 18
   }).setView([39.5, -98.35], 4);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -52,10 +95,17 @@
 
   var aggregateLayer = L.layerGroup().addTo(map);
   var normalLayer = L.layerGroup();
-  var backBtn = document.getElementById("backBtn");
+
+  var showAggregateHeatmap = true;
+  var currentLeadTime = 1;
+
+  var latStep = 1.18;
+  var lngStep = 1.94;
 
   function randomProb() {
-    return Math.random() * 0.002;
+    if (currentLeadTime === 1) return Math.random() * 0.002;
+    if (currentLeadTime === 3) return Math.random() * 0.004;
+    return Math.random() * 0.006;
   }
 
   function getColorNorm(x) {
@@ -66,28 +116,40 @@
     return '#FFEDA0';
   }
 
-  var latStep = 1.18;
-  var lngStep = 1.94;
+  function updateValidTime() {
+    let now = new Date();
+    let utcHour = now.getUTCHours();
+    let nextHour = (utcHour + 1) % 24;
+    document.getElementById("validTime").innerText =
+      `Valid Time: ${utcHour.toString().padStart(2,'0')}:00–${nextHour.toString().padStart(2,'0')}:00 UTC`;
+  }
+
+  function setLeadTime(h) {
+    currentLeadTime = h;
+    drawAggregates();
+  }
+
+  function toggleAggregateHeatmap() {
+    showAggregateHeatmap = !showAggregateHeatmap;
+    drawAggregates();
+  }
 
   function drawAggregates() {
     aggregateLayer.clearLayers();
     normalLayer.clearLayers();
-    backBtn.style.display = "none";
+    document.getElementById("backBtn").style.display = "none";
 
     let aggregates = [];
 
-    // ---- First pass: compute probabilities
     for (let lat = 24.5; lat < 49.5; lat += latStep) {
       for (let lng = -125; lng < -66.5; lng += lngStep) {
 
-        // 🔧 FIXED east cutoff (only remove 1 column)
         if (lng > -68) continue;
 
         let probs = [];
         for (let i = 0; i < 100; i++) probs.push(randomProb());
 
         let aggProb = 1 - probs.reduce((a, p) => a * (1 - p), 1);
-
         aggregates.push({ lat, lng, aggProb });
       }
     }
@@ -95,32 +157,31 @@
     let minP = Math.min(...aggregates.map(a => a.aggProb));
     let maxP = Math.max(...aggregates.map(a => a.aggProb));
 
-    // ---- Second pass: draw
     aggregates.forEach(a => {
       let norm = (a.aggProb - minP) / (maxP - minP + 1e-9);
 
-      let bounds = [
-        [a.lat, a.lng],
-        [a.lat + latStep, a.lng + lngStep]
-      ];
-
-      let rect = L.rectangle(bounds, {
-        fillColor: getColorNorm(norm),
-        color: "#333",
-        weight: 1,
-        fillOpacity: 0.65
-      }).addTo(aggregateLayer);
+      let rect = L.rectangle(
+        [[a.lat, a.lng], [a.lat + latStep, a.lng + lngStep]],
+        {
+          fillColor: showAggregateHeatmap ? getColorNorm(norm) : 'transparent',
+          fillOpacity: showAggregateHeatmap ? 0.6 : 0,
+          color: "#000",
+          weight: 1
+        }
+      ).addTo(aggregateLayer);
 
       rect.bindPopup(
-        `Aggregate Probability:<br><b>${a.aggProb.toFixed(4)}</b><br><small>Double-click to drill down</small>`
+        `Aggregate Probability:<br><b>${a.aggProb.toFixed(4)}</b><br>Double-click to drill down`
       );
 
       rect.on('dblclick', function(e) {
         aggregateLayer.clearLayers();
         drawNormalCells(e.target.getBounds());
-        backBtn.style.display = "block";
+        document.getElementById("backBtn").style.display = "block";
       });
     });
+
+    updateValidTime();
   }
 
   function drawNormalCells(bounds) {
@@ -134,28 +195,27 @@
 
     for (let i = 0; i < 10; i++) {
       for (let j = 0; j < 10; j++) {
-        let cell = [
-          [sw.lat + i * latS, sw.lng + j * lngS],
-          [sw.lat + (i + 1) * latS, sw.lng + (j + 1) * lngS]
-        ];
-
         let p = randomProb();
 
-        L.rectangle(cell, {
-          fillColor: getColorNorm(p / 0.002),
-          color: "#000",
-          weight: 0.4,
-          fillOpacity: 0.8
-        }).bindPopup(`Cell Probability: ${p.toFixed(5)}`)
-          .addTo(normalLayer);
+        L.rectangle(
+          [
+            [sw.lat + i * latS, sw.lng + j * lngS],
+            [sw.lat + (i + 1) * latS, sw.lng + (j + 1) * lngS]
+          ],
+          {
+            fillColor: getColorNorm(p / 0.006),
+            fillOpacity: 0.75,
+            color: "#000",
+            weight: 0.4
+          }
+        ).bindPopup(`Cell Probability: ${p.toFixed(5)}`)
+         .addTo(normalLayer);
       }
     }
 
     normalLayer.addTo(map);
     map.fitBounds(bounds);
   }
-
-  backBtn.onclick = drawAggregates;
 
   drawAggregates();
 </script>
