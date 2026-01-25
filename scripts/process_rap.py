@@ -13,7 +13,7 @@ DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ----------------------------
-# TIME LOGIC (same as before)
+# TIME LOGIC
 # ----------------------------
 now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
 target_time = now
@@ -41,21 +41,31 @@ s3.download_file(BUCKET, s3_key, local_file)
 print("Downloaded RAP file successfully")
 
 # ----------------------------
-# INSPECT GRIB MESSAGES
+# RAW MESSAGE INSPECTION
 # ----------------------------
-print("\n--- INSPECTING CAPE / CIN / SRH GRIB MESSAGES ---\n")
+print("\n--- RAW GRIB MESSAGE INSPECTION (CAPE / CIN / SRH) ---\n")
 
-gribs = cfgrib.open_file(local_file)
+seen = set()
 
-for var in gribs.variables.values():
-    a = var.attributes
-    if a.get("shortName") in ["cape", "cin", "hlcy"]:
-        print(
-            f"shortName={a.get('shortName')}, "
-            f"typeOfLevel={a.get('typeOfLevel')}, "
-            f"level={a.get('level')}, "
-            f"stepType={a.get('stepType')}, "
-            f"forecastTime={a.get('forecastTime')}"
-        )
+with cfgrib.open_file(local_file) as grib:
+    for msg in grib.message_iter():
+        a = msg.attributes
+        if a.get("shortName") in ["cape", "cin", "hlcy"]:
+            key = (
+                a.get("shortName"),
+                a.get("typeOfLevel"),
+                a.get("level"),
+                a.get("stepType"),
+                a.get("forecastTime"),
+            )
+            if key not in seen:
+                seen.add(key)
+                print(
+                    f"shortName={a.get('shortName')}, "
+                    f"typeOfLevel={a.get('typeOfLevel')}, "
+                    f"level={a.get('level')}, "
+                    f"stepType={a.get('stepType')}, "
+                    f"forecastTime={a.get('forecastTime')}"
+                )
 
-print("\n--- END INSPECTION ---")
+print("\n--- END RAW INSPECTION ---")
