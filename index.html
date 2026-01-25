@@ -1,111 +1,214 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map</title>
+  <title>Tornado Probability</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-    #map { height: 600px; margin: 20px; }
-    h1, p { text-align: center; margin-top: 20px; }
+    body {
+      margin: 0;
+      background: #0b0f14;
+      color: #eaeaea;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    #map {
+      height: 85vh;
+      width: 100%;
+    }
+
+    #toolbar {
+      padding: 10px;
+      background: #121821;
+      border-bottom: 1px solid #1f2a38;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      background: #1f2a38;
+      color: #fff;
+      border: 1px solid #2e3f55;
+      padding: 6px 12px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    button:hover {
+      background: #2b3b52;
+    }
   </style>
 </head>
+
 <body>
-  <h1>Tornado Probability Project</h1>
-  <p>If you can read this, GitHub Pages is working.</p>
-  <div id="map"></div>
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script>
-    // ----------------------
-    // CONUS bounds
-    var CONUS_bounds = [[24.5, -125], [49.5, -66.5]];
+<div id="toolbar">
+  <button id="backBtn" disabled>Back</button>
+  <span>EPSG:2163 · True 13 km Tornado Probability Grid</span>
+</div>
 
-    // Initialize map
-    var map = L.map('map', {
-        maxBounds: CONUS_bounds,
-        maxBoundsViscosity: 1.0,
-        minZoom: 4,
-        maxZoom: 8
-    }).setView([39.5, -98.35], 4);
+<div id="map"></div>
 
-    // Add OpenStreetMap tiles
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4/2.8.0/proj4.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
 
-    // ----------------------
-    // Layers
-    var aggregateLayer = L.layerGroup().addTo(map);
-    var normalLayer = L.layerGroup();
+<script>
+/* =========================
+   PROJECTION
+========================= */
 
-    // ----------------------
-    // Helper: random probability
-    function randomProb() {
-      return (Math.random() * 0.002).toFixed(5); // placeholder probability
+const crs = new L.Proj.CRS(
+  "EPSG:2163",
+  "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +units=m +no_defs",
+  { resolutions: [8192,4096,2048,1024,512,256,128,64,32,16,8,4,2,1] }
+);
+
+/* =========================
+   MAP INIT
+========================= */
+
+const map = L.map("map", {
+  crs,
+  minZoom: 2,
+  maxZoom: 8,
+  zoomSnap: 0.5
+});
+
+/* =========================
+   LAYERS
+========================= */
+
+const aggregateLayer = L.layerGroup().addTo(map);
+const cellLayer = L.layerGroup().addTo(map);
+
+/* =========================
+   CONSTANTS
+========================= */
+
+const CELL_SIZE = 13000;      // 13 km
+const AGG_SIZE  = 130000;     // 130 km
+
+// Expanded CONUS bounds (~10%)
+const CONUS_SW = [-2600000, -2400000];
+const CONUS_NE = [ 2600000,  2100000];
+
+// Hard east cutoff to remove ocean aggregates
+const EAST_CUTOFF = 1600000; // meters in EPSG:2163
+
+map.fitBounds([[CONUS_SW[1], CONUS_SW[0]], [CONUS_NE[1], CONUS_NE[0]]]);
+
+/* =========================
+   UTILITIES
+========================= */
+
+function randomProb() {
+  return Math.random() * 0.002;
+}
+
+function colorScale(p) {
+  if (p > 0.0015) return "#800026";
+  if (p > 0.0010) return "#BD0026";
+  if (p > 0.0005) return "#E31A1C";
+  if (p > 0.0002) return "#FC4E2A";
+  return "#FFEDA0";
+}
+
+/* =========================
+   STATE
+========================= */
+
+let currentView = "aggregate";
+
+/* =========================
+   AGGREGATE GRID
+========================= */
+
+function drawAggregates() {
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+  currentView = "aggregate";
+  backBtn.disabled = true;
+
+  for (let x = CONUS_SW[0]; x < CONUS_NE[0]; x += AGG_SIZE) {
+    if (x > EAST_CUTOFF) continue;
+
+    for (let y = CONUS_SW[1]; y < CONUS_NE[1]; y += AGG_SIZE) {
+
+      // Precompute child cell probabilities
+      let probs = [];
+      for (let i = 0; i < 100; i++) probs.push(randomProb());
+
+      const meanProb =
+        probs.reduce((a,b) => a + b, 0) / probs.length;
+
+      const bounds = [[y, x], [y + AGG_SIZE, x + AGG_SIZE]];
+
+      L.rectangle(bounds, {
+        color: "#111",
+        weight: 1,
+        fillColor: colorScale(meanProb),
+        fillOpacity: 0.65
+      })
+      .on("click", () => drawCells(bounds))
+      .addTo(aggregateLayer);
     }
+  }
+}
 
-    // Helper: color based on probability
-    function getColor(prob) {
-      var p = parseFloat(prob);
-      if (p > 0.0015) return '#800026';
-      else if (p > 0.001) return '#BD0026';
-      else if (p > 0.0005) return '#E31A1C';
-      else if (p > 0.0002) return '#FC4E2A';
-      else return '#FFEDA0';
+/* =========================
+   NORMAL CELLS
+========================= */
+
+function drawCells(aggBounds) {
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+  currentView = "cells";
+  backBtn.disabled = false;
+
+  const west  = aggBounds[0][1];
+  const south = aggBounds[0][0];
+  const east  = aggBounds[1][1];
+  const north = aggBounds[1][0];
+
+  for (let x = west; x < east; x += CELL_SIZE) {
+    for (let y = south; y < north; y += CELL_SIZE) {
+
+      const p = randomProb();
+
+      L.rectangle([[y, x], [y + CELL_SIZE, x + CELL_SIZE]], {
+        color: "#000",
+        weight: 0.4,
+        fillColor: colorScale(p),
+        fillOpacity: 0.85
+      })
+      .bindPopup(
+        `<b>Tornado Probability</b><br>${(p * 100).toFixed(4)}%`
+      )
+      .addTo(cellLayer);
     }
+  }
+}
 
-    // ----------------------
-    // Draw aggregate 130km cells
-    var latStep = 1.18; // ~130km in degrees latitude
-    var lngStep = 1.94; // ~130km in degrees longitude
+/* =========================
+   BACK BUTTON
+========================= */
 
-    for (var lat = 24.5; lat < 49.5; lat += latStep) {
-      for (var lng = -125; lng < -66.5; lng += lngStep) {
-        var bounds = [[lat, lng], [lat + latStep, lng + lngStep]];
-        L.rectangle(bounds, {color: "#0000FF", weight: 1, fillOpacity: 0.2})
-          .addTo(aggregateLayer)
-          .on('click', function(e) {
-            aggregateLayer.clearLayers(); // hide aggregates
-            drawNormalCells(e.target.getBounds());
-          });
-      }
-    }
+const backBtn = document.getElementById("backBtn");
+backBtn.onclick = () => {
+  if (currentView === "cells") drawAggregates();
+};
 
-    // ----------------------
-    // Draw normal 13km cells inside an aggregate
-    function drawNormalCells(aggregateBounds) {
-      normalLayer.clearLayers(); // clear previous normal cells
-      var lat1 = aggregateBounds.getSouthWest().lat;
-      var lng1 = aggregateBounds.getSouthWest().lng;
-      var lat2 = aggregateBounds.getNorthEast().lat;
-      var lng2 = aggregateBounds.getNorthEast().lng;
+/* =========================
+   START
+========================= */
 
-      var latStepSmall = (lat2 - lat1) / 10;
-      var lngStepSmall = (lng2 - lng1) / 10;
+drawAggregates();
 
-      for (var i = 0; i < 10; i++) {
-        for (var j = 0; j < 10; j++) {
-          var cellBounds = [
-            [lat1 + i*latStepSmall, lng1 + j*lngStepSmall],
-            [lat1 + (i+1)*latStepSmall, lng1 + (j+1)*lngStepSmall]
-          ];
-          var prob = randomProb();
-          L.rectangle(cellBounds, {
-            fillColor: getColor(prob),
-            color: "#000",
-            weight: 0.5,
-            fillOpacity: 0.7
-          }).bindPopup(`Probability: ${prob}`).addTo(normalLayer);
-        }
-      }
-      normalLayer.addTo(map);
-    }
-
-  </script>
+</script>
 </body>
 </html>
