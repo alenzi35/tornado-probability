@@ -2,40 +2,40 @@ name: Update RAP Tornado Data
 
 on:
   schedule:
-    - cron: '15 * * * *'   # runs at :15 past every hour
-  workflow_dispatch:        # allows manual run
+    - cron: "0 * * * *"   # run hourly, on the hour
+  workflow_dispatch:
 
 jobs:
-  update:
+  update-rap:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout your repository
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      # 3️⃣ Install dependencies
-      - name: Install dependencies
+      - name: Install system dependencies (eccodes)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libeccodes0 libeccodes-dev
-          pip install boto3 xarray numpy cfgrib
+          sudo apt-get install -y libeccodes-dev eccodes
 
-      # 4️⃣ Run RAP processing script
-      - name: Run RAP processing
-        run: python scripts/process_rap.py
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pygrib numpy boto3
 
-      # 5️⃣ Commit updated data
-      - name: Commit updated data
+      - name: Run RAP processing script
+        run: |
+          python scripts/process_rap.py
+
+      - name: Commit and push output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add data/
-          git commit -m "Update RAP tornado data" || echo "No changes"
+          git add data/tornado_prob.json
+          git commit -m "Update RAP tornado probability" || echo "No changes to commit"
           git push
