@@ -82,14 +82,15 @@
   var CONUS_bounds = [[22, -128], [51.5, -64]];
 
   var map = L.map('map', {
-    maxBounds: CONUS_bounds,
-    maxBoundsViscosity: 0.8,
-    minZoom: 4,
-    maxZoom: 19,
-    zoomControl: false
-  }).setView([39.5, -98.35], 4);
+  maxBounds: CONUS_bounds,
+  maxBoundsViscosity: 0,  // allows zooming beyond edges
+  minZoom: 4,
+  maxZoom: 19,
+  zoomSnap: 0.25,          // allows smoother zooming
+  zoomControl: true
+}).setView([39.5, -98.35], 4);
 
-  L.control.zoom({ position: 'topright' }).addTo(map);
+map.zoomControl.setPosition('topright');
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
