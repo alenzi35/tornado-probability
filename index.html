@@ -41,6 +41,8 @@
       margin: 4px 0;
       width: 100%;
       cursor: pointer;
+      height: 30px;           /* match Leaflet zoom buttons */
+      line-height: 30px;
     }
 
     #backBtn {
@@ -48,21 +50,22 @@
       display: none;
     }
 
-    /* VALID TIME BUTTON FIX */
+    /* VALID TIME BUTTON */
     #validTime {
       display: flex;
       align-items: center;
       justify-content: center;
-      height: 28px;        /* match + / - buttons */
-      line-height: 28px;   /* vertical centering */
-      padding: 0 6px;
-      margin-top: 6px;
-      font-size: 13px;
+      height: 30px;           /* match Leaflet zoom buttons */
+      line-height: 30px;
+      font-size: 14px;
       font-weight: bold;
       text-align: center;
-      background: #eaeaea;
-      border: 1px solid #999;
+      background: white;
+      border: 1px solid #ccc;
       border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.65);
+      margin-top: 6px;
+      padding: 0 6px;
     }
   </style>
 </head>
@@ -89,7 +92,7 @@
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
   // ------------------------------------
-  var CONUS_bounds = [[21, -130], [53, -63]]; // slightly expanded for zoom 19
+  var CONUS_bounds = [[20, -131], [54, -62]]; // expanded bounds for zoom 19
 
   var map = L.map('map', {
     maxBounds: CONUS_bounds,
@@ -252,4 +255,4 @@
 </script>
 
 </body>
-</html>
+  </html>
