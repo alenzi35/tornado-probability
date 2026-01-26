@@ -13,7 +13,7 @@ import xarray as xr
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# 1-hour tornado probability model (YOUR coefficients)
+# 1-hour tornado probability model coefficients
 INTERCEPT = -1.5686
 COEF_CAPE = 2.88592370e-03
 COEF_CIN  = 2.38728498e-05
@@ -25,7 +25,6 @@ COEF_HLCY = 8.85192696e-03
 
 now = datetime.utcnow()
 
-# RAP availability logic:
 # forecast initialized 2 hours before target time
 init_time = now - timedelta(hours=2)
 fhr = 2  # forecast hour offset
@@ -57,24 +56,29 @@ else:
 
 print("\nInspecting variables:\n")
 
-# --- CAPE & CIN (atmosphereSingleLayer diagnostics) ---
-ds_diag = xr.open_dataset(
-    grib_path,
-    engine="cfgrib",
-    filter_by_keys={"typeOfLevel": "atmosphereSingleLayer"}
-)
+# --- CAPE & CIN: try multiple level types ---
+cape = cin = None
+LEVEL_TYPES = ["atmosphereSingleLayer", "surface"]
 
-if "CAPE" not in ds_diag:
-    raise RuntimeError("CAPE NOT FOUND (atmosphereSingleLayer)")
+for level in LEVEL_TYPES:
+    try:
+        ds_diag = xr.open_dataset(
+            grib_path,
+            engine="cfgrib",
+            filter_by_keys={"typeOfLevel": level}
+        )
+        if "CAPE" in ds_diag:
+            cape = ds_diag["CAPE"].values
+        if "CIN" in ds_diag:
+            cin = ds_diag["CIN"].values
+        if cape is not None and cin is not None:
+            print(f"CAPE and CIN ✅ FOUND at {level}")
+            break
+    except Exception:
+        continue
 
-if "CIN" not in ds_diag:
-    raise RuntimeError("CIN NOT FOUND (atmosphereSingleLayer)")
-
-cape = ds_diag["CAPE"].values
-cin  = ds_diag["CIN"].values
-
-print("CAPE ✅ FOUND")
-print("CIN  ✅ FOUND")
+if cape is None or cin is None:
+    raise RuntimeError("CAPE or CIN not found in any known level type")
 
 # --- HLCY / SRH (0–1000 m AGL) ---
 ds_hlcy = xr.open_dataset(
@@ -87,7 +91,6 @@ if "HLCY" not in ds_hlcy:
     raise RuntimeError("HLCY (SRH) NOT FOUND at 0–1000 m AGL")
 
 hlcy = ds_hlcy["HLCY"].values
-
 print("HLCY ✅ FOUND")
 
 # =========================
@@ -97,13 +100,7 @@ print("HLCY ✅ FOUND")
 print("\nComputing tornado probability...")
 
 # Logistic regression
-logit = (
-    INTERCEPT
-    + COEF_CAPE * cape
-    + COEF_CIN  * cin
-    + COEF_HLCY * hlcy
-)
-
+logit = INTERCEPT + COEF_CAPE * cape + COEF_CIN * cin + COEF_HLCY * hlcy
 prob = 1 / (1 + np.exp(-logit))
 prob = np.clip(prob, 0, 1)
 
