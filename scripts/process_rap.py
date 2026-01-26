@@ -53,8 +53,36 @@ except Exception as e:
 # ----------------------------
 # Load & extract placeholder probability
 # ----------------------------
+# Replace the simple open_dataset call with a cfgrib open_datasets approach
+from cfgrib import open_datasets as cf_open_datasets
+
 try:
-    ds = xr.open_dataset(local_file, engine="cfgrib")
+    # open all dataset groups in the GRIB file (each group corresponds to a unique set of GRIB keys)
+    datasets = cf_open_datasets(local_file)
+
+    if not datasets:
+        raise RuntimeError("cfgrib returned no datasets from the GRIB file")
+
+    # prefer a dataset that contains any of the target variables
+    target_vars = {"CAPE", "CIN", "HLCY"}
+    selected_ds = None
+    for d in datasets:
+        if target_vars & set(d.data_vars):
+            selected_ds = d
+            break
+
+    # fallback: use the first dataset that has any data variables
+    if selected_ds is None:
+        for d in datasets:
+            if d.data_vars:
+                selected_ds = d
+                break
+
+    if selected_ds is None:
+        raise RuntimeError("No dataset with data variables found in GRIB file")
+
+    ds = selected_ds
+
 except Exception as e:
     print(f"Failed to open GRIB file: {e}")
     exit(1)
