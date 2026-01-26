@@ -2,9 +2,10 @@ import cfgrib
 
 grib_path = "data/rap.t20z.awp130pgrbf02.grib2"
 
-# List all messages (variables) in the GRIB
-from cfgrib import open_fileindex
-index = cfgrib.open_fileindex(grib_path)
+# Try opening without filtering to inspect all variables
+ds = cfgrib.open_dataset(grib_path, engine="cfgrib", backend_kwargs={'errors':'ignore'})
 
-for i, msg in enumerate(index):
-    print(f"{i}: shortName={msg['shortName']}, typeOfLevel={msg['typeOfLevel']}")
+print("Variables in GRIB:")
+for var in ds.variables:
+    if var not in ds.dims:
+        print(var)
