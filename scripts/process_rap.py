@@ -29,8 +29,7 @@ else:
 # 2. Open GRIB and inspect variables
 # ----------------------------
 print("\nInspecting variables in GRIB...")
-
-grbs = pygrib.open(local_path)
+grbs = list(pygrib.open(local_path))  # <- convert iterator to list
 
 def find_variable_by_level_range(grbs, varname, level_min=None, level_max=None):
     """
@@ -54,7 +53,7 @@ def find_variable_by_level_range(grbs, varname, level_min=None, level_max=None):
     print(f"{varname}: preferred level range not found, using level {getattr(g,'level','?')} ({g.typeOfLevel})")
     return g
 
-# CAPE & CIN: 0–90 mb if possible, HLCY: 0–1000 m
+# CAPE & CIN: 0–90 mb, HLCY: 0–1000 m
 CAPE_msg = find_variable_by_level_range(grbs, "CAPE", 0, 90)
 CIN_msg  = find_variable_by_level_range(grbs, "CIN", 0, 90)
 HLCY_msg = find_variable_by_level_range(grbs, "HLCY", 0, 1000)
@@ -63,7 +62,6 @@ CAPE = CAPE_msg.values
 CIN  = CIN_msg.values
 HLCY = HLCY_msg.values
 
-grbs.close()
 print("✅ CAPE, CIN, HLCY extracted successfully.")
 
 # ----------------------------
