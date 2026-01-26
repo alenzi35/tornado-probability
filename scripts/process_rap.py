@@ -1,8 +1,8 @@
+# save this as check_variables.py in your repo, e.g., at the root
 import cfgrib
 
-grib_file = "data/rap_latest.grib2"  # Path to your downloaded RAP GRIB
+grib_file = "data/rap_latest.grib2"  # path to your RAP GRIB
 
-# Define the variables and their desired levels
 variables = [
     {"shortName": "CAPE", "typeOfLevel": "isobaricInhPa", "min": 0, "max": 90},
     {"shortName": "CIN", "typeOfLevel": "isobaricInhPa", "min": 0, "max": 90},
@@ -18,7 +18,6 @@ for var in variables:
         if len(ds.data_vars) == 0:
             print(f"{var['shortName']} NOT present in GRIB file.")
         else:
-            # Check levels
             level_name = "isobaricInhPa" if "isobaricInhPa" in var["typeOfLevel"] else "heightAboveGround"
             levels = ds.get(level_name)
             if levels is not None:
