@@ -27,30 +27,33 @@ intercept = -1.5686
 coeffs = {"CAPE": 0.0028859237, "CIN": 2.38728498e-05, "HLCY": 0.00885192696}
 
 # -------------------------------
-# 4️⃣ Universal variable picker
-def pick_variable_any(grbs, varname):
-    varname_lc = varname.lower()
-    msgs = []
+# 4️⃣ Fuzzy variable picker
+def pick_variable_fuzzy(grbs, varname_keywords):
+    """
+    Pick the first GRIB message whose shortName, name, or description
+    contains any of the keywords (case-insensitive).
+    """
+    varname_keywords = [k.lower() for k in varname_keywords]
 
     for g in grbs:
-        # Some GRIBs store name in 'shortName', some in 'name'
-        names_to_check = [getattr(g, 'shortName', '').lower(),
-                          getattr(g, 'name', '').lower()]
-        if varname_lc in names_to_check:
-            msgs.append(g)
+        fields_to_check = [
+            getattr(g, 'shortName', ''),
+            getattr(g, 'name', ''),
+            getattr(g, 'description', '')
+        ]
+        fields_to_check = [f.lower() for f in fields_to_check]
 
-    if not msgs:
-        raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
+        if any(any(k in f for f in fields_to_check) for k in varname_keywords):
+            print(f"✅ Found {varname_keywords[0]}: level {getattr(g,'level','unknown')} ({getattr(g,'typeOfLevel','unknown')})")
+            return g
 
-    chosen = msgs[0]
-    print(f"{varname}: using level {getattr(chosen,'level','unknown')} ({getattr(chosen,'typeOfLevel','unknown')})")
-    return chosen
+    raise RuntimeError(f"❌ None of the keywords {varname_keywords} found in GRIB")
 
 # -------------------------------
-# 5️⃣ Pick variables
-CAPE_msg = pick_variable_any(grbs, "CAPE")
-CIN_msg  = pick_variable_any(grbs, "CIN")
-HLCY_msg = pick_variable_any(grbs, "HLCY")
+# 5️⃣ Pick variables using fuzzy names
+CAPE_msg = pick_variable_fuzzy(grbs, ["cape"])
+CIN_msg  = pick_variable_fuzzy(grbs, ["cin", "convectiveinhibition"])
+HLCY_msg = pick_variable_fuzzy(grbs, ["hlcy", "stormrelativehelicity"])
 
 # -------------------------------
 # 6️⃣ Extract arrays
