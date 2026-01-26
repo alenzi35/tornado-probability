@@ -38,7 +38,7 @@ jobs:
     # ------------------------
     - name: Run RAP script
       run: |
-        python scripts/extract_rap.py
+        python scripts/process_rap.py
 
     # ------------------------
     # 5. Commit & push JSON
