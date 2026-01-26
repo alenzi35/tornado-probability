@@ -14,11 +14,14 @@ BUCKET = "noaa-rap-pds"
 DATA_DIR = "data"
 FORECAST_OFFSET_HOURS = 2
 
-# Optional: specify variable you actually want
-# Example: {"shortName":"CAPE", "typeOfLevel":"surface"} or {}
-VARIABLE_FILTER = {}  # empty = pick first variable automatically
-
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Variables to extract
+VARIABLES = [
+    {"shortName": "CAPE", "typeOfLevel": "isobaricInhPa"},
+    {"shortName": "CIN", "typeOfLevel": "isobaricInhPa"},
+    {"shortName": "HLCY", "typeOfLevel": "heightAboveGround"}
+]
 
 # ----------------------------
 # Time logic
@@ -53,28 +56,45 @@ except Exception as e:
     exit(1)
 
 # ----------------------------
-# Load GRIB with variable filter
+# Load variables
 # ----------------------------
-try:
-    ds = xr.open_dataset(local_file, engine="cfgrib", filter_by_keys=VARIABLE_FILTER)
-except Exception as e:
-    print(f"Failed to open GRIB file: {e}")
-    exit(1)
-
-# Pick first variable if filter returned multiple
-var = list(ds.data_vars)[0]
-data = ds[var].values
-
-# Placeholder probability calculation
-prob = float(np.clip(np.mean(data) / np.max(data), 0, 1))
+data_dict = {}
+for var in VARIABLES:
+    try:
+        ds = xr.open_dataset(local_file, engine="cfgrib", filter_by_keys=var)
+        name = list(ds.data_vars)[0]
+        data_dict[var["shortName"]] = ds[name].values
+        print(f"Loaded {var['shortName']} ({var['typeOfLevel']})")
+    except Exception as e:
+        print(f"Failed to load {var['shortName']}: {e}")
+        exit(1)
 
 # ----------------------------
-# Save JSON for website
+# Create 10x10 probability grid (placeholder calculation)
+# ----------------------------
+# This is where you would implement your actual tornado probability calculation
+# For now, just combine normalized CAPE, CIN, HLCY as a placeholder
+grid = np.zeros((10, 10))
+for i in range(10):
+    for j in range(10):
+        # Take random slice from each variable
+        cape_val = np.mean(data_dict["CAPE"][i::10, j::10])
+        cin_val = np.mean(data_dict["CIN"][i::10, j::10])
+        hlcy_val = np.mean(data_dict["HLCY"][i::10, j::10])
+        # Normalize each 0–1 (rough placeholder)
+        cape_norm = np.clip(cape_val / 1000, 0, 1)
+        cin_norm = np.clip(np.abs(cin_val) / 100, 0, 1)
+        hlcy_norm = np.clip(hlcy_val / 500, 0, 1)
+        # Combine into single probability
+        grid[i, j] = np.clip(cape_norm + hlcy_norm - cin_norm, 0, 1)
+
+# ----------------------------
+# Save JSON
 # ----------------------------
 out = {
     "target_time": target_time.isoformat() + "Z",
     "init_time": init_time.isoformat() + "Z",
-    "probability": prob
+    "probability_grid": grid.tolist()  # 10x10 grid for Leaflet map
 }
 
 json_file = os.path.join(DATA_DIR, "tornado_prob.json")
