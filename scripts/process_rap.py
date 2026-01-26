@@ -16,11 +16,11 @@ FORECAST_OFFSET_HOURS = 2
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Variables with their correct typeOfLevel
+# Variables with their correct typeOfLevel and desired slicing
 VARIABLES = [
-    {"shortName": "CAPE", "typeOfLevel": "isobaricInhPa"},
-    {"shortName": "CIN", "typeOfLevel": "isobaricInhPa"},
-    {"shortName": "HLCY", "typeOfLevel": "heightAboveGround"}
+    {"shortName": "CAPE", "typeOfLevel": "isobaricInhPa", "level_min": 0, "level_max": 90},
+    {"shortName": "CIN", "typeOfLevel": "isobaricInhPa", "level_min": 0, "level_max": 90},
+    {"shortName": "HLCY", "typeOfLevel": "heightAboveGround", "level_min": 0, "level_max": 1000},
 ]
 
 # ----------------------------
@@ -62,18 +62,34 @@ data_dict = {}
 for var in VARIABLES:
     try:
         ds_var = xr.open_dataset(local_file, engine="cfgrib",
-                                 filter_by_keys=var)
+                                 filter_by_keys={"shortName": var["shortName"], "typeOfLevel": var["typeOfLevel"]})
         if len(ds_var.data_vars) == 0:
             print(f"Warning: {var['shortName']} not in this GRIB file")
             continue
         name = list(ds_var.data_vars)[0]
-        data_dict[var["shortName"]] = ds_var[name].values
-        print(f"Loaded {var['shortName']} ({var['typeOfLevel']})")
+        da = ds_var[name]
+
+        # ----------------------------
+        # Slice by level if available
+        # ----------------------------
+        if "isobaricInhPa" in var["typeOfLevel"]:
+            levels = ds_var.get("isobaricInhPa")
+            if levels is not None:
+                mask = (levels >= var["level_min"]) & (levels <= var["level_max"])
+                da = da.sel(isobaricInhPa=levels[mask])
+        elif "heightAboveGround" in var["typeOfLevel"]:
+            levels = ds_var.get("heightAboveGround")
+            if levels is not None:
+                mask = (levels >= var["level_min"]) & (levels <= var["level_max"])
+                da = da.sel(heightAboveGround=levels[mask])
+
+        data_dict[var["shortName"]] = da.values
+        print(f"Loaded {var['shortName']} ({var['typeOfLevel']}) with slicing")
     except Exception as e:
         print(f"Failed to load {var['shortName']}: {e}")
 
 # ----------------------------
-# Create 10x10 probability grid (placeholder calculation)
+# Create 10x10 probability grid
 # ----------------------------
 grid = np.zeros((10, 10))
 for i in range(10):
