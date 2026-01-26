@@ -27,24 +27,26 @@ intercept = -1.5686
 coeffs = {"CAPE": 0.0028859237, "CIN": 2.38728498e-05, "HLCY": 0.00885192696}
 
 # -------------------------------
-# 4️⃣ Fuzzy variable picker
+# 4️⃣ Safe fuzzy variable picker
 def pick_variable_fuzzy(grbs, varname_keywords):
     """
     Pick the first GRIB message whose shortName, name, or description
     contains any of the keywords (case-insensitive).
+    Safely handles missing keys.
     """
     varname_keywords = [k.lower() for k in varname_keywords]
 
     for g in grbs:
-        fields_to_check = [
-            getattr(g, 'shortName', ''),
-            getattr(g, 'name', ''),
-            getattr(g, 'description', '')
-        ]
-        fields_to_check = [f.lower() for f in fields_to_check]
+        # Only check keys that exist
+        fields_to_check = []
+        for key in ['shortName', 'name', 'description']:
+            if key in g.keys():  # safe access
+                fields_to_check.append(str(g[key]).lower())
 
         if any(any(k in f for f in fields_to_check) for k in varname_keywords):
-            print(f"✅ Found {varname_keywords[0]}: level {getattr(g,'level','unknown')} ({getattr(g,'typeOfLevel','unknown')})")
+            level = g['level'] if 'level' in g.keys() else 'unknown'
+            typel = g['typeOfLevel'] if 'typeOfLevel' in g.keys() else 'unknown'
+            print(f"✅ Found {varname_keywords[0]}: level {level} ({typel})")
             return g
 
     raise RuntimeError(f"❌ None of the keywords {varname_keywords} found in GRIB")
@@ -69,7 +71,7 @@ linear_comb = intercept + CAPE*coeffs["CAPE"] + CIN*coeffs["CIN"] + HLCY*coeffs[
 prob = 1 / (1 + np.exp(-linear_comb))  # logistic function
 
 # -------------------------------
-# 8️⃣ Build JSON
+# 8️⃣ Build JSON for map
 cells = []
 for i in range(prob.shape[0]):
     for j in range(prob.shape[1]):
