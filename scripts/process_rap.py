@@ -26,30 +26,37 @@ else:
     print("RAP GRIB already exists locally.")
 
 # ----------------------------
-# 2. Open GRIB and extract variables
+# 2. Open GRIB and inspect variables
 # ----------------------------
 print("\nInspecting variables in GRIB...")
 
 grbs = pygrib.open(local_path)
 
-def pick_grib_message(grbs, varname, preferred_levels):
-    """Pick the first message matching preferred_levels, fallback to any message if needed."""
-    for lvl in preferred_levels:
-        msgs = [g for g in grbs if g.shortName == varname and g.typeOfLevel == lvl]
-        if msgs:
-            print(f"{varname}: using level {lvl}")
-            return msgs[0]
-    # fallback: pick first message with that variable
-    msgs = [g for g in grbs if g.shortName == varname]
-    if msgs:
-        print(f"{varname}: preferred levels not found, using {msgs[0].typeOfLevel}")
-        return msgs[0]
-    raise RuntimeError(f"{varname} NOT FOUND in any candidate levels!")
+def find_variable_by_level_range(grbs, varname, level_min=None, level_max=None):
+    """
+    Find the first message for varname within optional numeric level range.
+    If level_min/max are None, just pick the first available message.
+    """
+    candidates = [g for g in grbs if g.shortName == varname]
+    if not candidates:
+        raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
+    
+    for g in candidates:
+        lvl = getattr(g, "level", None)
+        if lvl is not None:
+            if ((level_min is None or lvl >= level_min) and
+                (level_max is None or lvl <= level_max)):
+                print(f"{varname}: using level {lvl} ({g.typeOfLevel})")
+                return g
+    # fallback: pick first candidate if no level in range
+    g = candidates[0]
+    print(f"{varname}: preferred level range not found, using level {getattr(g,'level','?')} ({g.typeOfLevel})")
+    return g
 
-# CAPE & CIN: preferred pressureFromGroundLayer (0–90 mb), HLCY: heightAboveGroundLayer (0–1000 m AG)
-CAPE_msg = pick_grib_message(grbs, "CAPE", ["pressureFromGroundLayer"])
-CIN_msg  = pick_grib_message(grbs, "CIN", ["pressureFromGroundLayer"])
-HLCY_msg = pick_grib_message(grbs, "HLCY", ["heightAboveGroundLayer"])
+# CAPE & CIN: 0–90 mb if possible, HLCY: 0–1000 m
+CAPE_msg = find_variable_by_level_range(grbs, "CAPE", 0, 90)
+CIN_msg  = find_variable_by_level_range(grbs, "CIN", 0, 90)
+HLCY_msg = find_variable_by_level_range(grbs, "HLCY", 0, 1000)
 
 CAPE = CAPE_msg.values
 CIN  = CIN_msg.values
