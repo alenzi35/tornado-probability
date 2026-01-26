@@ -1,96 +1,75 @@
+#!/usr/bin/env python3
+import pygrib
+import numpy as np
+import json
 import os
 import urllib.request
-import numpy as np
-import pygrib
-import json
-from datetime import datetime
 
-# ----------------------------
-# 1. RAP GRIB setup
-# ----------------------------
-today = datetime.utcnow().date()
-target_hour = 21  # target UTC hour
-forecast_init_hour = (target_hour - 2) % 24  # 2 hours behind
-
-# RAP URL and local path
-rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{today:%Y%m%d}/rap.t{forecast_init_hour:02d}z.awp130pgrbf02.grib2"
-local_path = f"data/rap_{today:%Y%m%d}_t{forecast_init_hour:02d}z_f02.grib2"
+# -------------------------------
+# 1️⃣ RAP GRIB URL (adjust date/time as needed)
+# Example: Jan 26, 2026, 19Z + 2h forecast
+rap_url = "https://noaa-rap-pds.s3.amazonaws.com/rap.20260126/rap.t19z.awp130pgrbf02.grib2"
+local_file = "data/rap_latest.grib2"
 os.makedirs("data", exist_ok=True)
 
-# Download GRIB if missing
-if not os.path.exists(local_path):
+# Download if not already present
+if not os.path.exists(local_file):
     print(f"Downloading RAP GRIB from {rap_url} ...")
-    urllib.request.urlretrieve(rap_url, local_path)
-    print("Download complete.")
-else:
-    print("RAP GRIB already exists locally.")
+    urllib.request.urlretrieve(rap_url, local_file)
+    print("Download complete.\n")
 
-# ----------------------------
-# 2. Open GRIB and inspect variables
-# ----------------------------
-print("\nInspecting variables in GRIB...")
-grbs = list(pygrib.open(local_path))  # <- convert iterator to list
+# -------------------------------
+# 2️⃣ Open GRIB
+grbs = pygrib.open(local_file)
 
-def find_variable_by_level_range(grbs, varname, level_min=None, level_max=None):
-    """
-    Find a GRIB message for varname (case-insensitive) within optional numeric level range.
-    """
-    candidates = [g for g in grbs if g.shortName.lower() == varname.lower()]
-    if not candidates:
-        # Print all shortNames for debugging
-        print(f"All shortNames in GRIB: {[g.shortName for g in grbs]}")
-        raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
-    
-    for g in candidates:
-        lvl = getattr(g, "level", None)
-        if lvl is not None:
-            if ((level_min is None or lvl >= level_min) and
-                (level_max is None or lvl <= level_max)):
-                print(f"{varname}: using level {lvl} ({g.typeOfLevel})")
-                return g
-    # fallback: pick first candidate if no level in range
-    g = candidates[0]
-    print(f"{varname}: preferred level range not found, using level {getattr(g,'level','?')} ({g.typeOfLevel})")
-    return g
+# -------------------------------
+# 3️⃣ Coefficients
+intercept = -1.5686
+coeffs = {"CAPE": 0.0028859237, "CIN": 2.38728498e-05, "HLCY": 0.00885192696}
 
-# CAPE & CIN: 0–90 mb, HLCY: 0–1000 m
-CAPE_msg = find_variable_by_level_range(grbs, "CAPE", 0, 90)
-CIN_msg  = find_variable_by_level_range(grbs, "CIN", 0, 90)
-HLCY_msg = find_variable_by_level_range(grbs, "HLCY", 0, 1000)
+# -------------------------------
+# 4️⃣ Pick variables
+def pick_variable(grbs, name, fallback_levels):
+    msgs = [g for g in grbs if g.shortName==name]
+    for lvl in fallback_levels:
+        for m in msgs:
+            if getattr(m, "typeOfLevel", "") == lvl:
+                return m
+    # fallback to first available
+    if msgs:
+        return msgs[0]
+    raise RuntimeError(f"{name} NOT FOUND in GRIB!")
 
+# For testing, we'll accept surface if exact levels not found
+CAPE_msg = pick_variable(grbs, "CAPE", ["pressureFromGroundLayer", "surface"])
+CIN_msg  = pick_variable(grbs, "CIN", ["pressureFromGroundLayer", "surface"])
+HLCY_msg = pick_variable(grbs, "HLCY", ["heightAboveGroundLayer"])
+
+# -------------------------------
+# 5️⃣ Extract data as arrays
 CAPE = CAPE_msg.values
 CIN  = CIN_msg.values
 HLCY = HLCY_msg.values
 
-print("✅ CAPE, CIN, HLCY extracted successfully.")
+lats, lons = CAPE_msg.latlons()  # all variables on same grid
 
-# ----------------------------
-# 3. Compute 1-hour tornado probability
-# ----------------------------
-intercept = -1.5686
-coeffs = {
-    "CAPE": 2.88592370e-03,
-    "CIN": 2.38728498e-05,
-    "HLCY": 8.85192696e-03
-}
+# -------------------------------
+# 6️⃣ Compute 1-hour probability
+linear_comb = intercept + CAPE*coeffs["CAPE"] + CIN*coeffs["CIN"] + HLCY*coeffs["HLCY"]
+prob = 1 / (1 + np.exp(-linear_comb))
 
-def logistic_prob(cape, cin, hlcy):
-    z = intercept + coeffs["CAPE"]*cape + coeffs["CIN"]*cin + coeffs["HLCY"]*hlcy
-    return 1 / (1 + np.exp(-z))
+# -------------------------------
+# 7️⃣ Build JSON
+cells = []
+for i in range(prob.shape[0]):
+    for j in range(prob.shape[1]):
+        cells.append({
+            "lat": float(lats[i,j]),
+            "lon": float(lons[i,j]),
+            "prob": float(prob[i,j])
+        })
 
-prob_grid = logistic_prob(CAPE, CIN, HLCY)
+with open("data/tornado_prob.json", "w") as f:
+    json.dump(cells, f)
 
-# ----------------------------
-# 4. Save probability as JSON
-# ----------------------------
-output = {
-    "date": str(today),
-    "target_hour_utc": target_hour,
-    "probability_grid": prob_grid.tolist()
-}
-
-output_path = "data/tornado_prob.json"
-with open(output_path, "w") as f:
-    json.dump(output, f)
-
-print(f"\nTornado probabilities saved to {output_path}")
+print("✅ Tornado probability JSON saved to data/tornado_prob.json")
