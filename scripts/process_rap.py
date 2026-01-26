@@ -1,95 +1,134 @@
 import os
+import json
+import math
 import urllib.request
-import cfgrib
 from datetime import datetime, timedelta
 
-# ============================================================
-# USER SETTING — TARGET TIME (UTC)
-# Monday 26 Jan 2026, 21:00 UTC
-# ============================================================
-target_time = datetime(2026, 1, 26, 21, 0)
+import numpy as np
+import xarray as xr
 
-# ============================================================
-# RAP TIMING LOGIC
-# RAP forecast initialized 2 hours before target
-# ============================================================
-init_time = target_time - timedelta(hours=2)
+# =========================
+# CONFIG
+# =========================
 
-forecast_hour = int((target_time - init_time).total_seconds() / 3600)
-forecast_hour_str = f"{forecast_hour:02d}"
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# 1-hour tornado probability model (YOUR coefficients)
+INTERCEPT = -1.5686
+COEF_CAPE = 2.88592370e-03
+COEF_CIN  = 2.38728498e-05
+COEF_HLCY = 8.85192696e-03
+
+# =========================
+# DETERMINE RAP FILE
+# =========================
+
+now = datetime.utcnow()
+
+# RAP availability logic:
+# forecast initialized 2 hours before target time
+init_time = now - timedelta(hours=2)
+fhr = 2  # forecast hour offset
 
 date_str = init_time.strftime("%Y%m%d")
 hour_str = init_time.strftime("%H")
 
-# ============================================================
-# REAL NOAA RAP URL (THIS WAS THE PROBLEM BEFORE)
-# ============================================================
-rap_url = (
-    f"https://noaa-rap-pds.s3.amazonaws.com/"
-    f"rap.{date_str}/rap.t{hour_str}z.awp130pgrbf{forecast_hour_str}.grib2"
-)
+rap_filename = f"rap.t{hour_str}z.awp130pgrbf{fhr:02d}.grib2"
+rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/{rap_filename}"
 
-print("RAP URL:", rap_url)
+grib_path = os.path.join(DATA_DIR, rap_filename)
 
-# ============================================================
-# DOWNLOAD GRIB
-# ============================================================
-data_dir = "data"
-os.makedirs(data_dir, exist_ok=True)
+print(f"RAP URL: {rap_url}")
 
-grib_file = os.path.join(
-    data_dir,
-    f"rap_{date_str}_t{hour_str}z_f{forecast_hour_str}.grib2"
-)
+# =========================
+# DOWNLOAD RAP
+# =========================
 
-if not os.path.exists(grib_file):
+if not os.path.exists(grib_path):
     print("Downloading RAP GRIB...")
-    urllib.request.urlretrieve(rap_url, grib_file)
+    urllib.request.urlretrieve(rap_url, grib_path)
     print("Download complete.")
 else:
-    print("GRIB already exists:", grib_file)
+    print("RAP GRIB already exists.")
 
-# ============================================================
-# VARIABLE CHECK — THIS ANSWERS YOUR CORE QUESTION
-# ============================================================
-variables = [
-    # CAPE: 0–90 mb isobaric
-    {
-        "name": "CAPE",
-        "shortName": "CAPE",
-        "typeOfLevel": "isobaricInhPa",
-    },
-    # CIN: 0–90 mb isobaric
-    {
-        "name": "CIN",
-        "shortName": "CIN",
-        "typeOfLevel": "isobaricInhPa",
-    },
-    # Storm-relative helicity (HLCY): 0–1000 m AGL
-    {
-        "name": "HLCY",
-        "shortName": "HLCY",
-        "typeOfLevel": "heightAboveGround",
-    },
-]
+# =========================
+# LOAD VARIABLES
+# =========================
 
 print("\nInspecting variables:\n")
 
-for var in variables:
-    try:
-        ds = cfgrib.open_dataset(
-            grib_file,
-            filter_by_keys={
-                "shortName": var["shortName"],
-                "typeOfLevel": var["typeOfLevel"],
-            },
-        )
-        print(f"{var['name']} ✅ FOUND")
-        print(f"  dimensions: {list(ds.dims)}")
-        print(f"  coordinates: {list(ds.coords)}\n")
+# --- CAPE & CIN (0–90 mb, isobaric) ---
+ds_iso = xr.open_dataset(
+    grib_path,
+    engine="cfgrib",
+    filter_by_keys={
+        "typeOfLevel": "isobaricLayer",
+        "topLevel": 90,
+        "bottomLevel": 0,
+    }
+)
 
-    except Exception as e:
-        print(f"{var['name']} ❌ NOT FOUND")
-        print(f"  error: {e}\n")
+if "CAPE" not in ds_iso:
+    raise RuntimeError("CAPE NOT FOUND at 0–90 mb")
 
-print("DONE")
+if "CIN" not in ds_iso:
+    raise RuntimeError("CIN NOT FOUND at 0–90 mb")
+
+cape = ds_iso["CAPE"].values
+cin  = ds_iso["CIN"].values
+
+print("CAPE ✅ FOUND")
+print("CIN  ✅ FOUND")
+
+# --- HLCY / SRH (0–1000 m AGL) ---
+ds_hlcy = xr.open_dataset(
+    grib_path,
+    engine="cfgrib",
+    filter_by_keys={
+        "typeOfLevel": "heightAboveGroundLayer",
+        "topLevel": 1000,
+        "bottomLevel": 0,
+    }
+)
+
+if "HLCY" not in ds_hlcy:
+    raise RuntimeError("HLCY (SRH) NOT FOUND at 0–1000 m AGL")
+
+hlcy = ds_hlcy["HLCY"].values
+
+print("HLCY ✅ FOUND")
+
+# =========================
+# PROBABILITY CALCULATION
+# =========================
+
+print("\nComputing tornado probability...")
+
+# Logistic regression
+logit = (
+    INTERCEPT
+    + COEF_CAPE * cape
+    + COEF_CIN  * cin
+    + COEF_HLCY * hlcy
+)
+
+prob = 1 / (1 + np.exp(-logit))
+prob = np.clip(prob, 0, 1)
+
+# =========================
+# EXPORT FOR MAP
+# =========================
+
+output = {
+    "generated_utc": now.isoformat() + "Z",
+    "forecast_valid_utc": (init_time + timedelta(hours=fhr)).isoformat() + "Z",
+    "probability": prob.tolist(),
+}
+
+out_path = os.path.join(DATA_DIR, "tornado_prob.json")
+
+with open(out_path, "w") as f:
+    json.dump(output, f)
+
+print(f"\nDONE — tornado_prob.json written")
