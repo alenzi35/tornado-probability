@@ -1,10 +1,12 @@
 import os
+import json
 import urllib.request
 from datetime import datetime, timedelta
-import xarray as xr
+import pygrib
+import numpy as np
 
 # -------------------------------
-# 1️⃣ Set up directories and target time
+# 1️⃣ Setup directories and target times
 # -------------------------------
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -32,12 +34,67 @@ else:
     print("RAP GRIB already exists:", grib_path)
 
 # -------------------------------
-# 3️⃣ Open GRIB and inspect variables
+# 3️⃣ Open GRIB and detect variables
 # -------------------------------
-ds = xr.open_dataset(grib_path, engine="cfgrib", backend_kwargs={'errors':'ignore'})
+grbs = pygrib.open(grib_path)
 
-print("\nVariables in the GRIB file with typeOfLevel:")
-for var in ds.data_vars:
-    # cfgrib stores typeOfLevel in the variable’s encoding
-    type_of_level = ds[var].encoding.get('GRIB_typeOfLevel', 'unknown')
-    print(f"{var}: typeOfLevel = {type_of_level}")
+CAPE_msg = None
+CIN_msg = None
+HLCY_msg = None
+
+print("\nInspecting variables in GRIB:")
+for grb in grbs:
+    print(f"{grb.shortName}: typeOfLevel={grb.typeOfLevel}")
+    if grb.shortName == "CAPE":
+        CAPE_msg = grb
+    elif grb.shortName == "CIN":
+        CIN_msg = grb
+    elif grb.shortName in ["HLCY","SRH"]:  # HLCY is sometimes SRH
+        HLCY_msg = grb
+
+grbs.close()
+
+# -------------------------------
+# 4️⃣ Check that all variables were found
+# -------------------------------
+if not CAPE_msg or not CIN_msg or not HLCY_msg:
+    raise RuntimeError("CAPE, CIN, or HLCY not found in GRIB file!")
+
+print("\n✅ All required variables found. Proceeding to probability calculation.")
+
+# -------------------------------
+# 5️⃣ Read data arrays
+# -------------------------------
+# We convert to 2D numpy arrays
+grbs = pygrib.open(grib_path)
+CAPE = np.array([g.values for g in grbs if g == CAPE_msg])[0]
+CIN = np.array([g.values for g in grbs if g == CIN_msg])[0]
+HLCY = np.array([g.values for g in grbs if g == HLCY_msg])[0]
+grbs.close()
+
+# -------------------------------
+# 6️⃣ Compute 1-hour tornado probability
+# -------------------------------
+# Coefficients
+intercept = -1.5686
+coef_CAPE = 2.88592370e-03
+coef_CIN = 2.38728498e-05
+coef_HLCY = 8.85192696e-03
+
+logit = intercept + coef_CAPE*CAPE + coef_CIN*CIN + coef_HLCY*HLCY
+prob = 1 / (1 + np.exp(-logit))
+
+# -------------------------------
+# 7️⃣ Save probability JSON for map
+# -------------------------------
+output = {
+    "lead_time_hours": 1,
+    "valid_time": target_time.strftime("%H:%M"),
+    "probabilities": prob.tolist()
+}
+
+output_path = os.path.join(DATA_DIR, "tornado_prob.json")
+with open(output_path, "w") as f:
+    json.dump(output, f)
+
+print(f"\n✅ Tornado probability saved to {output_path}")
