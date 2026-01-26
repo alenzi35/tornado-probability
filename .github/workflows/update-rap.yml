@@ -39,13 +39,3 @@ jobs:
     - name: Run RAP script
       run: |
         python scripts/process_rap.py
-
-    # ------------------------
-    # 5. Commit & push JSON
-    # ------------------------
-    - name: Commit and push
-      run: |
-        git config user.name "github-actions"
-        git config user.email "github-actions@github.com"
-        git commit -m "Update RAP tornado data" || echo "No changes to commit"
-        git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:main
