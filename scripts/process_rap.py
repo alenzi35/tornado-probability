@@ -27,38 +27,30 @@ intercept = -1.5686
 coeffs = {"CAPE": 0.0028859237, "CIN": 2.38728498e-05, "HLCY": 0.00885192696}
 
 # -------------------------------
-# 4️⃣ Robust variable picker
-def pick_variable(grbs, varname, candidate_levels=None):
+# 4️⃣ Universal variable picker
+def pick_variable_any(grbs, varname):
     varname_lc = varname.lower()
-    msgs = [g for g in grbs if g.shortName.lower() == varname_lc]
+    msgs = []
+
+    for g in grbs:
+        # Some GRIBs store name in 'shortName', some in 'name'
+        names_to_check = [getattr(g, 'shortName', '').lower(),
+                          getattr(g, 'name', '').lower()]
+        if varname_lc in names_to_check:
+            msgs.append(g)
 
     if not msgs:
         raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
 
-    # If no candidate_levels specified, pick first available
-    if not candidate_levels:
-        chosen = msgs[0]
-        print(f"{varname}: using first available level {getattr(chosen,'level','unknown')} ({getattr(chosen,'typeOfLevel','unknown')})")
-        return chosen
-
-    # Try to pick message matching candidate levels
-    for lvl in candidate_levels:
-        for m in msgs:
-            if getattr(m, "typeOfLevel", "") == lvl:
-                print(f"{varname}: using level {getattr(m,'level','unknown')} ({lvl})")
-                return m
-
-    # Fallback: pick the first message and print all available
-    print(f"{varname}: desired levels {candidate_levels} not found, using first available instead")
-    for m in msgs:
-        print(f"  Available: level {getattr(m,'level','unknown')}, typeOfLevel {getattr(m,'typeOfLevel','unknown')}")
-    return msgs[0]
+    chosen = msgs[0]
+    print(f"{varname}: using level {getattr(chosen,'level','unknown')} ({getattr(chosen,'typeOfLevel','unknown')})")
+    return chosen
 
 # -------------------------------
-# 5️⃣ Pick variables (fallbacks)
-CAPE_msg = pick_variable(grbs, "CAPE", ["pressureFromGroundLayer", "surface"])
-CIN_msg  = pick_variable(grbs, "CIN", ["pressureFromGroundLayer", "surface"])
-HLCY_msg = pick_variable(grbs, "HLCY", ["heightAboveGroundLayer"])
+# 5️⃣ Pick variables
+CAPE_msg = pick_variable_any(grbs, "CAPE")
+CIN_msg  = pick_variable_any(grbs, "CIN")
+HLCY_msg = pick_variable_any(grbs, "HLCY")
 
 # -------------------------------
 # 6️⃣ Extract arrays
