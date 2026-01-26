@@ -20,7 +20,7 @@ date_str = init_time.strftime("%Y%m%d")  # e.g., 20260126
 hour_str = init_time.strftime("%H")      # e.g., "19"
 
 # ----------------- Construct RAP URL -----------------
-# Replace this with the actual NOAA RAP S3 public endpoint
+# Replace with the actual NOAA RAP S3 endpoint
 rap_url = f"https://noaa-rap-bucket/rap.{date_str}/{hour_str}/rap.t{hour_str}z.awp130pgrbf{forecast_hour_str}.grib2"
 print("RAP URL:", rap_url)
 
