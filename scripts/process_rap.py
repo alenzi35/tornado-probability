@@ -1,122 +1,26 @@
-import os
-import json
-import urllib.request
-from datetime import datetime, timedelta
-
-import numpy as np
 import xarray as xr
 
-# =========================
-# CONFIG
-# =========================
+def find_variable_in_grib(grib_path, var_name, level_candidates):
+    """Return the dataset and variable values once we find it."""
+    for level in level_candidates:
+        try:
+            ds = xr.open_dataset(grib_path, engine="cfgrib",
+                                 filter_by_keys={"typeOfLevel": level})
+            if var_name in ds:
+                print(f"{var_name} ✅ FOUND at {level}")
+                return ds[var_name].values
+        except Exception:
+            continue
+    raise RuntimeError(f"{var_name} NOT FOUND in any candidate level types!")
 
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+grib_path = "data/rap.t20z.awp130pgrbf02.grib2"
+level_candidates = [
+    "atmosphereSingleLayer",
+    "surface",
+    "isobaricInhPa",
+    "atmosphere"
+]
 
-# 1-hour tornado probability model coefficients
-INTERCEPT = -1.5686
-COEF_CAPE = 2.88592370e-03
-COEF_CIN  = 2.38728498e-05
-COEF_HLCY = 8.85192696e-03
-
-# =========================
-# DETERMINE RAP FILE
-# =========================
-
-now = datetime.utcnow()
-
-# forecast initialized 2 hours before target time
-init_time = now - timedelta(hours=2)
-fhr = 2  # forecast hour offset
-
-date_str = init_time.strftime("%Y%m%d")
-hour_str = init_time.strftime("%H")
-
-rap_filename = f"rap.t{hour_str}z.awp130pgrbf{fhr:02d}.grib2"
-rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/{rap_filename}"
-
-grib_path = os.path.join(DATA_DIR, rap_filename)
-
-print(f"RAP URL: {rap_url}")
-
-# =========================
-# DOWNLOAD RAP
-# =========================
-
-if not os.path.exists(grib_path):
-    print("Downloading RAP GRIB...")
-    urllib.request.urlretrieve(rap_url, grib_path)
-    print("Download complete.")
-else:
-    print("RAP GRIB already exists.")
-
-# =========================
-# LOAD VARIABLES
-# =========================
-
-print("\nInspecting variables:\n")
-
-# --- CAPE & CIN: try multiple level types ---
-cape = cin = None
-LEVEL_TYPES = ["atmosphereSingleLayer", "surface"]
-
-for level in LEVEL_TYPES:
-    try:
-        ds_diag = xr.open_dataset(
-            grib_path,
-            engine="cfgrib",
-            filter_by_keys={"typeOfLevel": level}
-        )
-        if "CAPE" in ds_diag:
-            cape = ds_diag["CAPE"].values
-        if "CIN" in ds_diag:
-            cin = ds_diag["CIN"].values
-        if cape is not None and cin is not None:
-            print(f"CAPE and CIN ✅ FOUND at {level}")
-            break
-    except Exception:
-        continue
-
-if cape is None or cin is None:
-    raise RuntimeError("CAPE or CIN not found in any known level type")
-
-# --- HLCY / SRH (0–1000 m AGL) ---
-ds_hlcy = xr.open_dataset(
-    grib_path,
-    engine="cfgrib",
-    filter_by_keys={"typeOfLevel": "heightAboveGround"}
-)
-
-if "HLCY" not in ds_hlcy:
-    raise RuntimeError("HLCY (SRH) NOT FOUND at 0–1000 m AGL")
-
-hlcy = ds_hlcy["HLCY"].values
-print("HLCY ✅ FOUND")
-
-# =========================
-# PROBABILITY CALCULATION
-# =========================
-
-print("\nComputing tornado probability...")
-
-# Logistic regression
-logit = INTERCEPT + COEF_CAPE * cape + COEF_CIN * cin + COEF_HLCY * hlcy
-prob = 1 / (1 + np.exp(-logit))
-prob = np.clip(prob, 0, 1)
-
-# =========================
-# EXPORT FOR MAP
-# =========================
-
-output = {
-    "generated_utc": now.isoformat() + "Z",
-    "forecast_valid_utc": (init_time + timedelta(hours=fhr)).isoformat() + "Z",
-    "probability": prob.tolist(),
-}
-
-out_path = os.path.join(DATA_DIR, "tornado_prob.json")
-
-with open(out_path, "w") as f:
-    json.dump(output, f)
-
-print(f"\nDONE — tornado_prob.json written")
+cape = find_variable_in_grib(grib_path, "CAPE", level_candidates)
+cin  = find_variable_in_grib(grib_path, "CIN", level_candidates)
+hlcy = find_variable_in_grib(grib_path, "HLCY", ["heightAboveGround"])
