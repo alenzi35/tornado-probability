@@ -3,7 +3,7 @@ import urllib.request
 import numpy as np
 import pygrib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ----------------------------
 # 1. RAP GRIB setup
@@ -34,11 +34,12 @@ grbs = pygrib.open(local_path)
 
 def find_variable_by_level_range(grbs, varname, level_min=None, level_max=None):
     """
-    Find the first message for varname within optional numeric level range.
-    If level_min/max are None, just pick the first available message.
+    Find a GRIB message for varname (case-insensitive) within optional numeric level range.
     """
-    candidates = [g for g in grbs if g.shortName == varname]
+    candidates = [g for g in grbs if g.shortName.lower() == varname.lower()]
     if not candidates:
+        # Print all shortNames for debugging
+        print(f"All shortNames in GRIB: {[g.shortName for g in grbs]}")
         raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
     
     for g in candidates:
