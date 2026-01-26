@@ -43,19 +43,26 @@ print(f"S3 key: {key}")
 s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
 local_file = os.path.join(DATA_DIR, "rap_latest.grib2")
 
-s3.download_file(BUCKET, key, local_file)
-print("Downloaded RAP file")
+try:
+    s3.download_file(BUCKET, key, local_file)
+    print("Downloaded RAP file")
+except Exception as e:
+    print(f"Failed to download RAP file: {e}")
+    exit(1)
 
 # ----------------------------
 # Load & extract placeholder probability
 # ----------------------------
-ds = xr.open_dataset(local_file, engine="cfgrib")
+try:
+    ds = xr.open_dataset(local_file, engine="cfgrib")
+except Exception as e:
+    print(f"Failed to open GRIB file: {e}")
+    exit(1)
 
-# ⚠️ Placeholder variable — replace with your real field later
+# Placeholder variable (replace later)
 var = list(ds.data_vars)[0]
 data = ds[var].values
 
-# Convert to a 0–1 probability (simple placeholder)
 prob = float(np.clip(np.mean(data) / np.max(data), 0, 1))
 
 # ----------------------------
@@ -70,5 +77,4 @@ out = {
 json_file = os.path.join(DATA_DIR, "tornado_prob.json")
 with open(json_file, "w") as f:
     json.dump(out, f, indent=2)
-
 print(f"Saved {json_file}")
