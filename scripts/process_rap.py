@@ -7,7 +7,6 @@ import json
 
 # -------------------------------
 # 1️⃣ RAP GRIB URL
-# Adjust date/time as needed
 rap_url = "https://noaa-rap-pds.s3.amazonaws.com/rap.20260126/rap.t19z.awp130pgrbf02.grib2"
 local_file = "data/rap_latest.grib2"
 os.makedirs("data", exist_ok=True)
@@ -29,22 +28,31 @@ coeffs = {"CAPE": 0.0028859237, "CIN": 2.38728498e-05, "HLCY": 0.00885192696}
 
 # -------------------------------
 # 4️⃣ Robust variable picker
-def pick_variable(grbs, varname, candidate_levels):
+def pick_variable(grbs, varname, candidate_levels=None):
     varname_lc = varname.lower()
     msgs = [g for g in grbs if g.shortName.lower() == varname_lc]
 
+    if not msgs:
+        raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
+
+    # If no candidate_levels specified, pick first available
+    if not candidate_levels:
+        chosen = msgs[0]
+        print(f"{varname}: using first available level {getattr(chosen,'level','unknown')} ({getattr(chosen,'typeOfLevel','unknown')})")
+        return chosen
+
+    # Try to pick message matching candidate levels
     for lvl in candidate_levels:
         for m in msgs:
             if getattr(m, "typeOfLevel", "") == lvl:
                 print(f"{varname}: using level {getattr(m,'level','unknown')} ({lvl})")
                 return m
 
-    # fallback: first available message
-    if msgs:
-        print(f"{varname}: using first available level {getattr(msgs[0],'level','unknown')} ({getattr(msgs[0],'typeOfLevel','unknown')})")
-        return msgs[0]
-
-    raise RuntimeError(f"{varname} NOT FOUND in GRIB!")
+    # Fallback: pick the first message and print all available
+    print(f"{varname}: desired levels {candidate_levels} not found, using first available instead")
+    for m in msgs:
+        print(f"  Available: level {getattr(m,'level','unknown')}, typeOfLevel {getattr(m,'typeOfLevel','unknown')}")
+    return msgs[0]
 
 # -------------------------------
 # 5️⃣ Pick variables (fallbacks)
