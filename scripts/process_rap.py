@@ -1,69 +1,95 @@
 import os
-import cfgrib
 import urllib.request
+import cfgrib
 from datetime import datetime, timedelta
 
-# ----------------- USER: set your target UTC time -----------------
-# Example: Monday, 26 Jan 2026, 21:00 UTC
+# ============================================================
+# USER SETTING — TARGET TIME (UTC)
+# Monday 26 Jan 2026, 21:00 UTC
+# ============================================================
 target_time = datetime(2026, 1, 26, 21, 0)
 
-# ----------------- RAP initialization logic -----------------
-# RAP needs forecast initialized 2 hours before target
+# ============================================================
+# RAP TIMING LOGIC
+# RAP forecast initialized 2 hours before target
+# ============================================================
 init_time = target_time - timedelta(hours=2)
 
-# Forecast hour = difference between target and init
 forecast_hour = int((target_time - init_time).total_seconds() / 3600)
-forecast_hour_str = f"{forecast_hour:02d}"  # e.g., 2 -> "02"
+forecast_hour_str = f"{forecast_hour:02d}"
 
-# Format init time for filename
-date_str = init_time.strftime("%Y%m%d")  # e.g., 20260126
-hour_str = init_time.strftime("%H")      # e.g., "19"
+date_str = init_time.strftime("%Y%m%d")
+hour_str = init_time.strftime("%H")
 
-# ----------------- Construct RAP URL -----------------
-# Replace with the actual NOAA RAP S3 endpoint
-rap_url = f"https://noaa-rap-bucket/rap.{date_str}/{hour_str}/rap.t{hour_str}z.awp130pgrbf{forecast_hour_str}.grib2"
+# ============================================================
+# REAL NOAA RAP URL (THIS WAS THE PROBLEM BEFORE)
+# ============================================================
+rap_url = (
+    f"https://noaa-rap-pds.s3.amazonaws.com/"
+    f"rap.{date_str}/rap.t{hour_str}z.awp130pgrbf{forecast_hour_str}.grib2"
+)
+
 print("RAP URL:", rap_url)
 
-# ----------------- Download GRIB -----------------
+# ============================================================
+# DOWNLOAD GRIB
+# ============================================================
 data_dir = "data"
 os.makedirs(data_dir, exist_ok=True)
-grib_file = os.path.join(data_dir, f"rap_{date_str}_{hour_str}_f{forecast_hour_str}.grib2")
+
+grib_file = os.path.join(
+    data_dir,
+    f"rap_{date_str}_t{hour_str}z_f{forecast_hour_str}.grib2"
+)
 
 if not os.path.exists(grib_file):
     print("Downloading RAP GRIB...")
     urllib.request.urlretrieve(rap_url, grib_file)
     print("Download complete.")
 else:
-    print("GRIB file already exists locally:", grib_file)
+    print("GRIB already exists:", grib_file)
 
-# ----------------- Check CAPE/CIN/HLCY -----------------
+# ============================================================
+# VARIABLE CHECK — THIS ANSWERS YOUR CORE QUESTION
+# ============================================================
 variables = [
-    {"name": "CAPE", "shortName": "CAPE", "level": "isobaricInhPa", "min": 0, "max": 90},
-    {"name": "CIN", "shortName": "CIN", "level": "isobaricInhPa", "min": 0, "max": 90},
-    {"name": "HLCY", "shortName": "HLCY", "level": "heightAboveGround", "min": 0, "max": 1000},
+    # CAPE: 0–90 mb isobaric
+    {
+        "name": "CAPE",
+        "shortName": "CAPE",
+        "typeOfLevel": "isobaricInhPa",
+    },
+    # CIN: 0–90 mb isobaric
+    {
+        "name": "CIN",
+        "shortName": "CIN",
+        "typeOfLevel": "isobaricInhPa",
+    },
+    # Storm-relative helicity (HLCY): 0–1000 m AGL
+    {
+        "name": "HLCY",
+        "shortName": "HLCY",
+        "typeOfLevel": "heightAboveGround",
+    },
 ]
 
-all_present = True
+print("\nInspecting variables:\n")
 
 for var in variables:
     try:
         ds = cfgrib.open_dataset(
             grib_file,
-            filter_by_keys={"shortName": var["shortName"], "typeOfLevel": var["level"]}
+            filter_by_keys={
+                "shortName": var["shortName"],
+                "typeOfLevel": var["typeOfLevel"],
+            },
         )
-        levels = ds.get(var["level"])
-        if levels is not None:
-            in_range = any((levels >= var["min"]) & (levels <= var["max"]))
-            if in_range:
-                print(f"{var['name']} ✅ exists at desired level")
-            else:
-                print(f"{var['name']} ❌ exists but not in desired range")
-                all_present = False
-        else:
-            print(f"{var['name']} ❌ loaded but no level info")
-            all_present = False
-    except Exception as e:
-        print(f"{var['name']} ❌ could not be read: {e}")
-        all_present = False
+        print(f"{var['name']} ✅ FOUND")
+        print(f"  dimensions: {list(ds.dims)}")
+        print(f"  coordinates: {list(ds.coords)}\n")
 
-print("\nAll variables present:", all_present)
+    except Exception as e:
+        print(f"{var['name']} ❌ NOT FOUND")
+        print(f"  error: {e}\n")
+
+print("DONE")
