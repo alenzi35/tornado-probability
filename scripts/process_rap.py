@@ -16,12 +16,8 @@ FORECAST_OFFSET_HOURS = 2
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Variables to extract
-VARIABLES = [
-    {"shortName": "CAPE", "typeOfLevel": "isobaricInhPa"},
-    {"shortName": "CIN", "typeOfLevel": "isobaricInhPa"},
-    {"shortName": "HLCY", "typeOfLevel": "heightAboveGround"}
-]
+# Variables we care about
+VARIABLES = ["CAPE", "CIN", "HLCY"]
 
 # ----------------------------
 # Time logic
@@ -56,37 +52,63 @@ except Exception as e:
     exit(1)
 
 # ----------------------------
-# Load variables
+# Discover variables dynamically
+# ----------------------------
+try:
+    # Open the dataset without filter to inspect variables
+    ds_all = xr.open_dataset(local_file, engine="cfgrib", backend_kwargs={"indexpath": ""})
+    print("Available variables:", list(ds_all.data_vars))
+except Exception as e:
+    print(f"Failed to inspect GRIB file: {e}")
+    exit(1)
+
+# ----------------------------
+# Load each variable safely
 # ----------------------------
 data_dict = {}
-for var in VARIABLES:
+for var_name in VARIABLES:
+    # Try to find a variable whose shortName matches
+    matched = None
+    for name, da in ds_all.data_vars.items():
+        if var_name.lower() in name.lower():
+            matched = name
+            break
+    if matched is None:
+        print(f"Warning: {var_name} not found in this GRIB file, skipping")
+        continue
+    # Now open that variable with filter_by_keys
     try:
-        ds = xr.open_dataset(local_file, engine="cfgrib", filter_by_keys=var)
-        name = list(ds.data_vars)[0]
-        data_dict[var["shortName"]] = ds[name].values
-        print(f"Loaded {var['shortName']} ({var['typeOfLevel']})")
+        # Get the typeOfLevel for this variable
+        da = ds_all[matched]
+        level_type = da.attrs.get("GRIB_typeOfLevel", None)
+        if level_type is None:
+            level_type = da.attrs.get("typeOfLevel", None)
+        if level_type is None:
+            level_type = "surface"
+        ds_var = xr.open_dataset(local_file, engine="cfgrib",
+                                 filter_by_keys={"shortName": var_name, "typeOfLevel": level_type})
+        data_dict[var_name] = ds_var[list(ds_var.data_vars)[0]].values
+        print(f"Loaded {var_name} ({level_type})")
     except Exception as e:
-        print(f"Failed to load {var['shortName']}: {e}")
-        exit(1)
+        print(f"Failed to load {var_name}: {e}")
 
 # ----------------------------
 # Create 10x10 probability grid (placeholder calculation)
 # ----------------------------
-# This is where you would implement your actual tornado probability calculation
-# For now, just combine normalized CAPE, CIN, HLCY as a placeholder
 grid = np.zeros((10, 10))
 for i in range(10):
     for j in range(10):
-        # Take random slice from each variable
-        cape_val = np.mean(data_dict["CAPE"][i::10, j::10])
-        cin_val = np.mean(data_dict["CIN"][i::10, j::10])
-        hlcy_val = np.mean(data_dict["HLCY"][i::10, j::10])
-        # Normalize each 0–1 (rough placeholder)
-        cape_norm = np.clip(cape_val / 1000, 0, 1)
-        cin_norm = np.clip(np.abs(cin_val) / 100, 0, 1)
-        hlcy_norm = np.clip(hlcy_val / 500, 0, 1)
-        # Combine into single probability
-        grid[i, j] = np.clip(cape_norm + hlcy_norm - cin_norm, 0, 1)
+        vals = []
+        if "CAPE" in data_dict:
+            vals.append(np.mean(data_dict["CAPE"][i::10, j::10])/1000)
+        if "CIN" in data_dict:
+            vals.append(np.clip(np.abs(np.mean(data_dict["CIN"][i::10, j::10]))/100, 0,1))
+        if "HLCY" in data_dict:
+            vals.append(np.mean(data_dict["HLCY"][i::10, j::10])/500)
+        if vals:
+            grid[i,j] = np.clip(sum(vals), 0,1)
+        else:
+            grid[i,j] = 0
 
 # ----------------------------
 # Save JSON
@@ -94,7 +116,7 @@ for i in range(10):
 out = {
     "target_time": target_time.isoformat() + "Z",
     "init_time": init_time.isoformat() + "Z",
-    "probability_grid": grid.tolist()  # 10x10 grid for Leaflet map
+    "probability_grid": grid.tolist()
 }
 
 json_file = os.path.join(DATA_DIR, "tornado_prob.json")
