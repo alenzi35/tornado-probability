@@ -1,6 +1,5 @@
 import os
 import json
-import math
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -58,25 +57,21 @@ else:
 
 print("\nInspecting variables:\n")
 
-# --- CAPE & CIN (0–90 mb, isobaric) ---
-ds_iso = xr.open_dataset(
+# --- CAPE & CIN (atmosphereSingleLayer diagnostics) ---
+ds_diag = xr.open_dataset(
     grib_path,
     engine="cfgrib",
-    filter_by_keys={
-        "typeOfLevel": "isobaricLayer",
-        "topLevel": 90,
-        "bottomLevel": 0,
-    }
+    filter_by_keys={"typeOfLevel": "atmosphereSingleLayer"}
 )
 
-if "CAPE" not in ds_iso:
-    raise RuntimeError("CAPE NOT FOUND at 0–90 mb")
+if "CAPE" not in ds_diag:
+    raise RuntimeError("CAPE NOT FOUND (atmosphereSingleLayer)")
 
-if "CIN" not in ds_iso:
-    raise RuntimeError("CIN NOT FOUND at 0–90 mb")
+if "CIN" not in ds_diag:
+    raise RuntimeError("CIN NOT FOUND (atmosphereSingleLayer)")
 
-cape = ds_iso["CAPE"].values
-cin  = ds_iso["CIN"].values
+cape = ds_diag["CAPE"].values
+cin  = ds_diag["CIN"].values
 
 print("CAPE ✅ FOUND")
 print("CIN  ✅ FOUND")
@@ -85,11 +80,7 @@ print("CIN  ✅ FOUND")
 ds_hlcy = xr.open_dataset(
     grib_path,
     engine="cfgrib",
-    filter_by_keys={
-        "typeOfLevel": "heightAboveGroundLayer",
-        "topLevel": 1000,
-        "bottomLevel": 0,
-    }
+    filter_by_keys={"typeOfLevel": "heightAboveGround"}
 )
 
 if "HLCY" not in ds_hlcy:
