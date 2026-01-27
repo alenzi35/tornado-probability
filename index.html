@@ -1,65 +1,81 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
   <title>Tornado Probability Map</title>
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    body { margin: 0; }
-    #map { height: 100vh; width: 100vw; }
+    body { margin:0; font-family:Arial,sans-serif; background:#f4f4f4; }
+    h1 { text-align:center; margin:10px 0; }
+    #map { height:650px; margin:10px; border-radius:8px; }
+    .leaflet-control.custom-control {
+      background:white; padding:10px; border-radius:6px;
+      box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+    }
+    .leaflet-control.custom-control button,
+    .leaflet-control.custom-control #validTime { height:30px; line-height:30px; margin:4px 0; width:100%; cursor:pointer; text-align:center; }
+    #backBtn { display:none; }
   </style>
 </head>
 <body>
 
+<h1>Tornado Probability Project</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  const map = L.map('map').setView([39, -98], 4);
+var map = L.map('map', { minZoom:4, maxZoom:18 }).setView([39.5,-98.35],4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
+var aggregateLayer = L.layerGroup().addTo(map);
+var cellsVisible = true;
+var currentLeadTime = 1;
 
-  function getColor(p) {
-    if (p > 0.02) return '#800026';
-    if (p > 0.01) return '#BD0026';
-    if (p > 0.005) return '#E31A1C';
-    if (p > 0.002) return '#FC4E2A';
-    if (p > 0.001) return '#FD8D3C';
-    return '#FFEDA0';
+// Color scale
+function getColor(prob) {
+  if(prob>0.8) return '#800026';
+  if(prob>0.6) return '#BD0026';
+  if(prob>0.4) return '#E31A1C';
+  if(prob>0.2) return '#FC4E2A';
+  return '#FFEDA0';
+}
+
+// Show lead time
+function updateValidTime() {
+  let now = new Date();
+  let start = now.getUTCHours();
+  let end = (start + currentLeadTime) % 24;
+  document.getElementById('validTime').innerText = `Valid time - ${start.toString().padStart(2,'0')}:00–${end.toString().padStart(2,'0')}:00`;
+}
+
+// Draw the grid
+function drawGrid(data) {
+  if(!data || data.length===0) {
+    alert("⚠️ JSON FAILED TO LOAD or is empty!");
+    console.error("Loaded JSON points:", data ? data.length : 0);
+    return;
   }
 
-  fetch("data/tornado_prob.json")
-    .then(res => res.json())
-    .then(data => {
-      console.log("GRID POINTS LOADED:", data.length);
+  console.log("Loaded JSON points:", data.length);
+  aggregateLayer.clearLayers();
 
-      const layer = L.layerGroup().addTo(map);
-      const latStep = 1.18;
-      const lonStep = 1.94;
+  data.forEach(d => {
+    let rect = L.rectangle(
+      [[d.lat,d.lon],[d.lat+0.1,d.lon+0.1]], // rough 0.1 deg cell for display
+      { fillColor: getColor(d.prob), fillOpacity:0.7, color:"#000", weight:0.5 }
+    ).addTo(aggregateLayer);
+  });
 
-      data.forEach(p => {
-        L.rectangle(
-          [[p.lat, p.lon], [p.lat + latStep, p.lon + lonStep]],
-          {
-            fillColor: getColor(p.prob),
-            fillOpacity: 0.65,
-            color: '#000',
-            weight: 0.3
-          }
-        )
-        .bindPopup(`Probability: ${(p.prob*100).toFixed(3)}%`)
-        .addTo(layer);
-      });
-    })
-    .catch(err => {
-      console.error("FAILED TO LOAD JSON", err);
-      alert("JSON FAILED TO LOAD — check path");
-    });
+  updateValidTime();
+}
+
+// Fetch JSON
+fetch("map/data/tornado_prob.json")
+  .then(res=>res.json())
+  .then(drawGrid)
+  .catch(err=>{ console.error("Failed to load JSON:", err); alert("⚠️ JSON FAILED TO LOAD — check path or commit"); });
+
 </script>
-
 </body>
 </html>
