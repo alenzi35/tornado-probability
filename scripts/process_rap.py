@@ -74,7 +74,7 @@ linear_comb = (
     + cape * coeffs["CAPE"]
     + cin  * coeffs["CIN"]
     + hlcy * coeffs["HLCY"]
-)prob = 1 / (1 + np.exp(-linear_comb))  # logistic function
+prob = 1 / (1 + np.exp(-linear_comb))  # logistic function
 
 # -------------------------------
 # 8️⃣ Build JSON for map
