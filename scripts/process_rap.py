@@ -1,123 +1,95 @@
-#!/usr/bin/env python3
 import os
+import json
+import numpy as np
 import urllib.request
 import pygrib
-import numpy as np
-import json
-import math
 
-# -------------------------------
-# 1️⃣ RAP GRIB URL
-rap_url = "https://noaa-rap-pds.s3.amazonaws.com/rap.20260126/rap.t19z.awp130pgrbf02.grib2"
-local_file = "data/rap_latest.grib2"
+# =========================
+# CONFIG
+# =========================
+DATE = "20260126"
+HOUR = "19"
+FCST = "02"
+
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awp130pgrbf{FCST}.grib2"
+GRIB_PATH = "data/rap.grib2"
+OUTPUT_JSON = "map/data/tornado_prob.json"
+
+# Logistic regression coefficients (1-hour)
+INTERCEPT = -1.5686
+COEFFS = {
+    "CAPE": 2.88592370e-03,
+    "CIN":  2.38728498e-05,
+    "HLCY": 8.85192696e-03
+}
+
+# =========================
+# DOWNLOAD RAP
+# =========================
 os.makedirs("data", exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-# Download if not already present
-if not os.path.exists(local_file):
-    print(f"Downloading RAP GRIB from {rap_url} ...")
-    urllib.request.urlretrieve(rap_url, local_file)
-    print("Download complete.\n")
+print("Downloading RAP GRIB...")
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("Download complete.")
 
-# -------------------------------
-# 2️⃣ Open GRIB
-grbs = pygrib.open(local_file)
+# =========================
+# OPEN GRIB
+# =========================
+grbs = pygrib.open(GRIB_PATH)
 
-# -------------------------------
-# 3️⃣ Coefficients for 1-hour probability
-intercept = -1.5686
-coeffs = {"CAPE": 0.0028859237, "CIN": 2.38728498e-05, "HLCY": 0.00885192696}
-
-# -------------------------------
-# 4️⃣ Safe fuzzy variable picker
-def pick_variable_fuzzy(grbs, varname_keywords):
-    """
-    Pick the first GRIB message whose shortName, name, or description
-    contains any of the keywords (case-insensitive).
-    Safely handles missing keys.
-    """
-    varname_keywords = [k.lower() for k in varname_keywords]
-
+def find_var(grbs, shortname):
     for g in grbs:
-        # Only check keys that exist
-        fields_to_check = []
-        for key in ['shortName', 'name', 'description']:
-            if key in g.keys():  # safe access
-                fields_to_check.append(str(g[key]).lower())
-
-        if any(any(k in f for f in fields_to_check) for k in varname_keywords):
-            level = g['level'] if 'level' in g.keys() else 'unknown'
-            typel = g['typeOfLevel'] if 'typeOfLevel' in g.keys() else 'unknown'
-            print(f"✅ Found {varname_keywords[0]}: level {level} ({typel})")
+        if g.shortName.lower() == shortname.lower():
+            print(f"✅ Found {shortname}: level {g.level} ({g.typeOfLevel})")
             return g
+    raise RuntimeError(f"{shortname} NOT FOUND in GRIB")
 
-    raise RuntimeError(f"❌ None of the keywords {varname_keywords} found in GRIB")
+# =========================
+# EXTRACT VARIABLES
+# =========================
+grbs.seek(0)
+cape_msg = find_var(grbs, "cape")
+grbs.seek(0)
+cin_msg  = find_var(grbs, "cin")
+grbs.seek(0)
+hlcy_msg = find_var(grbs, "hlcy")
 
-# -------------------------------
-# 5️⃣ Pick variables using fuzzy names
-CAPE_msg = pick_variable_fuzzy(grbs, ["cape"])
-CIN_msg  = pick_variable_fuzzy(grbs, ["cin", "convectiveinhibition"])
-HLCY_msg = pick_variable_fuzzy(grbs, ["hlcy", "stormrelativehelicity"])
+CAPE = cape_msg.values
+CIN  = cin_msg.values
+HLCY = hlcy_msg.values
 
-# -------------------------------
-# Extract data arrays
-cape = CAPE_msg.values
-cin  = CIN_msg.values
-hlcy = HLCY_msg.values
+lats, lons = cape_msg.latlons()
 
-# Get lat/lon grid (from ANY of the messages)
-lats, lons = CAPE_msg.latlons()
-
-# -------------------------------
-# 7️⃣ Compute 1-hour tornado probability
-linear_comb = (
-    intercept
-    + cape * coeffs["CAPE"]
-    + cin  * coeffs["CIN"]
-    + hlcy * coeffs["HLCY"]
+# =========================
+# COMPUTE PROBABILITY
+# =========================
+linear = (
+    INTERCEPT
+    + COEFFS["CAPE"] * CAPE
+    + COEFFS["CIN"]  * CIN
+    + COEFFS["HLCY"] * HLCY
 )
-prob = 1 / (1 + np.exp(-linear_comb))  # logistic function
 
-# -------------------------------
-# 8️⃣ Build JSON for map
-cells = []
-for i in range(prob.shape[0]):
-    for j in range(prob.shape[1]):
-        cells.append({
-            "lat": float(lats[i,j]),
-            "lon": float(lons[i,j]),
-            "prob": float(prob[i,j])
-        })
+prob = 1 / (1 + np.exp(-linear))
 
-json_file = "data/tornado_prob.json"
-with open(json_file, "w") as f:
-    json.dump(cells, f)
+# =========================
+# WRITE JSON (CRITICAL)
+# =========================
+features = []
 
-output = []
-
-for i in range(cape.shape[0]):
-    for j in range(cape.shape[1]):
-        c = float(cape[i, j])
-        n = float(cin[i, j])
-        h = float(hlcy[i, j])
-
-        z = (
-            -1.5686
-            + 0.0028859237 * c
-            + 0.0000238728498 * n
-            + 0.00885192696 * h
-        )
-
-        prob = 1 / (1 + math.exp(-z))
-
-        output.append({
+rows, cols = prob.shape
+for i in range(rows):
+    for j in range(cols):
+        features.append({
             "lat": float(lats[i, j]),
             "lon": float(lons[i, j]),
-            "prob": prob
+            "prob": float(prob[i, j])
         })
 
-with open("map/data/tornado_prob.json", "w") as f:
-    json.dump(output, f)
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(features, f)
 
-print(f"✅ Tornado probability JSON saved to {json_file}")
-
-print("TOTAL GRID POINTS:", len(output))
+print("✅ Tornado probability JSON written")
+print("TOTAL GRID POINTS:", len(features))
+print("OUTPUT:", OUTPUT_JSON)
