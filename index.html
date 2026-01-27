@@ -5,77 +5,85 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
   <style>
-    body { margin:0; font-family:Arial,sans-serif; background:#f4f4f4; }
+    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; }
+    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
     .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px;
-      box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
     }
-    .leaflet-control.custom-control button,
-    .leaflet-control.custom-control #validTime { height:30px; line-height:30px; margin:4px 0; width:100%; cursor:pointer; text-align:center; }
+    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
     #backBtn { display:none; }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Project</h1>
+<h1>Tornado Probability Map (Test)</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-var map = L.map('map', { minZoom:4, maxZoom:18 }).setView([39.5,-98.35],4);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+  // Map bounds for CONUS
+  var CONUS_bounds = [[22, -128], [51.5, -64]];
+  var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25, zoomControl:true })
+    .setView([39.5, -98.35], 4);
+  map.zoomControl.setPosition('topleft');
 
-var aggregateLayer = L.layerGroup().addTo(map);
-var cellsVisible = true;
-var currentLeadTime = 1;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
 
-// Color scale
-function getColor(prob) {
-  if(prob>0.8) return '#800026';
-  if(prob>0.6) return '#BD0026';
-  if(prob>0.4) return '#E31A1C';
-  if(prob>0.2) return '#FC4E2A';
-  return '#FFEDA0';
-}
+  // Custom control for toggling cells
+  var CustomControl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd: function(map) {
+      var container = L.DomUtil.create('div', 'leaflet-control custom-control');
+      container.innerHTML = `
+        <button id="toggleCells">Toggle Cells</button>
+        <div id="info" style="margin-top:6px;">Test JSON snapshot</div>
+      `;
+      L.DomEvent.disableClickPropagation(container);
+      return container;
+    }
+  });
+  map.addControl(new CustomControl());
 
-// Show lead time
-function updateValidTime() {
-  let now = new Date();
-  let start = now.getUTCHours();
-  let end = (start + currentLeadTime) % 24;
-  document.getElementById('validTime').innerText = `Valid time - ${start.toString().padStart(2,'0')}:00–${end.toString().padStart(2,'0')}:00`;
-}
+  var layerGroup = L.layerGroup().addTo(map);
+  var cellsVisible = true;
 
-// Draw the grid
-function drawGrid(data) {
-  if(!data || data.length===0) {
-    alert("⚠️ JSON FAILED TO LOAD or is empty!");
-    console.error("Loaded JSON points:", data ? data.length : 0);
-    return;
+  function getColor(p) {
+    if(p>0.8) return '#800026';
+    if(p>0.6) return '#BD0026';
+    if(p>0.4) return '#E31A1C';
+    if(p>0.2) return '#FC4E2A';
+    return '#FFEDA0';
   }
 
-  console.log("Loaded JSON points:", data.length);
-  aggregateLayer.clearLayers();
+  // Load your single-time JSON
+  fetch("map/data/tornado_prob.json")
+    .then(resp => resp.json())
+    .then(data => {
+      console.log("Total grid points:", data.length);
 
-  data.forEach(d => {
-    let rect = L.rectangle(
-      [[d.lat,d.lon],[d.lat+0.1,d.lon+0.1]], // rough 0.1 deg cell for display
-      { fillColor: getColor(d.prob), fillOpacity:0.7, color:"#000", weight:0.5 }
-    ).addTo(aggregateLayer);
-  });
+      data.forEach(pt => {
+        // Adjust lat/lon steps if needed; here we use approx 13 km rectangles like original
+        let rect = L.rectangle(
+          [[pt.lat, pt.lon], [pt.lat + 1.18, pt.lon + 1.94]],
+          { fillColor: getColor(pt.prob), fillOpacity: 0.6, color:"#000", weight:1 }
+        ).addTo(layerGroup);
 
-  updateValidTime();
-}
+        rect.bindPopup(`<b>Tornado Probability</b><br>${pt.prob.toFixed(4)}`);
+      });
+    })
+    .catch(err => console.error("Failed to load JSON:", err));
 
-// Fetch JSON
-fetch("map/data/tornado_prob.json")
-  .then(res=>res.json())
-  .then(drawGrid)
-  .catch(err=>{ console.error("Failed to load JSON:", err); alert("⚠️ JSON FAILED TO LOAD — check path or commit"); });
-
+  // Toggle cells visibility
+  document.getElementById('toggleCells').onclick = () => {
+    cellsVisible = !cellsVisible;
+    layerGroup.eachLayer(l => {
+      l.setStyle({ fillOpacity: cellsVisible ? 0.6 : 0, weight: cellsVisible ? 1 : 0 });
+    });
+  };
 </script>
+
 </body>
 </html>
