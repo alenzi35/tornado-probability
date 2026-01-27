@@ -17,9 +17,63 @@
 
 <h1>Tornado Probability</h1>
 <div id="map"></div>
-
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
+const CONUS_bounds = [[22, -128], [51.5, -64]];
+
+const map = L.map('map', {
+  maxBounds: CONUS_bounds,
+  maxBoundsViscosity: 0,
+  minZoom: 4,
+  maxZoom: 18,
+  zoomSnap: 0.25
+}).setView([39.5, -98.35], 4);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+const layer = L.layerGroup().addTo(map);
+
+const latStep = 1.18;
+const lonStep = 1.94;
+
+function getColor(p) {
+  if (p > 0.01) return '#800026';
+  if (p > 0.005) return '#BD0026';
+  if (p > 0.002) return '#E31A1C';
+  if (p > 0.001) return '#FC4E2A';
+  return '#FFEDA0';
+}
+
+fetch("data/tornado_prob.json")
+  .then(r => r.json())
+  .then(data => {
+    console.log("Loaded cells:", data.length);
+
+    data.forEach(c => {
+      const rect = L.rectangle(
+        [[c.lat, c.lon], [c.lat + latStep, c.lon + lonStep]],
+        {
+          fillColor: getColor(c.prob),
+          fillOpacity: 0.7,
+          color: "#000",
+          weight: 0.2
+        }
+      );
+
+      rect.bindPopup(
+        `<b>Tornado Probability</b><br>${(c.prob*100).toFixed(3)}%`
+      );
+
+      rect.addTo(layer);
+    });
+  })
+  .catch(err => {
+    console.error("FAILED TO LOAD JSON", err);
+  });
+</script>
+
 /* ================= MAP SETUP ================= */
 
 const map = L.map('map').setView([39.5, -98.35], 4);
