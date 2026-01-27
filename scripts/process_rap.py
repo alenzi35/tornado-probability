@@ -119,3 +119,5 @@ with open("map/data/tornado_prob.json", "w") as f:
     json.dump(output, f)
 
 print(f"✅ Tornado probability JSON saved to {json_file}")
+
+print("TOTAL GRID POINTS:", len(output))
