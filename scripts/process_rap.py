@@ -59,12 +59,13 @@ CIN_msg  = pick_variable_fuzzy(grbs, ["cin", "convectiveinhibition"])
 HLCY_msg = pick_variable_fuzzy(grbs, ["hlcy", "stormrelativehelicity"])
 
 # -------------------------------
-# 6️⃣ Extract arrays
-CAPE = CAPE_msg.values
-CIN  = CIN_msg.values
-HLCY = HLCY_msg.values
+# Extract data arrays
+cape = CAPE_msg.values
+cin  = CIN_msg.values
+hlcy = HLCY_msg.values
 
-lats, lons = CAPE_msg.latlons()  # grid coordinates
+# Get lat/lon grid (from ANY of the messages)
+lats, lons = CAPE_msg.latlons()
 
 # -------------------------------
 # 7️⃣ Compute 1-hour tornado probability
