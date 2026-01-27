@@ -69,8 +69,12 @@ lats, lons = CAPE_msg.latlons()
 
 # -------------------------------
 # 7️⃣ Compute 1-hour tornado probability
-linear_comb = intercept + CAPE*coeffs["CAPE"] + CIN*coeffs["CIN"] + HLCY*coeffs["HLCY"]
-prob = 1 / (1 + np.exp(-linear_comb))  # logistic function
+linear_comb = (
+    intercept
+    + cape * coeffs["CAPE"]
+    + cin  * coeffs["CIN"]
+    + hlcy * coeffs["HLCY"]
+)prob = 1 / (1 + np.exp(-linear_comb))  # logistic function
 
 # -------------------------------
 # 8️⃣ Build JSON for map
