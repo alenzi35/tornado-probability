@@ -4,6 +4,7 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
+import math
 
 # -------------------------------
 # 1️⃣ RAP GRIB URL
@@ -84,5 +85,31 @@ for i in range(prob.shape[0]):
 json_file = "data/tornado_prob.json"
 with open(json_file, "w") as f:
     json.dump(cells, f)
+
+output = []
+
+for i in range(cape.shape[0]):
+    for j in range(cape.shape[1]):
+        c = float(cape[i, j])
+        n = float(cin[i, j])
+        h = float(hlcy[i, j])
+
+        z = (
+            -1.5686
+            + 0.0028859237 * c
+            + 0.0000238728498 * n
+            + 0.00885192696 * h
+        )
+
+        prob = 1 / (1 + math.exp(-z))
+
+        output.append({
+            "lat": float(lats[i, j]),
+            "lon": float(lons[i, j]),
+            "prob": prob
+        })
+
+with open("map/data/tornado_prob.json", "w") as f:
+    json.dump(output, f)
 
 print(f"✅ Tornado probability JSON saved to {json_file}")
