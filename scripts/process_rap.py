@@ -1,8 +1,8 @@
+import os
+import urllib.request
 import pygrib
 import numpy as np
 import json
-import os
-import urllib.request
 
 # ---------------- CONFIG ----------------
 DATE = "20260126"
@@ -13,6 +13,7 @@ RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awp130
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
+# Logistic regression coefficients for 1-hour probability
 INTERCEPT = -1.5686
 COEFFS = {
     "CAPE": 2.88592370e-03,
@@ -21,25 +22,33 @@ COEFFS = {
 }
 # ----------------------------------------
 
+# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
+# ---------------- DOWNLOAD RAP ----------------
 print("Downloading RAP GRIB...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("Download complete.")
 
+# ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-def pick(grbs, short):
+def pick_var(grbs, shortname):
+    """Pick first GRIB message with given shortName"""
     for g in grbs:
-        if g.shortName.lower() == short.lower():
-            print(f"✅ Found {short}: level {g.level} ({g.typeOfLevel})")
+        if g.shortName.lower() == shortname.lower():
+            print(f"✅ Found {shortname}: level {g.level} ({g.typeOfLevel})")
             return g
-    raise RuntimeError(f"{short} NOT FOUND")
+    raise RuntimeError(f"{shortname} NOT FOUND")
 
-cape_msg = pick(grbs, "cape")
-cin_msg  = pick(grbs, "cin")
-hlcy_msg = pick(grbs, "hlcy")
+# ---------------- EXTRACT VARIABLES ----------------
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape")
+grbs.seek(0)
+cin_msg  = pick_var(grbs, "cin")
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy")
 
 cape = cape_msg.values
 cin  = cin_msg.values
@@ -47,22 +56,15 @@ hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
 
-# --- probability ---
-linear = (
-    INTERCEPT
-    + cape * COEFFS["CAPE"]
-    + cin  * COEFFS["CIN"]
-    + hlcy * COEFFS["HLCY"]
-)
-
+# ---------------- COMPUTE PROBABILITY ----------------
+linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# --- WRITE JSON ---
+# ---------------- WRITE JSON ----------------
 features = []
-
-ny, nx = prob.shape
-for i in range(ny):
-    for j in range(nx):
+rows, cols = prob.shape
+for i in range(rows):
+    for j in range(cols):
         features.append({
             "lat": float(lats[i, j]),
             "lon": float(lons[i, j]),
@@ -70,8 +72,8 @@ for i in range(ny):
         })
 
 with open(OUTPUT_JSON, "w") as f:
-    json.dump(features, f)
+    json.dump(features, f, indent=2)
 
-print("WROTE FILE:", OUTPUT_JSON)
+print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
 print("TOTAL GRID POINTS:", len(features))
 print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
