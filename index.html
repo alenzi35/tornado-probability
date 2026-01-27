@@ -3,149 +3,172 @@
 <head>
   <title>Tornado Probability Map</title>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
   <style>
-    body { margin:0; font-family:Arial,sans-serif; background:#f4f4f4; }
-    h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f4f4f4; }
+    h1 { text-align: center; margin: 10px 0; }
+    #map { height: 650px; margin: 10px; border-radius: 8px; position: relative; }
+    .leaflet-control.custom-control {
+      background: white; padding: 10px; border-radius: 6px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.3); font-size: 14px;
+    }
+    .leaflet-control.custom-control button,
+    .leaflet-control.custom-control #validTime {
+      height: 30px; line-height: 30px; margin: 4px 0; width: 100%; cursor: pointer; text-align: center;
+    }
+    #backBtn { display: none; }
   </style>
 </head>
 <body>
-
-<h1>Tornado Probability</h1>
+<h1>Tornado Probability Project</h1>
 <div id="map"></div>
+
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const CONUS_bounds = [[22, -128], [51.5, -64]];
+  // === Setup Map ===
+  const CONUS_bounds = [[22, -128], [51.5, -64]];
+  const map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
+                .setView([39.5, -98.35], 4);
 
-const map = L.map('map', {
-  maxBounds: CONUS_bounds,
-  maxBoundsViscosity: 0,
-  minZoom: 4,
-  maxZoom: 18,
-  zoomSnap: 0.25
-}).setView([39.5, -98.35], 4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+  const aggregateLayer = L.layerGroup().addTo(map);
+  const normalLayer = L.layerGroup();
+  let cellsVisible = true;
+  let currentLeadTime = 1;
 
-const layer = L.layerGroup().addTo(map);
+  const latStep = 1.18; // size of aggregate cell
+  const lonStep = 1.94;
 
-const latStep = 1.18;
-const lonStep = 1.94;
+  // === Custom Control ===
+  const CustomControl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd: function(map) {
+      const container = L.DomUtil.create('div', 'leaflet-control custom-control');
+      container.innerHTML = `
+        <b>Lead Time</b><br>
+        <button id="lead1">1 Hour</button>
+        <button id="lead3">3 Hour</button>
+        <button id="lead6">6 Hour</button>
+        <hr>
+        <button id="toggleCells">Toggle Cells</button>
+        <button id="backBtn">← Back to Aggregates</button>
+        <div id="validTime">Valid time - 00:00–01:00</div>
+      `;
+      L.DomEvent.disableClickPropagation(container);
+      return container;
+    }
+  });
+  map.addControl(new CustomControl());
 
-function getColor(p) {
-  if (p > 0.01) return '#800026';
-  if (p > 0.005) return '#BD0026';
-  if (p > 0.002) return '#E31A1C';
-  if (p > 0.001) return '#FC4E2A';
-  return '#FFEDA0';
-}
+  // === Color scale ===
+  function getColor(p) {
+    if (p > 0.01) return '#800026';
+    if (p > 0.005) return '#BD0026';
+    if (p > 0.002) return '#E31A1C';
+    if (p > 0.001) return '#FC4E2A';
+    return '#FFEDA0';
+  }
 
-fetch("data/tornado_prob.json")
-  .then(r => r.json())
-  .then(data => {
-    console.log("Loaded cells:", data.length);
+  // === Update valid time display ===
+  function updateValidTime() {
+    let now = new Date();
+    let startHour = now.getUTCHours();
+    let endHour = (startHour + currentLeadTime) % 24;
+    document.getElementById('validTime').innerText =
+      `Valid time - ${startHour.toString().padStart(2,'0')}:00–${endHour.toString().padStart(2,'0')}:00`;
+  }
 
-    data.forEach(c => {
-      const rect = L.rectangle(
-        [[c.lat, c.lon], [c.lat + latStep, c.lon + lonStep]],
-        {
-          fillColor: getColor(c.prob),
-          fillOpacity: 0.7,
-          color: "#000",
-          weight: 0.2
+  // === Draw aggregate cells ===
+  function drawAggregates() {
+    aggregateLayer.clearLayers();
+    normalLayer.clearLayers();
+    document.getElementById("backBtn").style.display = "none";
+
+    fetch("data/tornado_prob.json")
+      .then(r => r.json())
+      .then(data => {
+        // Group data into aggregate cells
+        const aggregates = [];
+        const latBins = {};
+        data.forEach(c => {
+          const latKey = Math.floor(c.lat / latStep);
+          const lonKey = Math.floor(c.lon / lonStep);
+          const key = latKey + "_" + lonKey;
+          if (!latBins[key]) latBins[key] = [];
+          latBins[key].push(c.prob);
+        });
+        for (const key in latBins) {
+          const parts = key.split("_");
+          const lat = parts[0]*latStep;
+          const lon = parts[1]*lonStep;
+          const probs = latBins[key];
+          const aggProb = 1 - probs.reduce((a,p)=>a*(1-p),1); // aggregate probability
+          aggregates.push({lat, lon, aggProb});
         }
-      );
 
-      rect.bindPopup(
-        `<b>Tornado Probability</b><br>${(c.prob*100).toFixed(3)}%`
-      );
+        aggregates.forEach(a => {
+          const rect = L.rectangle(
+            [[a.lat, a.lon],[a.lat+latStep,a.lon+lonStep]],
+            { fillColor:getColor(a.aggProb), fillOpacity:cellsVisible?0.6:0, color:"#000", weight:cellsVisible?1:0 }
+          ).addTo(aggregateLayer);
+          rect.bindPopup(`<b>Aggregate Probability</b><br>${(a.aggProb*100).toFixed(3)}%<br><i>Double-click to view 13 km cells</i>`);
+          rect.on('dblclick', function(e) {
+            if(!cellsVisible) return;
+            aggregateLayer.clearLayers();
+            drawNormalCells(e.target.getBounds(), data);
+            document.getElementById("backBtn").style.display = "block";
+          });
+        });
 
-      rect.addTo(layer);
-    });
-  })
-  .catch(err => {
-    console.error("FAILED TO LOAD JSON", err);
-  });
-</script>
+        updateValidTime();
+      })
+      .catch(err => console.error("Failed to load JSON", err));
+  }
 
-/* ================= MAP SETUP ================= */
+  // === Draw 13 km cells inside bounds ===
+  function drawNormalCells(bounds, data) {
+    normalLayer.clearLayers();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const latS = (ne.lat - sw.lat)/10;
+    const lonS = (ne.lng - sw.lng)/10;
 
-const map = L.map('map').setView([39.5, -98.35], 4);
-
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap'
-}).addTo(map);
-
-const latStep = 1.18;
-const lngStep = 1.94;
-
-const layer = L.layerGroup().addTo(map);
-
-/* ================= COLOR SCALE ================= */
-
-function getColor(p){
-  if (p > 0.02) return '#800026';
-  if (p > 0.01) return '#BD0026';
-  if (p > 0.005) return '#E31A1C';
-  if (p > 0.002) return '#FC4E2A';
-  return '#FFEDA0';
-}
-
-/* ================= DRAW CELLS ================= */
-
-function drawCells(data){
-  console.log("Drawing cells:", data.length);
-
-  layer.clearLayers();
-
-  data.forEach(c => {
-    if (c.lat === undefined || c.lon === undefined || c.prob === undefined) return;
-
-    L.rectangle(
-      [[c.lat, c.lon], [c.lat + latStep, c.lon + lngStep]],
-      {
-        color: "#000",
-        weight: 0.6,
-        fillColor: getColor(c.prob),
-        fillOpacity: 0.65
+    for (let i=0;i<10;i++){
+      for (let j=0;j<10;j++){
+        const lat0 = sw.lat + i*latS;
+        const lon0 = sw.lng + j*lonS;
+        const lat1 = lat0 + latS;
+        const lon1 = lon0 + lonS;
+        // find points inside this small cell
+        const points = data.filter(c => c.lat>=lat0 && c.lat<lat1 && c.lon>=lon0 && c.lon<lon1);
+        const cellProb = points.length>0 ? 1 - points.reduce((a,p)=>a*(1-p.prob),1) : 0;
+        L.rectangle([[lat0, lon0],[lat1, lon1]], {
+          fillColor: getColor(cellProb),
+          fillOpacity: cellsVisible?0.75:0,
+          color:"#000", weight:cellsVisible?0.4:0
+        }).addTo(normalLayer);
       }
-    )
-    .bindPopup(`Probability: ${(c.prob*100).toFixed(2)}%`)
-    .addTo(layer);
-  });
-}
+    }
+    normalLayer.addTo(map);
+    map.fitBounds(bounds);
+  }
 
-/* ================= LOAD JSON ================= */
+  function setLeadTime(h) { currentLeadTime=h; drawAggregates(); }
+  function toggleCells() { cellsVisible=!cellsVisible; drawAggregates(); }
 
-/*
-IMPORTANT:
-If index.html is at:
-  https://username.github.io/repo/
+  // === Button events ===
+  document.getElementById('lead1').onclick = () => setLeadTime(1);
+  document.getElementById('lead3').onclick = () => setLeadTime(3);
+  document.getElementById('lead6').onclick = () => setLeadTime(6);
+  document.getElementById('toggleCells').onclick = () => { cellsVisible=!cellsVisible; drawAggregates(); };
+  document.getElementById('backBtn').onclick = () => drawAggregates();
 
-Then the JSON MUST be at:
-  https://username.github.io/repo/data/tornado_prob.json
-*/
-
-fetch('./data/tornado_prob.json')
-  .then(r => {
-    if (!r.ok) throw new Error("JSON not found");
-    return r.json();
-  })
-  .then(data => {
-    console.log("JSON loaded OK");
-    drawCells(data);
-  })
-  .catch(err => {
-    console.error("FAILED TO LOAD JSON:", err);
-    alert("JSON FAILED TO LOAD — CHECK PATH");
-  });
-
+  // === Initial draw ===
+  drawAggregates();
 </script>
 </body>
 </html>
