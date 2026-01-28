@@ -34,27 +34,39 @@ print("Download complete.")
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortname):
-    """Pick first GRIB message with given shortName"""
+def pick_layer_var(grbs, shortname, typeOfLevel=None, bottomLevel=None, topLevel=None):
+    """Pick GRIB message with shortname and optional layer constraints"""
     for g in grbs:
         if g.shortName.lower() == shortname.lower():
-            print(f"✅ Found {shortname}: level {g.level} ({g.typeOfLevel})")
-            return g
-    raise RuntimeError(f"{shortname} NOT FOUND")
+            match = True
+            if typeOfLevel and g.typeOfLevel != typeOfLevel:
+                match = False
+            if bottomLevel is not None and getattr(g, 'bottomLevel', None) != bottomLevel:
+                match = False
+            if topLevel is not None and getattr(g, 'topLevel', None) != topLevel:
+                match = False
+            if match:
+                print(f"✅ Found {shortname}: level {g.level} ({g.typeOfLevel})")
+                return g
+    raise RuntimeError(f"{shortname} NOT FOUND with requested level")
 
 # ---------------- EXTRACT VARIABLES ----------------
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape")
+cape_msg = pick_layer_var(grbs, "cape", typeOfLevel="heightAboveGroundLayer", bottomLevel=0, topLevel=90)
 grbs.seek(0)
-cin_msg  = pick_var(grbs, "cin")
+cin_msg  = pick_layer_var(grbs, "cin",  typeOfLevel="heightAboveGroundLayer", bottomLevel=0, topLevel=90)
 grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy")
+hlcy_msg = pick_layer_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottomLevel=0, topLevel=1000)
 
 cape = cape_msg.values
 cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
+
+# Compute grid spacing
+lat_size = np.mean(np.diff(lats[:,0]))
+lon_size = np.mean(np.diff(lons[0,:]))
 
 # ---------------- COMPUTE PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
@@ -68,7 +80,9 @@ for i in range(rows):
         features.append({
             "lat": float(lats[i, j]),
             "lon": float(lons[i, j]),
-            "prob": float(prob[i, j])
+            "prob": float(prob[i, j]),
+            "lat_size": float(lat_size),
+            "lon_size": float(lon_size)
         })
 
 with open(OUTPUT_JSON, "w") as f:
