@@ -5,9 +5,9 @@ import numpy as np
 import json
 
 # ==========================================================
-# TARGET CASE (EXPLICIT)
+# TARGET CASE
 # Init: 2026-01-28 19:00 UTC
-# Forecast: +2h (valid 21:00 UTC)
+# Forecast: +2h
 # ==========================================================
 
 DATE_STR = "20260128"
@@ -22,7 +22,6 @@ RAP_URL = (
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
-# Logistic regression coefficients
 INTERCEPT = -1.5686
 COEFFS = {
     "CAPE": 2.88592370e-03,
@@ -35,35 +34,34 @@ os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
 # ---------------- DOWNLOAD RAP ----------------
-print("Downloading RAP GRIB:")
-print(RAP_URL)
+print("Downloading:", RAP_URL)
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("✅ Download complete")
 
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_layer_var(grbs, shortname, bottom, top):
+def pick_var(grbs, shortname, typeOfLevel, bottom, top):
     for g in grbs:
         if (
             g.shortName.lower() == shortname
-            and g.typeOfLevel == "heightAboveGroundLayer"
+            and g.typeOfLevel == typeOfLevel
             and getattr(g, "bottomLevel", None) == bottom
             and getattr(g, "topLevel", None) == top
         ):
-            print(f"✅ Found {shortname}: {bottom}-{top} m AGL")
+            print(f"✅ Found {shortname}: {typeOfLevel} {bottom}-{top}")
             return g
-    raise RuntimeError(f"{shortname} {bottom}-{top} NOT FOUND")
+    raise RuntimeError(f"{shortname} {typeOfLevel} {bottom}-{top} NOT FOUND")
 
 # ---------------- EXTRACT VARIABLES ----------------
 grbs.seek(0)
-cape_msg = pick_layer_var(grbs, "cape", 0, 90)
+cape_msg = pick_var(grbs, "cape", "pressureLayer", 0, 90)
 
 grbs.seek(0)
-cin_msg  = pick_layer_var(grbs, "cin", 0, 90)
+cin_msg  = pick_var(grbs, "cin", "pressureLayer", 0, 90)
 
 grbs.seek(0)
-hlcy_msg = pick_layer_var(grbs, "hlcy", 0, 1000)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
 cape = cape_msg.values
 cin  = cin_msg.values
@@ -71,7 +69,6 @@ hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
 
-# Compute grid spacing
 lat_size = float(np.mean(np.diff(lats[:, 0])))
 lon_size = float(np.mean(np.diff(lons[0, :])))
 
