@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map</title>
+  <title>Tornado Probability Map (Aggregates)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
   <style>
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
@@ -19,70 +18,111 @@
 </head>
 <body>
 
-<h1>Tornado Probability Map (Test)</h1>
+<h1>Tornado Probability Map (Aggregates)</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  // Map bounds for CONUS
-  var CONUS_bounds = [[22, -128], [51.5, -64]];
-  var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25, zoomControl:true })
+var CONUS_bounds = [[22, -128], [51.5, -64]];
+var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
     .setView([39.5, -98.35], 4);
-  map.zoomControl.setPosition('topleft');
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
-  // Custom control for toggling cells
-  var CustomControl = L.Control.extend({
-    options: { position: 'topleft' },
-    onAdd: function(map) {
-      var container = L.DomUtil.create('div', 'leaflet-control custom-control');
-      container.innerHTML = `
-        <button id="toggleCells">Toggle Cells</button>
-        <div id="info" style="margin-top:6px;">Test JSON snapshot</div>
-      `;
-      L.DomEvent.disableClickPropagation(container);
-      return container;
+// Layer groups
+var aggregateLayer = L.layerGroup().addTo(map);
+var cellLayer = L.layerGroup();
+var cellsVisible = true;
+
+// Control panel
+var CustomControl = L.Control.extend({
+  options:{position:'topleft'},
+  onAdd:function(map){
+    var c = L.DomUtil.create('div','leaflet-control custom-control');
+    c.innerHTML = `
+      <button id="toggleCells">Toggle Cells</button>
+      <button id="backBtn">← Back to Aggregates</button>
+      <div id="info">Test JSON snapshot</div>
+    `;
+    L.DomEvent.disableClickPropagation(c);
+    return c;
+  }
+});
+map.addControl(new CustomControl());
+
+// Load JSON
+var jsonData = [];
+fetch("map/data/tornado_prob.json")
+  .then(resp => resp.json())
+  .then(data => { jsonData = data; drawAggregates(); })
+  .catch(err => console.error("Failed to load JSON:", err));
+
+// Color mapping
+function getColor(p){
+  if(p>0.8) return '#800026';
+  if(p>0.6) return '#BD0026';
+  if(p>0.4) return '#E31A1C';
+  if(p>0.2) return '#FC4E2A';
+  return '#FFEDA0';
+}
+
+// Draw coarse aggregate grid
+function drawAggregates(){
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+  document.getElementById("backBtn").style.display="none";
+
+  // Adjust aggregate size
+  var latStep=3.0, lngStep=4.0;
+
+  for(let lat=24; lat<50; lat+=latStep){
+    for(let lng=-125; lng<-66; lng+=lngStep){
+      let rect = L.rectangle(
+        [[lat,lng],[lat+latStep,lng+lngStep]],
+        {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
+      ).addTo(aggregateLayer);
+
+      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(1)}–${(lat+latStep).toFixed(1)}<br>Lon ${lng.toFixed(1)}–${(lng+lngStep).toFixed(1)}`);
+
+      rect.on('dblclick', function(){
+        drawCellsInAggregate(lat,lng,latStep,lngStep);
+        document.getElementById("backBtn").style.display="block";
+      });
+    }
+  }
+}
+
+// Draw individual cells inside selected aggregate
+function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+
+  let latEnd = latStart + latStep;
+  let lngEnd = lngStart + lngStep;
+
+  jsonData.forEach(pt=>{
+    if(pt.lat>=latStart && pt.lat<latEnd && pt.lon>=lngStart && pt.lon<lngEnd){
+      let rect = L.rectangle(
+        [[pt.lat, pt.lon],[pt.lat+1.18, pt.lon+1.94]],
+        {fillColor:getColor(pt.prob), fillOpacity:0.6, color:'#000', weight:0.5}
+      ).addTo(cellLayer);
+      rect.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
     }
   });
-  map.addControl(new CustomControl());
 
-  var layerGroup = L.layerGroup().addTo(map);
-  var cellsVisible = true;
+  cellLayer.addTo(map);
+  map.fitBounds([[latStart,lngStart],[latEnd,lngEnd]]);
+}
 
-  function getColor(p) {
-    if(p>0.8) return '#800026';
-    if(p>0.6) return '#BD0026';
-    if(p>0.4) return '#E31A1C';
-    if(p>0.2) return '#FC4E2A';
-    return '#FFEDA0';
-  }
+// Toggle all cells visibility
+document.getElementById('toggleCells').onclick = () => {
+  cellsVisible = !cellsVisible;
+  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
+  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
+};
 
-  // Load your single-time JSON
-  fetch("map/data/tornado_prob.json")
-    .then(resp => resp.json())
-    .then(data => {
-      console.log("Total grid points:", data.length);
-
-      data.forEach(pt => {
-        // Adjust lat/lon steps if needed; here we use approx 13 km rectangles like original
-        let rect = L.rectangle(
-          [[pt.lat, pt.lon], [pt.lat + 1.18, pt.lon + 1.94]],
-          { fillColor: getColor(pt.prob), fillOpacity: 0.6, color:"#000", weight:1 }
-        ).addTo(layerGroup);
-
-        rect.bindPopup(`<b>Tornado Probability</b><br>${pt.prob.toFixed(4)}`);
-      });
-    })
-    .catch(err => console.error("Failed to load JSON:", err));
-
-  // Toggle cells visibility
-  document.getElementById('toggleCells').onclick = () => {
-    cellsVisible = !cellsVisible;
-    layerGroup.eachLayer(l => {
-      l.setStyle({ fillOpacity: cellsVisible ? 0.6 : 0, weight: cellsVisible ? 1 : 0 });
-    });
-  };
+// Back to aggregate view
+document.getElementById('backBtn').onclick = () => drawAggregates();
 </script>
 
 </body>
