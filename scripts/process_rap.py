@@ -3,13 +3,14 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
+from datetime import datetime
 
 # ---------------- CONFIG ----------------
-DATE = "20260126"
-HOUR = "19"
-FCST = "02"
+DATE_STR = datetime.utcnow().strftime("%Y%m%d")  # e.g., "20260128"
+HOUR_STR = datetime.utcnow().strftime("%H")      # 00-23 UTC
+FCST = "00"  # Forecast hour (adjust as needed)
 
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awp130pgrbf{FCST}.grib2"
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE_STR}/rap.t{HOUR_STR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
@@ -64,9 +65,9 @@ hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
 
-# Compute grid spacing
-lat_size = np.mean(np.diff(lats[:,0]))
-lon_size = np.mean(np.diff(lons[0,:]))
+# Compute average grid spacing
+lat_size = float(np.mean(np.diff(lats[:,0])))
+lon_size = float(np.mean(np.diff(lons[0,:])))
 
 # ---------------- COMPUTE PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
@@ -81,8 +82,8 @@ for i in range(rows):
             "lat": float(lats[i, j]),
             "lon": float(lons[i, j]),
             "prob": float(prob[i, j]),
-            "lat_size": float(lat_size),
-            "lon_size": float(lon_size)
+            "lat_size": lat_size,
+            "lon_size": lon_size
         })
 
 with open(OUTPUT_JSON, "w") as f:
