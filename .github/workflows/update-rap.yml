@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------- Checkout repo ----------------
+      # ---------------- Checkout repository ----------------
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -30,19 +30,19 @@ jobs:
       - name: Install Python packages
         run: pip install pygrib numpy xarray
 
-      # ---------------- Run your RAP processing script ----------------
+      # ---------------- Run RAP processing script ----------------
       - name: Run RAP processing script
         run: python scripts/process_rap.py
 
       # ---------------- Commit updated JSON back to the repo ----------------
       - name: Commit updated tornado_prob.json
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # Your PAT stored in GitHub Secrets
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # PAT stored securely in GitHub Secrets
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add map/data/tornado_prob.json
           # Commit only if there are changes
           git diff-index --quiet HEAD || git commit -m "Update tornado probability JSON"
-          # ✅ Push using PAT directly in the URL
+          # ✅ Push using the PAT secret safely
           git push https://x-access-token:${PAT_TOKEN}@github.com/alenzi35/tornado-probability.git HEAD:main
