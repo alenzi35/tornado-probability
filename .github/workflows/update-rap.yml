@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------- Checkout repo ----------------
+      # ---------------- Checkout repository ----------------
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -37,12 +37,12 @@ jobs:
       # ---------------- Commit updated JSON back to the repo ----------------
       - name: Commit updated tornado_prob.json
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # must match your GitHub secret
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # your secret; do NOT hardcode the token
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add map/data/tornado_prob.json
-          # Commit only if the JSON changed
+          # Only commit if there are changes
           git diff-index --quiet HEAD || git commit -m "Update tornado probability JSON"
-          # ✅ Push using PAT secret directly, avoids set-url and spacing issues
+          # ✅ Push using the secret, avoids set-url and spacing issues
           git push https://x-access-token:${PAT_TOKEN}@github.com/alenzi35/tornado-probability.git HEAD:main
