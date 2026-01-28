@@ -10,39 +10,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------- Checkout repo ----------------
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # ---------------- Set up Python ----------------
+      # Set up Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      # ---------------- Install dependencies ----------------
+      # Install system dependencies
       - name: Install system dependencies for pygrib
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-dev
 
+      # Install Python packages
       - name: Install Python packages
         run: pip install pygrib numpy xarray
 
-      # ---------------- Run process_rap.py ----------------
+      # Run your RAP processing script
       - name: Run RAP processing script
         run: python scripts/process_rap.py
 
-      # ---------------- Commit updated JSON ----------------
+      # Commit updated JSON back to the repo
       - name: Commit updated tornado_prob.json
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # Your PAT token stored in repo secrets
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           # Use PAT for authentication
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/alenzi35/tornado-probability.git
           git add map/data/tornado_prob.json
-          # Commit only if there are changes
           git diff-index --quiet HEAD || git commit -m "Update tornado probability JSON"
           git push origin main
