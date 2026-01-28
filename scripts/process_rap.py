@@ -1,48 +1,91 @@
 import os
 import urllib.request
 import pygrib
+import numpy as np
+import json
 
 # ---------------- CONFIG ----------------
-DATE_STR = "20260128"
-HOUR_STR = "19"
+DATE = "20260128"
+HOUR = "19"
 FCST = "02"
 
-# Path to store the GRIB
+# RAP GRIB file URL (AWIP32 product)
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
+OUTPUT_JSON = "map/data/tornado_prob.json"
+
+# Logistic regression coefficients for 1-hour probability
+INTERCEPT = -1.5686
+COEFFS = {
+    "CAPE": 2.88592370e-03,
+    "CIN":  2.38728498e-05,
+    "HLCY": 8.85192696e-03
+}
+# ----------------------------------------
+
+# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-# URL of RAP GRIB file (same as your target)
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE_STR}/rap.t{HOUR_STR}z.awp130pgrbf{FCST}.grib2"
-
-# ---------------- DOWNLOAD ----------------
-print("Downloading:", RAP_URL)
+# ---------------- DOWNLOAD RAP ----------------
+print("Downloading RAP GRIB...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-print("✅ Download complete")
+print("✅ Download complete.")
 
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-# ---------------- INSPECT CAPE/CIN VARIABLES ----------------
-print("\n---- CAPE/CIN/HLCSY INVENTORY ----\n")
-for i, g in enumerate(grbs):
-    name = g.shortName.lower()
-    if "cape" in name or "cin" in name or "hlcy" in name:
-        print(f"Message #{i+1}")
-        print(f"  shortName    : {g.shortName}")
-        print(f"  name         : {g.name}")
-        print(f"  typeOfLevel  : {g.typeOfLevel}")
-        if g.typeOfLevel == "heightAboveGroundLayer":
-            print(f"  bottomLevel  : {g.bottomLevel} m")
-            print(f"  topLevel     : {g.topLevel} m")
-        elif g.typeOfLevel == "pressureLayer":
-            print(f"  bottomLevel  : {g.bottomLevel} hPa")
-            print(f"  topLevel     : {g.topLevel} hPa")
-        elif g.typeOfLevel == "surface":
-            pass  # surface has no additional info
-        print(f"  values shape : {g.values.shape}")
-        print("-" * 40)
+# ---------------- HELPER TO PICK VAR ----------------
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    """
+    Pick first GRIB message matching shortName, optionally typeOfLevel and bottom/top.
+    """
+    for g in grbs:
+        if g.shortName.lower() != shortname.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
+        if bottom is not None and top is not None:
+            if not hasattr(g, "bottomLevel") or not hasattr(g, "topLevel"):
+                continue
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+                continue
+        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
+        return g
+    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
 
-# Reset GRIB pointer
+# ---------------- EXTRACT VARIABLES ----------------
 grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
+grbs.seek(0)
+cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
 
-print("\nDone inspecting GRIB file.\n")
+cape = cape_msg.values
+cin  = cin_msg.values
+hlcy = hlcy_msg.values
+
+lats, lons = cape_msg.latlons()
+
+# ---------------- COMPUTE PROBABILITY ----------------
+linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
+prob = 1 / (1 + np.exp(-linear))
+
+# ---------------- WRITE JSON ----------------
+features = []
+rows, cols = prob.shape
+for i in range(rows):
+    for j in range(cols):
+        features.append({
+            "lat": float(lats[i, j]),
+            "lon": float(lons[i, j]),
+            "prob": float(prob[i, j])
+        })
+
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(features, f, indent=2)
+
+print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
+print("TOTAL GRID POINTS:", len(features))
+print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
