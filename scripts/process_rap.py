@@ -14,6 +14,7 @@ DATE_STR = "20260128"
 HOUR_STR = "19"
 FCST = "02"
 
+# RAP AWIP32 GRIB URL
 RAP_URL = (
     f"https://noaa-rap-pds.s3.amazonaws.com/"
     f"rap.{DATE_STR}/rap.t{HOUR_STR}z.awip32f{FCST}.grib2"
@@ -22,6 +23,7 @@ RAP_URL = (
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
+# Logistic regression coefficients
 INTERCEPT = -1.5686
 COEFFS = {
     "CAPE": 2.88592370e-03,
@@ -41,27 +43,35 @@ print("✅ Download complete")
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortname, typeOfLevel, bottom, top):
+# ---------------- HELPER FUNCTIONS ----------------
+def pick_surface(grbs, shortname):
+    """Pick the first surface-level GRIB message matching shortName."""
+    for g in grbs:
+        if g.shortName.lower() == shortname and g.typeOfLevel == "surface":
+            print(f"✅ Found {shortname} (mixed-layer / surface diagnostic)")
+            return g
+    raise RuntimeError(f"{shortname} NOT FOUND")
+
+def pick_hag_layer(grbs, shortname, bottom, top):
+    """Pick the first heightAboveGroundLayer message with specified bottom/top (m)."""
     for g in grbs:
         if (
             g.shortName.lower() == shortname
-            and g.typeOfLevel == typeOfLevel
-            and getattr(g, "bottomLevel", None) == bottom
-            and getattr(g, "topLevel", None) == top
+            and g.typeOfLevel == "heightAboveGroundLayer"
+            and g.bottomLevel == bottom
+            and g.topLevel == top
         ):
-            print(f"✅ Found {shortname}: {typeOfLevel} {bottom}-{top}")
+            print(f"✅ Found {shortname}: {bottom}-{top} m AGL")
             return g
-    raise RuntimeError(f"{shortname} {typeOfLevel} {bottom}-{top} NOT FOUND")
+    raise RuntimeError(f"{shortname} {bottom}-{top} m AGL NOT FOUND")
 
 # ---------------- EXTRACT VARIABLES ----------------
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", "pressureLayer", 0, 90)
-
+cape_msg = pick_surface(grbs, "mlcape")   # 90–0 mb mixed-layer CAPE
 grbs.seek(0)
-cin_msg  = pick_var(grbs, "cin", "pressureLayer", 0, 90)
-
+cin_msg  = pick_surface(grbs, "mlcin")    # 90–0 mb mixed-layer CIN
 grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+hlcy_msg = pick_hag_layer(grbs, "hlcy", 0, 1000)  # 0–1 km SRH
 
 cape = cape_msg.values
 cin  = cin_msg.values
@@ -69,6 +79,7 @@ hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
 
+# Estimate grid cell sizes for Leaflet rectangles
 lat_size = float(np.mean(np.diff(lats[:, 0])))
 lon_size = float(np.mean(np.diff(lons[0, :])))
 
