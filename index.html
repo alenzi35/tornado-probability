@@ -22,25 +22,43 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/proj4/dist/proj4.js"></script>
+<script src="https://unpkg.com/proj4leaflet"></script>
 <script>
-// Map initialization
-var CONUS_bounds = [[22, -128], [51.5, -64]];
-var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-    .setView([39.5, -98.35], 4);
+// RAP constants
+const RAP_CELL_M = 13000; // 13 km in meters
+const AGG_CELLS = 10;
 
-// Base layer
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+// Color mapping
+function getColor(p){
+  if(p>0.8) return '#800026';
+  if(p>0.6) return '#BD0026';
+  if(p>0.4) return '#E31A1C';
+  if(p>0.2) return '#FC4E2A';
+  return '#FFEDA0';
+}
+
+// Convert lat/lon to meters (EPSG:3857)
+function latLonToMeters(lat, lon){
+  return map.options.crs.project([lat, lon]);
+}
+
+// Initialize map using Web Mercator (EPSG:3857)
+var map = L.map('map', {
+  crs: L.CRS.EPSG3857,
+  minZoom: 2, maxZoom: 18,
+  zoomSnap:0.25
+}).setView([39.5, -98.35], 4);
+
+// Base layer in Web Mercator
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'© OpenStreetMap contributors'
+}).addTo(map);
 
 // Layer groups
 var aggregateLayer = L.layerGroup().addTo(map);
 var cellLayer = L.layerGroup();
 var cellsVisible = true;
-
-// RAP constants
-const RAP_CELL_KM = 13;
-const AGG_CELLS = 10;
-function kmToLat(km) { return km / 110.574; }
-function kmToLon(km, lat) { return km / (111.320 * Math.cos(lat*Math.PI/180)); }
 
 // Control panel
 var CustomControl = L.Control.extend({
@@ -58,61 +76,61 @@ var CustomControl = L.Control.extend({
 });
 map.addControl(new CustomControl());
 
-// Color mapping
-function getColor(p){
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
-  return '#FFEDA0';
-}
-
-// Draw cells inside an aggregate
-function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
+// Draw cells inside an aggregate (meters)
+function drawCellsInAggregate(latStart, lonStart, latStepM, lonStepM){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
 
-  const latEnd = latStart + latStep;
-  const lngEnd = lngStart + lngStep;
-
   jsonData.forEach(pt=>{
-    if(pt.lat >= latStart && pt.lat < latEnd && pt.lon >= lngStart && pt.lon < lngEnd){
-      const latDelta = kmToLat(RAP_CELL_KM);
-      const lonDelta = kmToLon(RAP_CELL_KM, pt.lat);
+    const ptMeters = latLonToMeters(pt.lat, pt.lon);
+    const startMeters = latLonToMeters(latStart, lonStart);
 
-      L.rectangle(
-        [[pt.lat, pt.lon],[pt.lat+latDelta, pt.lon+lonDelta]],
-        {fillColor: getColor(pt.prob), fillOpacity:0.4, color:'#000', weight:0.2}
-      ).addTo(cellLayer)
-        .bindPopup(`<b>Tornado probability</b>: ${(pt.prob*100).toFixed(2)}%`);
+    if(ptMeters.y >= startMeters.y && ptMeters.y < startMeters.y + latStepM &&
+       ptMeters.x >= startMeters.x && ptMeters.x < startMeters.x + lonStepM){
+
+      let rectBounds = [
+        map.options.crs.unproject([ptMeters.x, ptMeters.y]),
+        map.options.crs.unproject([ptMeters.x + RAP_CELL_M, ptMeters.y + RAP_CELL_M])
+      ];
+
+      L.rectangle(rectBounds, {fillColor:getColor(pt.prob), fillOpacity:0.4, color:'#000', weight:0.2})
+       .addTo(cellLayer)
+       .bindPopup(`<b>Tornado probability</b>: ${(pt.prob*100).toFixed(2)}%`);
     }
   });
 
   cellLayer.addTo(map);
-  map.fitBounds([[latStart,lngStart],[latEnd,lngEnd]]);
+  map.fitBounds([
+    map.options.crs.unproject(latLonToMeters(latStart, lonStart)),
+    map.options.crs.unproject([latLonToMeters(latStart, lonStart)[0]+latStepM, latLonToMeters(latStart, lonStart)[1]+lonStepM])
+  ]);
 }
 
-// Draw aggregate grid
+// Draw aggregates in CRS meters
 function drawAggregates(){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
   document.getElementById("backBtn").style.display="none";
 
-  const latStep = kmToLat(RAP_CELL_KM * AGG_CELLS);
+  const latStepM = RAP_CELL_M * AGG_CELLS;
+  const lonStepM = RAP_CELL_M * AGG_CELLS;
 
-  for(let lat=24; lat<50; lat+=latStep){
-    for(let lng=-125; lng<-66; lng+=kmToLon(RAP_CELL_KM*AGG_CELLS, lat)){
-      let rect = L.rectangle(
-        [[lat,lng],[lat+latStep,lng+kmToLon(RAP_CELL_KM*AGG_CELLS, lat)]],
-        {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
-      ).addTo(aggregateLayer);
+  for(let lat=24; lat<50; lat+=1){ // step 1° latitude, will convert to meters below
+    for(let lon=-125; lon<-66; lon+=1){
+      const topLeftMeters = latLonToMeters(lat, lon);
 
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–${(lat+latStep).toFixed(2)}<br>Lon ${lng.toFixed(2)}–${(lng+kmToLon(RAP_CELL_KM*AGG_CELLS, lat)).toFixed(2)}`);
+      // Draw aggregate rectangle
+      const rectBounds = [
+        map.options.crs.unproject(topLeftMeters),
+        map.options.crs.unproject([topLeftMeters.x + lonStepM, topLeftMeters.y + latStepM])
+      ];
 
-      rect.on('dblclick', () => {
-        drawCellsInAggregate(lat,lng,latStep,kmToLon(RAP_CELL_KM*AGG_CELLS, lat));
-        document.getElementById("backBtn").style.display="block";
-      });
+      let rect = L.rectangle(rectBounds, {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1})
+        .addTo(aggregateLayer);
+
+      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–? <br>Lon ${lon.toFixed(2)}–?`);
+
+      rect.on('dblclick', ()=> drawCellsInAggregate(lat, lon, latStepM, lonStepM));
     }
   }
 }
@@ -124,17 +142,16 @@ document.getElementById('toggleCells').onclick = () => {
   cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.4:0, weight: cellsVisible?0.2:0}); });
 };
 
-// Back to aggregate
+// Back to aggregates
 document.getElementById('backBtn').onclick = () => drawAggregates();
 
 // Load JSON
 var jsonData = [];
 fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => { jsonData = data; drawAggregates(); })
-  .catch(err => console.error("Failed to load JSON:", err));
+  .then(resp=>resp.json())
+  .then(data=>{ jsonData=data; drawAggregates(); })
+  .catch(err=>console.error("Failed to load JSON:", err));
 
 </script>
-
 </body>
 </html>
