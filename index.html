@@ -23,16 +23,24 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
+// Map initialization
 var CONUS_bounds = [[22, -128], [51.5, -64]];
 var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
     .setView([39.5, -98.35], 4);
 
+// Base layer
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
 // Layer groups
 var aggregateLayer = L.layerGroup().addTo(map);
 var cellLayer = L.layerGroup();
 var cellsVisible = true;
+
+// RAP constants
+const RAP_CELL_KM = 13;
+const AGG_CELLS = 10;
+function kmToLat(km) { return km / 110.574; }
+function kmToLon(km, lat) { return km / (111.320 * Math.cos(lat*Math.PI/180)); }
 
 // Control panel
 var CustomControl = L.Control.extend({
@@ -42,20 +50,13 @@ var CustomControl = L.Control.extend({
     c.innerHTML = `
       <button id="toggleCells">Toggle Cells</button>
       <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Test JSON snapshot</div>
+      <div id="info">Tornado probability map</div>
     `;
     L.DomEvent.disableClickPropagation(c);
     return c;
   }
 });
 map.addControl(new CustomControl());
-
-// Load JSON
-var jsonData = [];
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => { jsonData = data; drawAggregates(); })
-  .catch(err => console.error("Failed to load JSON:", err));
 
 // Color mapping
 function getColor(p){
@@ -66,14 +67,39 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-// Draw coarse aggregate grid
+// Draw cells inside an aggregate
+function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+
+  const latEnd = latStart + latStep;
+  const lngEnd = lngStart + lngStep;
+
+  jsonData.forEach(pt=>{
+    if(pt.lat >= latStart && pt.lat < latEnd && pt.lon >= lngStart && pt.lon < lngEnd){
+      const latDelta = kmToLat(RAP_CELL_KM);
+      const lonDelta = kmToLon(RAP_CELL_KM, pt.lat);
+
+      L.rectangle(
+        [[pt.lat, pt.lon],[pt.lat+latDelta, pt.lon+lonDelta]],
+        {fillColor: getColor(pt.prob), fillOpacity:0.4, color:'#000', weight:0.2}
+      ).addTo(cellLayer)
+        .bindPopup(`<b>Tornado probability</b>: ${(pt.prob*100).toFixed(2)}%`);
+    }
+  });
+
+  cellLayer.addTo(map);
+  map.fitBounds([[latStart,lngStart],[latEnd,lngEnd]]);
+}
+
+// Draw aggregate grid
 function drawAggregates(){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
   document.getElementById("backBtn").style.display="none";
 
-  // Adjust aggregate size
-  var latStep=3.0, lngStep=4.0;
+  const latStep = kmToLat(RAP_CELL_KM * AGG_CELLS);
+  const lngStep = kmToLon(RAP_CELL_KM * AGG_CELLS, 39.5); // center of CONUS
 
   for(let lat=24; lat<50; lat+=latStep){
     for(let lng=-125; lng<-66; lng+=lngStep){
@@ -82,9 +108,9 @@ function drawAggregates(){
         {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
       ).addTo(aggregateLayer);
 
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(1)}–${(lat+latStep).toFixed(1)}<br>Lon ${lng.toFixed(1)}–${(lng+lngStep).toFixed(1)}`);
+      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–${(lat+latStep).toFixed(2)}<br>Lon ${lng.toFixed(2)}–${(lng+lngStep).toFixed(2)}`);
 
-      rect.on('dblclick', function(){
+      rect.on('dblclick', () => {
         drawCellsInAggregate(lat,lng,latStep,lngStep);
         document.getElementById("backBtn").style.display="block";
       });
@@ -92,37 +118,23 @@ function drawAggregates(){
   }
 }
 
-// Draw individual cells inside selected aggregate
-function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-
-  let latEnd = latStart + latStep;
-  let lngEnd = lngStart + lngStep;
-
-  jsonData.forEach(pt=>{
-    if(pt.lat>=latStart && pt.lat<latEnd && pt.lon>=lngStart && pt.lon<lngEnd){
-      let rect = L.rectangle(
-        [[pt.lat, pt.lon],[pt.lat+1.18, pt.lon+1.94]],
-        {fillColor:getColor(pt.prob), fillOpacity:0.6, color:'#000', weight:0.5}
-      ).addTo(cellLayer);
-      rect.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
-    }
-  });
-
-  cellLayer.addTo(map);
-  map.fitBounds([[latStart,lngStart],[latEnd,lngEnd]]);
-}
-
-// Toggle all cells visibility
+// Toggle visibility
 document.getElementById('toggleCells').onclick = () => {
   cellsVisible = !cellsVisible;
   aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
-  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
+  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.4:0, weight: cellsVisible?0.2:0}); });
 };
 
-// Back to aggregate view
+// Back to aggregate
 document.getElementById('backBtn').onclick = () => drawAggregates();
+
+// Load JSON
+var jsonData = [];
+fetch("map/data/tornado_prob.json")
+  .then(resp => resp.json())
+  .then(data => { jsonData = data; drawAggregates(); })
+  .catch(err => console.error("Failed to load JSON:", err));
+
 </script>
 
 </body>
