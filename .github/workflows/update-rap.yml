@@ -34,7 +34,7 @@ jobs:
       - name: Run RAP processing script
         run: python scripts/process_rap.py
 
-      # ---------------- Commit updated JSON safely ----------------
+      # ---------------- Commit & push JSON using PAT ----------------
       - name: Commit & push tornado_prob.json
         uses: EndBug/add-and-commit@v9
         with:
@@ -43,4 +43,5 @@ jobs:
           author_name: "github-actions"
           author_email: "actions@github.com"
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}  # use your PAT, not the default token
+          
