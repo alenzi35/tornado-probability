@@ -99,19 +99,18 @@ function drawAggregates(){
   document.getElementById("backBtn").style.display="none";
 
   const latStep = kmToLat(RAP_CELL_KM * AGG_CELLS);
-  const lngStep = kmToLon(RAP_CELL_KM * AGG_CELLS, 39.5); // center of CONUS
 
   for(let lat=24; lat<50; lat+=latStep){
-    for(let lng=-125; lng<-66; lng+=lngStep){
+    for(let lng=-125; lng<-66; lng+=kmToLon(RAP_CELL_KM*AGG_CELLS, lat)){
       let rect = L.rectangle(
-        [[lat,lng],[lat+latStep,lng+lngStep]],
+        [[lat,lng],[lat+latStep,lng+kmToLon(RAP_CELL_KM*AGG_CELLS, lat)]],
         {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
       ).addTo(aggregateLayer);
 
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–${(lat+latStep).toFixed(2)}<br>Lon ${lng.toFixed(2)}–${(lng+lngStep).toFixed(2)}`);
+      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–${(lat+latStep).toFixed(2)}<br>Lon ${lng.toFixed(2)}–${(lng+kmToLon(RAP_CELL_KM*AGG_CELLS, lat)).toFixed(2)}`);
 
       rect.on('dblclick', () => {
-        drawCellsInAggregate(lat,lng,latStep,lngStep);
+        drawCellsInAggregate(lat,lng,latStep,kmToLon(RAP_CELL_KM*AGG_CELLS, lat));
         document.getElementById("backBtn").style.display="block";
       });
     }
