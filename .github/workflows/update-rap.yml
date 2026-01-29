@@ -10,55 +10,74 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---- Checkout WITHOUT credentials ----
+      # -------------------------------------------------
+      # Checkout WITHOUT GitHub Actions credentials
+      # -------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      # ---- Python ----
+      # -------------------------------------------------
+      # Python
+      # -------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ---- System deps ----
+      # -------------------------------------------------
+      # System dependencies for pygrib
+      # -------------------------------------------------
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-dev
 
-      # ---- Python deps ----
+      # -------------------------------------------------
+      # Python dependencies
+      # -------------------------------------------------
       - name: Install Python packages
         run: |
           pip install pygrib numpy xarray
 
-      # ---- Run processing ----
-      - name: Run RAP processing
+      # -------------------------------------------------
+      # Run RAP processing
+      # -------------------------------------------------
+      - name: Run process_rap.py
         run: |
           python scripts/process_rap.py
 
-      # ---- FORCE AUTHENTICATED REMOTE ----
-      - name: Configure git + authenticated remote
+      # -------------------------------------------------
+      # Configure git + PAT-authenticated remote
+      # -------------------------------------------------
+      - name: Configure git and authenticated remote
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
+          # Remove default remote added by checkout
           git remote remove origin
+
+          # Add PAT-authenticated remote
           git remote add origin https://x-access-token:${PAT_TOKEN}@github.com/alenzi35/tornado-probability.git
 
-          echo "Remote after auth:"
+          echo "Remote after authentication:"
           git remote -v
 
-      # ---- Commit ----
-      - name: Commit JSON
+      # -------------------------------------------------
+      # Commit updated JSON (if changed)
+      # -------------------------------------------------
+      - name: Commit tornado probability JSON
         run: |
           git add map/data/tornado_prob.json
           git diff --cached --quiet || git commit -m "Update tornado probability JSON"
 
-      # ---- Push ----
+      # -------------------------------------------------
+      # Push to main
+      # -------------------------------------------------
       - name: Push to main
         run: |
           git push origin main
