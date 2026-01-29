@@ -1,4 +1,4 @@
-name: Process RAP Tornado Data (DEBUG)
+name: Process RAP Tornado Data
 
 on:
   workflow_dispatch:
@@ -10,68 +10,55 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------- Checkout WITHOUT credentials ----------
+      # ---- Checkout WITHOUT credentials ----
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      # ---------- Python ----------
+      # ---- Python ----
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ---------- Dependencies ----------
+      # ---- System deps ----
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-dev
 
+      # ---- Python deps ----
       - name: Install Python packages
         run: |
           pip install pygrib numpy xarray
 
-      # ---------- Run processing ----------
+      # ---- Run processing ----
       - name: Run RAP processing
         run: |
           python scripts/process_rap.py
 
-      # ---------- DEBUG: Show repo + branch ----------
-      - name: Debug repo state
-        run: |
-          echo "REMOTE:"
-          git remote -v
-          echo ""
-          echo "BRANCH:"
-          git branch -a
-          echo ""
-          echo "STATUS:"
-          git status
-
-      # ---------- DEBUG: Show who Git thinks we are ----------
-      - name: Debug git identity
-        run: |
-          git config --global --list
-
-      # ---------- DEBUG: Explicitly set remote with PAT ----------
-      - name: Force-auth remote using PAT
+      # ---- FORCE AUTHENTICATED REMOTE ----
+      - name: Configure git + authenticated remote
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          git remote remove origin
-          git remote add origin https://x-access-token:${PAT_TOKEN}@github.com/alenzi35/tornado-probability.git
-          git remote -v
-
-      # ---------- Commit ----------
-      - name: Commit changes
-        run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+
+          git remote remove origin
+          git remote add origin https://x-access-token:${PAT_TOKEN}@github.com/alenzi35/tornado-probability.git
+
+          echo "Remote after auth:"
+          git remote -v
+
+      # ---- Commit ----
+      - name: Commit JSON
+        run: |
           git add map/data/tornado_prob.json
           git diff --cached --quiet || git commit -m "Update tornado probability JSON"
 
-      # ---------- PUSH (RAW, NO ACTIONS) ----------
-      - name: Push changes (DEBUG)
+      # ---- Push ----
+      - name: Push to main
         run: |
-          git push origin HEAD:main
+          git push origin main
