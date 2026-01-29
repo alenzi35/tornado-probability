@@ -43,5 +43,5 @@ jobs:
           author_name: "github-actions"
           author_email: "actions@github.com"
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}  # use your PAT, not the default token
+          USER_TOKEN: ${{ secrets.PAT_TOKEN }}  # <-- This is the key fix
           
