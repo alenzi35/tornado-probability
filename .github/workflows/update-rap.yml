@@ -1,47 +1,45 @@
 name: Process RAP Tornado Data
 
 on:
-  workflow_dispatch:   # manual trigger
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # runs every hour at minute 0 UTC
+    - cron: "0 * * * *"
 
 jobs:
   process_rap:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------- Checkout repository ----------------
       - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # ---------------- Set up Python ----------------
-      - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/checkout@v4
         with:
-          python-version: 3.11
+          persist-credentials: false   # IMPORTANT
 
-      # ---------------- Install system dependencies ----------------
-      - name: Install system dependencies for pygrib
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-dev
 
-      # ---------------- Install Python packages ----------------
       - name: Install Python packages
-        run: pip install pygrib numpy xarray
+        run: |
+          pip install pygrib numpy xarray
 
-      # ---------------- Run RAP processing script ----------------
-      - name: Run RAP processing script
-        run: python scripts/process_rap.py
+      - name: Run RAP processing
+        run: |
+          python scripts/process_rap.py
 
-      # ---------------- Commit & push JSON using PAT ----------------
-      - name: Commit & push tornado_prob.json
+      - name: Commit and push updated JSON
         uses: EndBug/add-and-commit@v9
         with:
           message: "Update tornado probability JSON"
           add: "map/data/tornado_prob.json"
           author_name: "github-actions"
           author_email: "actions@github.com"
+          push: true
         env:
-          USER_TOKEN: ${{ secrets.PAT_TOKEN }}  # <-- This is the key fix
-          
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
