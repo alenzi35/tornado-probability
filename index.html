@@ -56,13 +56,13 @@ const cellLayer = L.layerGroup();
 
 /* RAP cell ≈ 13 km */
 const CELL_LAT_STEP = 13 / 111.32;   // ≈ 0.117°
-const CELL_LON_STEP = 13 / 85.0;     // ≈ 0.153° (mid-lat CONUS approximation)
+const CELL_LON_STEP = 13 / 85.0;     // ≈ 0.153° (mid-lat)
 
-/* Aggregate = 10 × 10 cells */
-const AGG_LAT_STEP = CELL_LAT_STEP * 10;
-const AGG_LON_STEP = CELL_LON_STEP * 10;
+const AGG_SIZE = 10; // 10x10 cells = 130 km
 
-/* Fixed anchor so grid doesn’t drift */
+const AGG_LAT_STEP = CELL_LAT_STEP * AGG_SIZE;
+const AGG_LON_STEP = CELL_LON_STEP * AGG_SIZE;
+
 const ORIGIN_LAT = 22;
 const ORIGIN_LON = -128;
 
@@ -111,13 +111,18 @@ fetch("map/data/tornado_prob.json")
 
     data.forEach(pt => {
       const { i, j } = snapCell(pt.lat, pt.lon);
-      const ai = Math.floor(i / 10);
-      const aj = Math.floor(j / 10);
+
+      // Downsample: pick one point per 10x10 block
+      if (i % AGG_SIZE !== 0 || j % AGG_SIZE !== 0) return;
+
+      const ai = Math.floor(i / AGG_SIZE);
+      const aj = Math.floor(j / AGG_SIZE);
       const key = ai + "," + aj;
 
       if (!aggregates[key]) {
         aggregates[key] = { ai, aj, cells: [] };
       }
+
       aggregates[key].cells.push({ i, j, prob: pt.prob });
     });
 
@@ -152,22 +157,22 @@ function drawCells(agg){
 
   agg.cells.forEach(c => {
     L.rectangle(
-      cellBounds(c.i, c.j),
+      aggregateBounds(agg.ai, agg.aj), // each rectangle = full 130 km
       {
-        fillColor:getColor(c.prob),
+        fillColor: getColor(c.prob),
         fillOpacity:0.45,
         weight:0.3,
         color:'#000'
       }
     )
     .addTo(cellLayer)
-    .bindPopup(`Probability: ${(c.prob * 100).toFixed(2)}%`);
+    .bindPopup(`Probability: ${(c.prob*100).toFixed(2)}%`);
   });
 
   map.fitBounds(aggregateBounds(agg.ai, agg.aj));
 }
 
-/* ---------------- RESET ---------------- */
+/* ---------------- BACK BUTTON ---------------- */
 
 L.control({position:'topleft'}).onAdd = function(){
   const div = L.DomUtil.create('div','leaflet-control custom-control');
