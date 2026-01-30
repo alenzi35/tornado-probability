@@ -4,16 +4,27 @@
   <title>Tornado Probability Map (Aggregates)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
   <style>
-    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
+    body { margin:0; font-family:Arial,sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
+    #map { height:650px; margin:10px; border-radius:8px; }
+
     .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+      background:white;
+      padding:10px;
+      border-radius:6px;
+      box-shadow:0 0 6px rgba(0,0,0,0.3);
+      font-size:14px;
     }
-    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
-    #backBtn { display:none; }
+    .leaflet-control.custom-control button {
+      width:100%;
+      margin:4px 0;
+      height:30px;
+      cursor:pointer;
+    }
   </style>
 </head>
 <body>
@@ -23,107 +34,148 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-var CONUS_bounds = [[22, -128], [51.5, -64]];
-var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-    .setView([39.5, -98.35], 4);
+/* ---------------- MAP SETUP ---------------- */
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+const CONUS = [[22,-128],[51.5,-64]];
+const map = L.map('map', {
+  minZoom:4,
+  maxZoom:18,
+  zoomSnap:0.25,
+  maxBounds:CONUS,
+  maxBoundsViscosity:0
+}).setView([39.5,-98.35],4);
 
-// Layer groups
-var aggregateLayer = L.layerGroup().addTo(map);
-var cellLayer = L.layerGroup();
-var cellsVisible = true;
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'© OpenStreetMap'
+}).addTo(map);
 
-// Control panel
-var CustomControl = L.Control.extend({
-  options:{position:'topleft'},
-  onAdd:function(map){
-    var c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `
-      <button id="toggleCells">Toggle Cells</button>
-      <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Test JSON snapshot</div>
-    `;
-    L.DomEvent.disableClickPropagation(c);
-    return c;
-  }
-});
-map.addControl(new CustomControl());
+const aggregateLayer = L.layerGroup().addTo(map);
+const cellLayer = L.layerGroup();
 
-// Load JSON
-var jsonData = [];
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => { jsonData = data; drawAggregates(); })
-  .catch(err => console.error("Failed to load JSON:", err));
+/* ---------------- GRID CONSTANTS ---------------- */
 
-// Color mapping
+/* RAP cell ≈ 13 km */
+const CELL_LAT_STEP = 13 / 111.32;   // ≈ 0.117°
+const CELL_LON_STEP = 13 / 85.0;     // ≈ 0.153° (mid-lat CONUS approximation)
+
+/* Aggregate = 10 × 10 cells */
+const AGG_LAT_STEP = CELL_LAT_STEP * 10;
+const AGG_LON_STEP = CELL_LON_STEP * 10;
+
+/* Fixed anchor so grid doesn’t drift */
+const ORIGIN_LAT = 22;
+const ORIGIN_LON = -128;
+
+/* ---------------- HELPERS ---------------- */
+
+function snapCell(lat, lon) {
+  const i = Math.floor((lat - ORIGIN_LAT) / CELL_LAT_STEP);
+  const j = Math.floor((lon - ORIGIN_LON) / CELL_LON_STEP);
+  return { i, j };
+}
+
+function cellBounds(i, j) {
+  const lat0 = ORIGIN_LAT + i * CELL_LAT_STEP;
+  const lon0 = ORIGIN_LON + j * CELL_LON_STEP;
+  return [
+    [lat0, lon0],
+    [lat0 + CELL_LAT_STEP, lon0 + CELL_LON_STEP]
+  ];
+}
+
+function aggregateBounds(ai, aj) {
+  const lat0 = ORIGIN_LAT + ai * AGG_LAT_STEP;
+  const lon0 = ORIGIN_LON + aj * AGG_LON_STEP;
+  return [
+    [lat0, lon0],
+    [lat0 + AGG_LAT_STEP, lon0 + AGG_LON_STEP]
+  ];
+}
+
 function getColor(p){
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
+  if (p > 0.8) return '#800026';
+  if (p > 0.6) return '#BD0026';
+  if (p > 0.4) return '#E31A1C';
+  if (p > 0.2) return '#FC4E2A';
   return '#FFEDA0';
 }
 
-// Draw coarse aggregate grid
+/* ---------------- LOAD + BUILD ---------------- */
+
+let aggregates = {};
+
+fetch("map/data/tornado_prob.json")
+  .then(r => r.json())
+  .then(data => {
+    aggregates = {};
+
+    data.forEach(pt => {
+      const { i, j } = snapCell(pt.lat, pt.lon);
+      const ai = Math.floor(i / 10);
+      const aj = Math.floor(j / 10);
+      const key = ai + "," + aj;
+
+      if (!aggregates[key]) {
+        aggregates[key] = { ai, aj, cells: [] };
+      }
+      aggregates[key].cells.push({ i, j, prob: pt.prob });
+    });
+
+    drawAggregates();
+  });
+
+/* ---------------- DRAW AGGREGATES ---------------- */
+
 function drawAggregates(){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
-  document.getElementById("backBtn").style.display="none";
 
-  // Adjust aggregate size
-  var latStep=3.0, lngStep=4.0;
+  Object.values(aggregates).forEach(agg => {
+    const bounds = aggregateBounds(agg.ai, agg.aj);
 
-  for(let lat=24; lat<50; lat+=latStep){
-    for(let lng=-125; lng<-66; lng+=lngStep){
-      let rect = L.rectangle(
-        [[lat,lng],[lat+latStep,lng+lngStep]],
-        {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
-      ).addTo(aggregateLayer);
+    const rect = L.rectangle(bounds, {
+      fillColor:'#aaa',
+      fillOpacity:0.2,
+      color:'#000',
+      weight:1
+    }).addTo(aggregateLayer);
 
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(1)}–${(lat+latStep).toFixed(1)}<br>Lon ${lng.toFixed(1)}–${(lng+lngStep).toFixed(1)}`);
-
-      rect.on('dblclick', function(){
-        drawCellsInAggregate(lat,lng,latStep,lngStep);
-        document.getElementById("backBtn").style.display="block";
-      });
-    }
-  }
+    rect.on('click', () => drawCells(agg));
+  });
 }
 
-// Draw individual cells inside selected aggregate
-function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
+/* ---------------- DRAW CELLS ---------------- */
+
+function drawCells(agg){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
 
-  let latEnd = latStart + latStep;
-  let lngEnd = lngStart + lngStep;
-
-  jsonData.forEach(pt=>{
-    if(pt.lat>=latStart && pt.lat<latEnd && pt.lon>=lngStart && pt.lon<lngEnd){
-      let rect = L.rectangle(
-        [[pt.lat, pt.lon],[pt.lat+1.18, pt.lon+1.94]],
-        {fillColor:getColor(pt.prob), fillOpacity:0.6, color:'#000', weight:0.5}
-      ).addTo(cellLayer);
-      rect.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
-    }
+  agg.cells.forEach(c => {
+    L.rectangle(
+      cellBounds(c.i, c.j),
+      {
+        fillColor:getColor(c.prob),
+        fillOpacity:0.45,
+        weight:0.3,
+        color:'#000'
+      }
+    )
+    .addTo(cellLayer)
+    .bindPopup(`Probability: ${(c.prob * 100).toFixed(2)}%`);
   });
 
-  cellLayer.addTo(map);
-  map.fitBounds([[latStart,lngStart],[latEnd,lngEnd]]);
+  map.fitBounds(aggregateBounds(agg.ai, agg.aj));
 }
 
-// Toggle all cells visibility
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
-  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
-};
+/* ---------------- RESET ---------------- */
 
-// Back to aggregate view
-document.getElementById('backBtn').onclick = () => drawAggregates();
+L.control({position:'topleft'}).onAdd = function(){
+  const div = L.DomUtil.create('div','leaflet-control custom-control');
+  div.innerHTML = `<button id="backBtn">Back to aggregates</button>`;
+  div.onclick = drawAggregates;
+  return div;
+}.addTo(map);
+
 </script>
-
 </body>
 </html>
