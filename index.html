@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (Aggregates)</title>
+  <title>Tornado Probability Map (130 km RAP Cells)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -12,24 +12,12 @@
     h1 { text-align:center; margin:10px 0; }
     #map { height:650px; margin:10px; border-radius:8px; }
 
-    .leaflet-control.custom-control {
-      background:white;
-      padding:10px;
-      border-radius:6px;
-      box-shadow:0 0 6px rgba(0,0,0,0.3);
-      font-size:14px;
-    }
-    .leaflet-control.custom-control button {
-      width:100%;
-      margin:4px 0;
-      height:30px;
-      cursor:pointer;
-    }
+    .leaflet-popup-content { font-size:14px; }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Map (Aggregates)</h1>
+<h1>Tornado Probability Map (130 km RAP Cells)</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -49,48 +37,15 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution:'© OpenStreetMap'
 }).addTo(map);
 
-const aggregateLayer = L.layerGroup().addTo(map);
-const cellLayer = L.layerGroup();
+const cellLayer = L.layerGroup().addTo(map);
 
 /* ---------------- GRID CONSTANTS ---------------- */
 
-/* RAP cell ≈ 13 km */
-const CELL_LAT_STEP = 13 / 111.32;   // ≈ 0.117°
-const CELL_LON_STEP = 13 / 85.0;     // ≈ 0.153° (mid-lat)
-
-const AGG_SIZE = 10; // 10x10 cells = 130 km
-
-const AGG_LAT_STEP = CELL_LAT_STEP * AGG_SIZE;
-const AGG_LON_STEP = CELL_LON_STEP * AGG_SIZE;
-
-const ORIGIN_LAT = 22;
-const ORIGIN_LON = -128;
+/* Each RAP AWP130 cell ≈ 130 km */
+const CELL_LAT_STEP = 130 / 111.32; // ~1.167°
+const CELL_LON_STEP = 130 / 85.0;   // ~1.529° (mid-lat approximation)
 
 /* ---------------- HELPERS ---------------- */
-
-function snapCell(lat, lon) {
-  const i = Math.floor((lat - ORIGIN_LAT) / CELL_LAT_STEP);
-  const j = Math.floor((lon - ORIGIN_LON) / CELL_LON_STEP);
-  return { i, j };
-}
-
-function cellBounds(i, j) {
-  const lat0 = ORIGIN_LAT + i * CELL_LAT_STEP;
-  const lon0 = ORIGIN_LON + j * CELL_LON_STEP;
-  return [
-    [lat0, lon0],
-    [lat0 + CELL_LAT_STEP, lon0 + CELL_LON_STEP]
-  ];
-}
-
-function aggregateBounds(ai, aj) {
-  const lat0 = ORIGIN_LAT + ai * AGG_LAT_STEP;
-  const lon0 = ORIGIN_LON + aj * AGG_LON_STEP;
-  return [
-    [lat0, lon0],
-    [lat0 + AGG_LAT_STEP, lon0 + AGG_LON_STEP]
-  ];
-}
 
 function getColor(p){
   if (p > 0.8) return '#800026';
@@ -100,86 +55,31 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-/* ---------------- LOAD + BUILD ---------------- */
-
-let aggregates = {};
+/* ---------------- LOAD + PLOT CELLS ---------------- */
 
 fetch("map/data/tornado_prob.json")
   .then(r => r.json())
   .then(data => {
-    aggregates = {};
-
     data.forEach(pt => {
-      const { i, j } = snapCell(pt.lat, pt.lon);
+      const lat0 = pt.lat;
+      const lon0 = pt.lon;
 
-      // Downsample: pick one point per 10x10 block
-      if (i % AGG_SIZE !== 0 || j % AGG_SIZE !== 0) return;
+      const bounds = [
+        [lat0, lon0],
+        [lat0 + CELL_LAT_STEP, lon0 + CELL_LON_STEP]
+      ];
 
-      const ai = Math.floor(i / AGG_SIZE);
-      const aj = Math.floor(j / AGG_SIZE);
-      const key = ai + "," + aj;
-
-      if (!aggregates[key]) {
-        aggregates[key] = { ai, aj, cells: [] };
-      }
-
-      aggregates[key].cells.push({ i, j, prob: pt.prob });
-    });
-
-    drawAggregates();
-  });
-
-/* ---------------- DRAW AGGREGATES ---------------- */
-
-function drawAggregates(){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-
-  Object.values(aggregates).forEach(agg => {
-    const bounds = aggregateBounds(agg.ai, agg.aj);
-
-    const rect = L.rectangle(bounds, {
-      fillColor:'#aaa',
-      fillOpacity:0.2,
-      color:'#000',
-      weight:1
-    }).addTo(aggregateLayer);
-
-    rect.on('click', () => drawCells(agg));
-  });
-}
-
-/* ---------------- DRAW CELLS ---------------- */
-
-function drawCells(agg){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-
-  agg.cells.forEach(c => {
-    L.rectangle(
-      aggregateBounds(agg.ai, agg.aj), // each rectangle = full 130 km
-      {
-        fillColor: getColor(c.prob),
-        fillOpacity:0.45,
-        weight:0.3,
+      L.rectangle(bounds, {
+        fillColor: getColor(pt.prob),
+        fillOpacity:0.6,
+        weight:0.5,
         color:'#000'
-      }
-    )
-    .addTo(cellLayer)
-    .bindPopup(`Probability: ${(c.prob*100).toFixed(2)}%`);
-  });
-
-  map.fitBounds(aggregateBounds(agg.ai, agg.aj));
-}
-
-/* ---------------- BACK BUTTON ---------------- */
-
-L.control({position:'topleft'}).onAdd = function(){
-  const div = L.DomUtil.create('div','leaflet-control custom-control');
-  div.innerHTML = `<button id="backBtn">Back to aggregates</button>`;
-  div.onclick = drawAggregates;
-  return div;
-}.addTo(map);
+      })
+      .addTo(cellLayer)
+      .bindPopup(`Probability: ${(pt.prob*100).toFixed(2)}%`);
+    });
+  })
+  .catch(err => console.error("Failed to load JSON:", err));
 
 </script>
 </body>
