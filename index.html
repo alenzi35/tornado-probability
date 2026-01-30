@@ -1,156 +1,194 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (Aggregates)</title>
+  <title>Tornado Probability Map</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
   <style>
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
-    .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+    #map { height:650px; margin:10px; border-radius:8px; }
+    .leaflet-control.custom {
+      background:white;
+      padding:8px;
+      border-radius:6px;
+      box-shadow:0 0 6px rgba(0,0,0,0.3);
     }
-    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
-    #backBtn { display:none; }
+    button { width:100%; margin:4px 0; cursor:pointer; }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Map (Aggregates)</h1>
+<h1>Tornado Probability Map</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://unpkg.com/proj4/dist/proj4.js"></script>
-<script src="https://unpkg.com/proj4leaflet"></script>
 <script>
-// RAP constants
-const RAP_CELL_M = 13000; // 13 km in meters
-const AGG_CELLS = 10;
+/* ============================
+   CONSTANTS
+============================ */
 
-// Color mapping
-function getColor(p){
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
+const CELL_SIZE = 13000;   // 13 km in meters
+const AGG_SIZE  = 10;      // 10x10 cells
+
+// fixed grid origin (southwest CONUS)
+const GRID_ORIGIN_LAT = 24;
+const GRID_ORIGIN_LON = -125;
+
+/* ============================
+   MAP SETUP
+============================ */
+
+const map = L.map('map', {
+  minZoom: 4,
+  maxZoom: 18,
+  zoomSnap: 0.25
+}).setView([39.5, -98.35], 4);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+const aggregateLayer = L.layerGroup().addTo(map);
+const cellLayer = L.layerGroup();
+
+/* ============================
+   GRID HELPERS
+============================ */
+
+const originMeters = L.CRS.EPSG3857.project(
+  L.latLng(GRID_ORIGIN_LAT, GRID_ORIGIN_LON)
+);
+
+function snapToGrid(lat, lon) {
+  const p = L.CRS.EPSG3857.project(L.latLng(lat, lon));
+  return {
+    i: Math.floor((p.x - originMeters.x) / CELL_SIZE),
+    j: Math.floor((p.y - originMeters.y) / CELL_SIZE)
+  };
+}
+
+function cellBounds(i, j) {
+  const x0 = originMeters.x + i * CELL_SIZE;
+  const y0 = originMeters.y + j * CELL_SIZE;
+  return [
+    L.CRS.EPSG3857.unproject(L.point(x0, y0)),
+    L.CRS.EPSG3857.unproject(L.point(x0 + CELL_SIZE, y0 + CELL_SIZE))
+  ];
+}
+
+/* ============================
+   COLOR SCALE
+============================ */
+
+function getColor(p) {
+  if (p > 0.8) return '#800026';
+  if (p > 0.6) return '#BD0026';
+  if (p > 0.4) return '#E31A1C';
+  if (p > 0.2) return '#FC4E2A';
   return '#FFEDA0';
 }
 
-// Convert lat/lon to meters (EPSG:3857)
-function latLonToMeters(lat, lon){
-  return map.options.crs.project([lat, lon]);
-}
+/* ============================
+   DATA + INDEXING
+============================ */
 
-// Initialize map using Web Mercator (EPSG:3857)
-var map = L.map('map', {
-  crs: L.CRS.EPSG3857,
-  minZoom: 2, maxZoom: 18,
-  zoomSnap:0.25
-}).setView([39.5, -98.35], 4);
+let gridCells = {};
+let aggregates = {};
 
-// Base layer in Web Mercator
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution:'© OpenStreetMap contributors'
-}).addTo(map);
+fetch("map/data/tornado_prob.json")
+  .then(r => r.json())
+  .then(data => {
+    data.forEach(pt => {
+      const { i, j } = snapToGrid(pt.lat, pt.lon);
+      const key = `${i},${j}`;
+      gridCells[key] = { i, j, prob: pt.prob };
 
-// Layer groups
-var aggregateLayer = L.layerGroup().addTo(map);
-var cellLayer = L.layerGroup();
-var cellsVisible = true;
+      const ai = Math.floor(i / AGG_SIZE);
+      const aj = Math.floor(j / AGG_SIZE);
+      const akey = `${ai},${aj}`;
 
-// Control panel
-var CustomControl = L.Control.extend({
-  options:{position:'topleft'},
-  onAdd:function(map){
-    var c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `
-      <button id="toggleCells">Toggle Cells</button>
-      <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Tornado probability map</div>
-    `;
-    L.DomEvent.disableClickPropagation(c);
-    return c;
-  }
-});
-map.addControl(new CustomControl());
+      if (!aggregates[akey]) aggregates[akey] = [];
+      aggregates[akey].push({ i, j, prob: pt.prob });
+    });
 
-// Draw cells inside an aggregate (meters)
-function drawCellsInAggregate(latStart, lonStart, latStepM, lonStepM){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-
-  jsonData.forEach(pt=>{
-    const ptMeters = latLonToMeters(pt.lat, pt.lon);
-    const startMeters = latLonToMeters(latStart, lonStart);
-
-    if(ptMeters.y >= startMeters.y && ptMeters.y < startMeters.y + latStepM &&
-       ptMeters.x >= startMeters.x && ptMeters.x < startMeters.x + lonStepM){
-
-      let rectBounds = [
-        map.options.crs.unproject([ptMeters.x, ptMeters.y]),
-        map.options.crs.unproject([ptMeters.x + RAP_CELL_M, ptMeters.y + RAP_CELL_M])
-      ];
-
-      L.rectangle(rectBounds, {fillColor:getColor(pt.prob), fillOpacity:0.4, color:'#000', weight:0.2})
-       .addTo(cellLayer)
-       .bindPopup(`<b>Tornado probability</b>: ${(pt.prob*100).toFixed(2)}%`);
-    }
+    drawAggregates();
   });
 
-  cellLayer.addTo(map);
-  map.fitBounds([
-    map.options.crs.unproject(latLonToMeters(latStart, lonStart)),
-    map.options.crs.unproject([latLonToMeters(latStart, lonStart)[0]+latStepM, latLonToMeters(latStart, lonStart)[1]+lonStepM])
-  ]);
-}
+/* ============================
+   DRAW AGGREGATES
+============================ */
 
-// Draw aggregates in CRS meters
-function drawAggregates(){
+function drawAggregates() {
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
-  document.getElementById("backBtn").style.display="none";
 
-  const latStepM = RAP_CELL_M * AGG_CELLS;
-  const lonStepM = RAP_CELL_M * AGG_CELLS;
+  Object.keys(aggregates).forEach(key => {
+    const [ai, aj] = key.split(',').map(Number);
 
-  for(let lat=24; lat<50; lat+=1){ // step 1° latitude, will convert to meters below
-    for(let lon=-125; lon<-66; lon+=1){
-      const topLeftMeters = latLonToMeters(lat, lon);
+    const bounds = [
+      L.CRS.EPSG3857.unproject(
+        L.point(
+          originMeters.x + ai * AGG_SIZE * CELL_SIZE,
+          originMeters.y + aj * AGG_SIZE * CELL_SIZE
+        )
+      ),
+      L.CRS.EPSG3857.unproject(
+        L.point(
+          originMeters.x + (ai+1) * AGG_SIZE * CELL_SIZE,
+          originMeters.y + (aj+1) * AGG_SIZE * CELL_SIZE
+        )
+      )
+    ];
 
-      // Draw aggregate rectangle
-      const rectBounds = [
-        map.options.crs.unproject(topLeftMeters),
-        map.options.crs.unproject([topLeftMeters.x + lonStepM, topLeftMeters.y + latStepM])
-      ];
+    const rect = L.rectangle(bounds, {
+      fillColor: '#999',
+      fillOpacity: 0.25,
+      color: '#000',
+      weight: 1
+    }).addTo(aggregateLayer);
 
-      let rect = L.rectangle(rectBounds, {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1})
-        .addTo(aggregateLayer);
-
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–? <br>Lon ${lon.toFixed(2)}–?`);
-
-      rect.on('dblclick', ()=> drawCellsInAggregate(lat, lon, latStepM, lonStepM));
-    }
-  }
+    rect.on('dblclick', () => drawCells(key));
+  });
 }
 
-// Toggle visibility
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
-  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.4:0, weight: cellsVisible?0.2:0}); });
-};
+/* ============================
+   DRAW CELLS
+============================ */
 
-// Back to aggregates
-document.getElementById('backBtn').onclick = () => drawAggregates();
+function drawCells(akey) {
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
 
-// Load JSON
-var jsonData = [];
-fetch("map/data/tornado_prob.json")
-  .then(resp=>resp.json())
-  .then(data=>{ jsonData=data; drawAggregates(); })
-  .catch(err=>console.error("Failed to load JSON:", err));
+  aggregates[akey].forEach(c => {
+    L.rectangle(
+      cellBounds(c.i, c.j),
+      {
+        fillColor: getColor(c.prob),
+        fillOpacity: 0.45,
+        weight: 0.2
+      }
+    )
+    .addTo(cellLayer)
+    .bindPopup(`Probability: ${(c.prob * 100).toFixed(2)}%`);
+  });
+
+  map.fitBounds(cellLayer.getBounds());
+}
+
+/* ============================
+   BACK BUTTON
+============================ */
+
+L.control({position:'topleft'}).onAdd = function () {
+  const div = L.DomUtil.create('div','leaflet-control custom');
+  div.innerHTML = `<button id="back">Back to aggregates</button>`;
+  div.onclick = () => drawAggregates();
+  return div;
+}.addTo(map);
 
 </script>
 </body>
