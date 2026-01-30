@@ -43,15 +43,9 @@ var CustomControl = L.Control.extend({
 });
 map.addControl(new CustomControl());
 
-// Load JSON
-var jsonData = [];
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => { jsonData = data; drawCells(); })
-  .catch(err => console.error("Failed to load JSON:", err));
-
 // Color mapping
 function getColor(p){
+  if(p === null || p === undefined) return '#aaa'; // grey for missing
   if(p>0.8) return '#800026';
   if(p>0.6) return '#BD0026';
   if(p>0.4) return '#E31A1C';
@@ -62,28 +56,38 @@ function getColor(p){
 // RAP AWP130 resolution
 const CELL_LAT_STEP = 1.18; // degrees latitude ~130km
 const CELL_LON_STEP = 1.94; // degrees longitude ~130km
-const SKIP = 10;             // pick every 10th RAP point
+const ORIGIN_LAT = 22;
+const ORIGIN_LON = -128;
+const SKIP = 10; // only every 10th point in each direction
 
-function drawCells(){
-  cellLayer.clearLayers();
+function latToIndex(lat) { return Math.round((lat - ORIGIN_LAT) / (CELL_LAT_STEP / SKIP)); }
+function lonToIndex(lon) { return Math.round((lon - ORIGIN_LON) / (CELL_LON_STEP / SKIP)); }
 
-  jsonData.forEach((pt, index) => {
-    // Skip points to avoid overlapping (10th)
-    if(index % SKIP !== 0) return;
+// Load JSON and draw
+fetch("map/data/tornado_prob.json")
+  .then(resp => resp.json())
+  .then(data => {
+    data.forEach(pt => {
+      const i = latToIndex(pt.lat);
+      const j = lonToIndex(pt.lon);
 
-    let bounds = [[pt.lat, pt.lon], [pt.lat + CELL_LAT_STEP, pt.lon + CELL_LON_STEP]];
+      // Only keep every 10th cell to avoid overlap
+      if(i % SKIP !== 0 || j % SKIP !== 0) return;
 
-    L.rectangle(bounds, {
-      fillColor:getColor(pt.prob),
-      fillOpacity:0.6,
-      color:'#000',
-      weight:0.5
-    }).addTo(cellLayer)
-      .bindPopup(`<b>Tornado probability</b><br>${(pt.prob*100).toFixed(2)}%`);
-  });
-}
+      const bounds = [[pt.lat, pt.lon], [pt.lat + CELL_LAT_STEP, pt.lon + CELL_LON_STEP]];
 
-// Toggle cells visibility
+      L.rectangle(bounds, {
+        fillColor:getColor(pt.prob),
+        fillOpacity:0.6,
+        color:'#000',
+        weight:0.5
+      }).addTo(cellLayer)
+        .bindPopup(`Probability: ${(pt.prob*100).toFixed(2)}%`);
+    });
+  })
+  .catch(err => console.error("Failed to load JSON:", err));
+
+// Toggle visibility
 document.getElementById('toggleCells').onclick = () => {
   cellsVisible = !cellsVisible;
   cellLayer.eachLayer(l => l.setStyle({ fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0 }));
