@@ -8,16 +8,23 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 
   <style>
-    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
+    body { margin:0; font-family:Arial,sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
     #map { height:650px; margin:10px; border-radius:8px; }
-    .leaflet-control.custom {
+
+    .leaflet-control.custom-control {
       background:white;
-      padding:8px;
+      padding:10px;
       border-radius:6px;
       box-shadow:0 0 6px rgba(0,0,0,0.3);
+      font-size:14px;
     }
-    button { width:100%; margin:4px 0; cursor:pointer; }
+    .leaflet-control.custom-control button {
+      width:100%;
+      margin:4px 0;
+      height:30px;
+      cursor:pointer;
+    }
   </style>
 </head>
 <body>
@@ -27,64 +34,61 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-/* ============================
-   CONSTANTS
-============================ */
+/* -------------------- MAP SETUP -------------------- */
 
-const CELL_SIZE = 13000;   // 13 km in meters
-const AGG_SIZE  = 10;      // 10x10 cells
-
-// fixed grid origin (southwest CONUS)
-const GRID_ORIGIN_LAT = 24;
-const GRID_ORIGIN_LON = -125;
-
-/* ============================
-   MAP SETUP
-============================ */
-
+const CONUS = [[22,-128],[51.5,-64]];
 const map = L.map('map', {
-  minZoom: 4,
-  maxZoom: 18,
-  zoomSnap: 0.25
-}).setView([39.5, -98.35], 4);
+  minZoom:4,
+  maxZoom:18,
+  zoomSnap:0.25,
+  maxBounds:CONUS,
+  maxBoundsViscosity:0
+}).setView([39.5,-98.35],4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors'
+  attribution:'© OpenStreetMap'
 }).addTo(map);
 
 const aggregateLayer = L.layerGroup().addTo(map);
 const cellLayer = L.layerGroup();
 
-/* ============================
-   GRID HELPERS
-============================ */
+/* -------------------- GRID CONSTANTS -------------------- */
 
-const originMeters = L.CRS.EPSG3857.project(
-  L.latLng(GRID_ORIGIN_LAT, GRID_ORIGIN_LON)
-);
+/* RAP grid: 13km × 13km */
+const CELL_KM = 13;
+const KM_PER_DEG_LAT = 111.32;
+const CELL_DEG_LAT = CELL_KM / KM_PER_DEG_LAT;
 
-function snapToGrid(lat, lon) {
-  const p = L.CRS.EPSG3857.project(L.latLng(lat, lon));
-  return {
-    i: Math.floor((p.x - originMeters.x) / CELL_SIZE),
-    j: Math.floor((p.y - originMeters.y) / CELL_SIZE)
-  };
+/* lon degrees vary with latitude → calculated per row */
+function cellDegLon(lat){
+  return CELL_KM / (111.32 * Math.cos(lat * Math.PI/180));
 }
 
-function cellBounds(i, j) {
-  const x0 = originMeters.x + i * CELL_SIZE;
-  const y0 = originMeters.y + j * CELL_SIZE;
-  return [
-    L.CRS.EPSG3857.unproject(L.point(x0, y0)),
-    L.CRS.EPSG3857.unproject(L.point(x0 + CELL_SIZE, y0 + CELL_SIZE))
-  ];
+const AGG_SIZE = 10; // 10 × 10 cells
+
+/* anchor grid so rows align */
+const ORIGIN_LAT = 22;
+const ORIGIN_LON = -128;
+
+/* -------------------- HELPERS -------------------- */
+
+function cellIndex(lat, lon){
+  const i = Math.floor((lat - ORIGIN_LAT) / CELL_DEG_LAT);
+  const lonStep = cellDegLon(lat);
+  const j = Math.floor((lon - ORIGIN_LON) / lonStep);
+  return { i, j };
 }
 
-/* ============================
-   COLOR SCALE
-============================ */
+function cellBounds(i, j){
+  const lat0 = ORIGIN_LAT + i * CELL_DEG_LAT;
+  const lat1 = lat0 + CELL_DEG_LAT;
+  const lonStep = cellDegLon(lat0);
+  const lon0 = ORIGIN_LON + j * lonStep;
+  const lon1 = lon0 + lonStep;
+  return [[lat0,lon0],[lat1,lon1]];
+}
 
-function getColor(p) {
+function getColor(p){
   if (p > 0.8) return '#800026';
   if (p > 0.6) return '#BD0026';
   if (p > 0.4) return '#E31A1C';
@@ -92,104 +96,95 @@ function getColor(p) {
   return '#FFEDA0';
 }
 
-/* ============================
-   DATA + INDEXING
-============================ */
+/* -------------------- LOAD DATA -------------------- */
 
-let gridCells = {};
 let aggregates = {};
 
 fetch("map/data/tornado_prob.json")
   .then(r => r.json())
-  .then(data => {
-    data.forEach(pt => {
-      const { i, j } = snapToGrid(pt.lat, pt.lon);
-      const key = `${i},${j}`;
-      gridCells[key] = { i, j, prob: pt.prob };
+  .then(data => buildAggregates(data));
 
-      const ai = Math.floor(i / AGG_SIZE);
-      const aj = Math.floor(j / AGG_SIZE);
-      const akey = `${ai},${aj}`;
+function buildAggregates(data){
+  aggregates = {};
 
-      if (!aggregates[akey]) aggregates[akey] = [];
-      aggregates[akey].push({ i, j, prob: pt.prob });
-    });
+  data.forEach(pt => {
+    const { i, j } = cellIndex(pt.lat, pt.lon);
+    const ai = Math.floor(i / AGG_SIZE);
+    const aj = Math.floor(j / AGG_SIZE);
+    const key = ai + "," + aj;
 
-    drawAggregates();
+    if (!aggregates[key]) {
+      aggregates[key] = { ai, aj, cells: [] };
+    }
+    aggregates[key].cells.push({ i, j, prob: pt.prob });
   });
 
-/* ============================
-   DRAW AGGREGATES
-============================ */
+  drawAggregates();
+}
 
-function drawAggregates() {
+/* -------------------- DRAW AGGREGATES -------------------- */
+
+function drawAggregates(){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
 
-  Object.keys(aggregates).forEach(key => {
-    const [ai, aj] = key.split(',').map(Number);
+  Object.values(aggregates).forEach(agg => {
+    const minI = agg.ai * AGG_SIZE;
+    const minJ = agg.aj * AGG_SIZE;
+    const maxI = minI + AGG_SIZE;
+    const maxJ = minJ + AGG_SIZE;
 
     const bounds = [
-      L.CRS.EPSG3857.unproject(
-        L.point(
-          originMeters.x + ai * AGG_SIZE * CELL_SIZE,
-          originMeters.y + aj * AGG_SIZE * CELL_SIZE
-        )
-      ),
-      L.CRS.EPSG3857.unproject(
-        L.point(
-          originMeters.x + (ai+1) * AGG_SIZE * CELL_SIZE,
-          originMeters.y + (aj+1) * AGG_SIZE * CELL_SIZE
-        )
-      )
+      cellBounds(minI, minJ)[0],
+      cellBounds(maxI, maxJ)[1]
     ];
 
     const rect = L.rectangle(bounds, {
-      fillColor: '#999',
-      fillOpacity: 0.25,
-      color: '#000',
-      weight: 1
+      fillColor:'#aaa',
+      fillOpacity:0.2,
+      color:'#000',
+      weight:1
     }).addTo(aggregateLayer);
 
-    rect.on('dblclick', () => drawCells(key));
+    rect.on('dblclick', () => drawCells(agg));
   });
 }
 
-/* ============================
-   DRAW CELLS
-============================ */
+/* -------------------- DRAW CELLS -------------------- */
 
-function drawCells(akey) {
+function drawCells(agg){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
 
-  aggregates[akey].forEach(c => {
+  agg.cells.forEach(c => {
     L.rectangle(
       cellBounds(c.i, c.j),
       {
-        fillColor: getColor(c.prob),
-        fillOpacity: 0.45,
-        weight: 0.2
+        fillColor:getColor(c.prob),
+        fillOpacity:0.45,
+        weight:0.2,
+        color:'#000'
       }
     )
     .addTo(cellLayer)
     .bindPopup(`Probability: ${(c.prob * 100).toFixed(2)}%`);
   });
 
-  map.fitBounds(cellLayer.getBounds());
+  const minI = agg.ai * AGG_SIZE;
+  const minJ = agg.aj * AGG_SIZE;
+  const maxI = minI + AGG_SIZE;
+  const maxJ = minJ + AGG_SIZE;
+
+  map.fitBounds([
+    cellBounds(minI, minJ)[0],
+    cellBounds(maxI, maxJ)[1]
+  ]);
 }
 
-/* ============================
-   BACK BUTTON
-============================ */
+/* -------------------- CLICK BACKGROUND TO RESET -------------------- */
 
-L.control({position:'topleft'}).onAdd = function () {
-  const div = L.DomUtil.create('div','leaflet-control custom');
-  div.innerHTML = `<button id="back">Back to aggregates</button>`;
-  div.onclick = () => drawAggregates();
-  return div;
-}.addTo(map);
-
+map.on('click', () => drawAggregates());
 </script>
+
 </body>
 </html>
