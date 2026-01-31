@@ -22,11 +22,9 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]]; // approximate CONUS
-const CELL_KM = 130;
-
-const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-  .setView([39.5, -98.35], 4);
+const CONUS_bounds = [[22, -128], [51.5, -64]];
+const map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
+    .setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
@@ -35,8 +33,8 @@ let cellsVisible = true;
 
 // Control panel
 const CustomControl = L.Control.extend({
-  options: {position:'topleft'},
-  onAdd: function(map){
+  options:{position:'topleft'},
+  onAdd:function(map){
     const c = L.DomUtil.create('div','leaflet-control custom-control');
     c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
     L.DomEvent.disableClickPropagation(c);
@@ -55,39 +53,40 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-function formatProb(p){
-  return (p*100).toFixed(3) + '%';
-}
+// RAP AWP130 resolution
+const CELL_LAT_STEP = 1.18; // ~130 km
+const CELL_LON_STEP = 1.94; // ~130 km
+const ORIGIN_LAT = 22;
+const ORIGIN_LON = -128;
+const SKIP = 10; // every 10th RAP point
 
-// Compute rectangle bounds in meters to avoid lat/lon distortion
-function rectangleFromCenter(lat, lon, sizeKm){
-  const center = L.latLng(lat, lon);
-  const half = sizeKm * 500; // half in meters
-  const p = map.project(center, map.getMaxZoom());
-  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
-  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
-  return L.latLngBounds(sw, ne);
-}
+// Compute grid indices
+function latToIndex(lat){ return Math.round((lat - ORIGIN_LAT) / (CELL_LAT_STEP / SKIP)); }
+function lonToIndex(lon){ return Math.round((lon - ORIGIN_LON) / (CELL_LON_STEP / SKIP)); }
 
-// Load JSON and draw only cells overlapping CONUS
+// Load JSON and draw 130 km cells with 10th-skip
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    // Determine cells to keep: only rows/cols that intersect CONUS
-    const filtered = data.filter(pt => {
-      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
-      return bounds.intersects(L.latLngBounds(CONUS_BOUNDS));
-    });
+    data.forEach(pt => {
+      if(pt.lat < CONUS_bounds[0][0] || pt.lat > CONUS_bounds[1][0] ||
+         pt.lon < CONUS_bounds[0][1] || pt.lon > CONUS_bounds[1][1]) return;
 
-    filtered.forEach(pt => {
-      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
+      const i = latToIndex(pt.lat);
+      const j = lonToIndex(pt.lon);
+
+      // Only every 10th point in both directions
+      if(i % SKIP !== 0 || j % SKIP !== 0) return;
+
+      const bounds = [[pt.lat, pt.lon], [pt.lat + CELL_LAT_STEP, pt.lon + CELL_LON_STEP]];
+
       L.rectangle(bounds, {
         fillColor: getColor(pt.prob),
-        fillOpacity: 0.6,
-        color: '#000',
-        weight: 0.5
+        fillOpacity:0.6,
+        color:'#000',
+        weight:0.5
       }).addTo(cellLayer)
-        .bindPopup(`<b>Tornado probability</b><br>${formatProb(pt.prob)}`);
+        .bindPopup(`Probability: ${(pt.prob*100).toFixed(3)}%`);
     });
   })
   .catch(err => console.error("Failed to load JSON:", err));
