@@ -5,7 +5,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
@@ -14,24 +13,28 @@
   </style>
 </head>
 <body>
-
 <div id="map"></div>
 
-<!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
-/************* MAP *************/
-const CONUS_BOUNDS = [[22, -125], [51, -66]]; // SW, NE
+// ---------- MAP SETUP ----------
+const CONUS_BOUNDS = [[22, -125], [51, -66]]; 
 var map = L.map('map', { 
-  minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
+    minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
 }).setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution:'© OpenStreetMap contributors'
+    attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
-/************* COLOR FUNCTION *************/
+// ---------- PROJ4 FOR LCC ----------
+proj4.defs("EPSG:RAP_LCC",
+  "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs"
+);
+
+// ---------- COLORS ----------
 function getColor(p){
   if(p>0.8) return '#800026';
   if(p>0.6) return '#BD0026';
@@ -40,51 +43,44 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-/************* GRID SETTINGS *************/
-const dLat = 13.545 / 111; // ~0.122° latitude for 13.545 km
+// ---------- CELL SIZE ----------
+const CELL = 13545; // meters
 
-function getDLon(lat){
-  const latRad = lat * Math.PI / 180;
-  return 13.545 / (111 * Math.cos(latRad)); // longitude width in degrees
-}
-
-/************* DRAW ONE CELL *************/
 function drawCell(pt){
-  const lat = pt.lat;
-  const lon = pt.lon;
-  const dLon = getDLon(lat);
-
-  const bounds = [
-    [lat - dLat/2, lon - dLon/2],
-    [lat + dLat/2, lon + dLon/2]
+  const half = CELL/2;
+  const corners = [
+    [pt.x - half, pt.y - half],
+    [pt.x + half, pt.y - half],
+    [pt.x + half, pt.y + half],
+    [pt.x - half, pt.y + half]
   ];
 
-  return L.rectangle(bounds, {
+  // Project to Web Mercator
+  const cornersLatLon = corners.map(c=>{
+    const [mx, my] = proj4("EPSG:RAP_LCC","EPSG:3857", c);
+    return map.unproject([mx, my]);
+  });
+
+  return L.polygon(cornersLatLon, {
     fillColor: getColor(pt.prob),
     fillOpacity: 0.6,
-    color: '#000',
-    weight: 0.2
+    color:'#000',
+    weight:0.2
   }).bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
 }
 
-/************* LOAD JSON AND DRAW ALL CELLS *************/
+// ---------- LOAD JSON ----------
 fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => {
+  .then(resp=>resp.json())
+  .then(data=>{
     const cellLayer = L.layerGroup().addTo(map);
-
-    data.forEach(pt => {
-      // Only plot cells inside CONUS
-      if(pt.lat >= 22 && pt.lat <= 51 && pt.lon >= -125 && pt.lon <= -66){
-        const cell = drawCell(pt);
-        cell.addTo(cellLayer);
-      }
+    data.forEach(pt=>{
+      const cell = drawCell(pt);
+      cell.addTo(cellLayer);
     });
-
     map.fitBounds(cellLayer.getBounds());
   })
-  .catch(err => console.error("Failed to load JSON:", err));
-
+  .catch(err=>console.error(err));
 </script>
 </body>
 </html>
