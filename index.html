@@ -1,146 +1,178 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (RAP Cells)</title>
+  <title>Tornado Probability Map (LCC 13 km)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+  
+  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
+  
+  <!-- Custom styles -->
   <style>
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; }
+    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
     .leaflet-control.custom-control {
-      background:white;
-      padding:10px;
-      border-radius:6px;
-      box-shadow:0 0 6px rgba(0,0,0,0.3);
-      font-size:14px;
+      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
     }
-    .leaflet-control.custom-control button {
-      width:100%;
-      margin:4px 0;
-      cursor:pointer;
-      height:30px;
-    }
+    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
+    #backBtn { display:none; }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Map (RAP Grid)</h1>
+<h1>Tornado Probability Map (13 km LCC)</h1>
 <div id="map"></div>
 
+<!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<!-- proj4.js for LCC -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
-/* ================= CONFIG ================= */
+/************* PROJECTIONS *************/
+// Define RAP AWIP130 LCC
+proj4.defs("EPSG:RAP_LCC",
+  "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs"
+);
 
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
-const CELL_KM = 64;   // VERIFIED by Utah measurement
+// Convert LCC meters to Web Mercator for Leaflet
+function lccToWebMerc(x, y){
+  return proj4("EPSG:RAP_LCC", "EPSG:3857", [x, y]);
+}
 
-/* ========================================== */
-
-const map = L.map('map', {
-  maxBounds: CONUS_BOUNDS,
-  maxBoundsViscosity: 0,
-  minZoom: 4,
-  maxZoom: 18,
-  zoomSnap: 0.25
+/************* MAP SETUP *************/
+var map = L.map('map', { 
+  minZoom:4, maxZoom:18, zoomSnap:0.25
 }).setView([39.5, -98.35], 4);
 
+// OSM basemap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
-const cellLayer = L.layerGroup().addTo(map);
-let visible = true;
+/************* LAYERS *************/
+var aggregateLayer = L.layerGroup().addTo(map);
+var cellLayer = L.layerGroup();
+var cellsVisible = true;
 
-/* ================= UI ================= */
-
-const CustomControl = L.Control.extend({
-  options:{ position:'topleft' },
-  onAdd:function(){
-    const c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
+/************* CONTROL PANEL *************/
+var CustomControl = L.Control.extend({
+  options:{position:'topleft'},
+  onAdd:function(map){
+    var c = L.DomUtil.create('div','leaflet-control custom-control');
+    c.innerHTML = `
+      <button id="toggleCells">Toggle Cells</button>
+      <button id="backBtn">← Back to Aggregates</button>
+      <div id="info">Click an aggregate to view 13 km cells</div>
+    `;
     L.DomEvent.disableClickPropagation(c);
     return c;
   }
 });
 map.addControl(new CustomControl());
 
-/* ================= COLORS ================= */
-
+/************* COLOR FUNCTION *************/
 function getColor(p){
-  if(p == null) return '#aaa';
-  if(p > 0.8) return '#800026';
-  if(p > 0.6) return '#BD0026';
-  if(p > 0.4) return '#E31A1C';
-  if(p > 0.2) return '#FC4E2A';
+  if(p>0.8) return '#800026';
+  if(p>0.6) return '#BD0026';
+  if(p>0.4) return '#E31A1C';
+  if(p>0.2) return '#FC4E2A';
   return '#FFEDA0';
 }
 
-function formatProb(p){
-  return (p * 100).toFixed(3) + '%';
-}
-
-/* ========= KM → DEGREE CELL (STABLE) ========= */
-
-function cellBoundsFromCenter(lat, lon, sizeKm){
-  const halfKm = sizeKm / 2;
-
-  const kmPerDegLat = 110.574;
-  const kmPerDegLon = 111.320 * Math.cos(lat * Math.PI / 180);
-
-  const dLat = halfKm / kmPerDegLat;
-  const dLon = halfKm / kmPerDegLon;
-
-  return L.latLngBounds(
-    [lat - dLat, lon - dLon],
-    [lat + dLat, lon + dLon]
-  );
-}
-
-/* ================= LOAD DATA ================= */
-
+/************* LOAD JSON *************/
+var jsonData = [];
 fetch("map/data/tornado_prob.json")
-  .then(r => r.json())
-  .then(data => {
+  .then(resp => resp.json())
+  .then(data => { jsonData = data; drawAggregates(); })
+  .catch(err => console.error("Failed to load JSON:", err));
 
-    const conus = L.latLngBounds(CONUS_BOUNDS);
+/************* AGGREGATE GRID *************/
+function drawAggregates(){
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+  document.getElementById("backBtn").style.display="none";
 
-    data.forEach(pt => {
+  var latStep=3.0, lngStep=4.0;
 
-      const bounds = cellBoundsFromCenter(pt.lat, pt.lon, CELL_KM);
+  for(let lat=24; lat<50; lat+=latStep){
+    for(let lng=-125; lng<-66; lng+=lngStep){
+      let rect = L.rectangle(
+        [[lat,lng],[lat+latStep,lng+lngStep]],
+        {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
+      ).addTo(aggregateLayer);
 
-      if (!bounds.intersects(conus)) return;
+      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(1)}–${(lat+latStep).toFixed(1)}<br>Lon ${lng.toFixed(1)}–${(lng+lngStep).toFixed(1)}`);
 
-      L.rectangle(bounds, {
-        fillColor: getColor(pt.prob),
-        fillOpacity: 0.6,
-        color: '#000',
-        weight: 0.4
-      })
-      .bindPopup(
-        `<b>Tornado Probability</b><br>${formatProb(pt.prob)}`
-      )
-      .addTo(cellLayer);
-    });
-  })
-  .catch(err => console.error("JSON load failed:", err));
+      rect.on('dblclick', function(){
+        drawCellsInAggregate(lat,lng,latStep,lngStep);
+        document.getElementById("backBtn").style.display="block";
+      });
+    }
+  }
+}
 
-/* ================= TOGGLE ================= */
+/************* DRAW 13 km CELLS *************/
+const CELL = 13000; // 13 km
 
-document.getElementById('toggleCells').onclick = () => {
-  visible = !visible;
-  cellLayer.eachLayer(l => {
-    l.setStyle({
-      fillOpacity: visible ? 0.6 : 0,
-      weight: visible ? 0.4 : 0
-    });
+function drawCell(pt){
+  const half = CELL/2;
+
+  // Four corners in LCC meters
+  const cornersLCC = [
+    [pt.x - half, pt.y - half],
+    [pt.x + half, pt.y - half],
+    [pt.x + half, pt.y + half],
+    [pt.x - half, pt.y + half]
+  ];
+
+  // Convert to Web Mercator and then Leaflet lat/lon
+  const cornersLatLon = cornersLCC.map(c=>{
+    const [mx, my] = lccToWebMerc(c[0], c[1]);
+    return map.unproject([mx, my]); // Leaflet expects [lng, lat]
   });
-};
-</script>
 
+  return L.polygon(cornersLatLon, {
+    fillColor: getColor(pt.prob),
+    fillOpacity: 0.6,
+    color: '#000',
+    weight: 0.5
+  });
+}
+
+/************* DRAW CELLS IN AGGREGATE *************/
+function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
+  aggregateLayer.clearLayers();
+  cellLayer.clearLayers();
+
+  const latEnd = latStart + latStep;
+  const lngEnd = lngStart + lngStep;
+
+  jsonData.forEach(pt=>{
+    // Optional: if JSON still has lat/lon, filter by bounds
+    if(pt.lat>=latStart && pt.lat<latEnd && pt.lon>=lngStart && pt.lon<lngEnd){
+      let cell = drawCell(pt);
+      cell.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
+      cell.addTo(cellLayer);
+    }
+  });
+
+  cellLayer.addTo(map);
+  map.fitBounds(cellLayer.getBounds());
+}
+
+/************* TOGGLE CELLS *************/
+document.getElementById('toggleCells').onclick = () => {
+  cellsVisible = !cellsVisible;
+  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
+  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
+};
+
+/************* BACK TO AGGREGATES *************/
+document.getElementById('backBtn').onclick = () => drawAggregates();
+
+</script>
 </body>
 </html>
