@@ -1,83 +1,60 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map</title>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-  <style>
-    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
-    #map { height:100vh; width:100%; }
-    .leaflet-tooltip.custom {
-      background:white;
-      border:1px solid #333;
-      border-radius:4px;
-      padding:4px 6px;
-      font-size:14px;
-      color:#000;
-    }
-  </style>
+<meta charset="utf-8">
+<title>RAP Grid Cells</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<style>
+#map { height:100vh; width:100%; }
+</style>
 </head>
 <body>
-
 <div id="map"></div>
-
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7.2.4/dist/browser/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-pixi-overlay@2.0.0/dist/leaflet-pixi-overlay.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
-const CONUS_BOUNDS = [[22, -125], [51, -66]];
-const map = L.map('map', { minZoom:4, maxZoom:18, maxBounds:CONUS_BOUNDS, maxBoundsViscosity:0.5 })
-  .setView([39.5, -98.35], 4);
+const map = L.map('map').setView([39.5,-98.35],4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution:'© OpenStreetMap contributors'
-}).addTo(map);
+const CELL = 13545; // meters
+proj4.defs("EPSG:RAP_LCC","+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs");
 
-const cellLayer = L.layerGroup().addTo(map);
+// Color function
+function getColor(p){ return p>0.8 ? 0x800026 : p>0.6 ? 0xBD0026 : p>0.4 ? 0xE31A1C : p>0.2 ? 0xFC4E2A : 0xFFEDA0; }
 
-// Load JSON
-fetch("map/data/tornado_prob.json")
-  .then(r => r.json())
-  .then(jsonData => {
-    
-    // Fixed cell size in km
-    const CELL_KM = 13.545;
+// Load your RAP JSON
+fetch('map/data/tornado_prob.json').then(r=>r.json()).then(data=>{
+    const pixiContainer = new PIXI.Container();
 
-    jsonData.forEach(pt => {
-      // Compute rectangle size in degrees dynamically
-      const latHeight = CELL_KM / 111.32; // ~km per degree latitude
-      const lonWidth = CELL_KM / (111.32 * Math.cos(pt.lat * Math.PI/180));
+    const overlay = L.pixiOverlay(utils=>{
+        const container = utils.getContainer();
+        container.removeChildren();
 
-      const bounds = [
-        [pt.lat, pt.lon],
-        [pt.lat + latHeight, pt.lon + lonWidth]
-      ];
+        data.forEach(pt=>{
+            // Project LCC cell center to Leaflet point
+            const [lon, lat] = proj4("EPSG:RAP_LCC","EPSG:4326",[pt.x, pt.y]);
+            const center = utils.latLngToLayerPoint([lat, lon]);
 
-      // Only draw if inside CONUS
-      if(bounds[0][0] > CONUS_BOUNDS[1][0] || bounds[1][0] < CONUS_BOUNDS[0][0] ||
-         bounds[0][1] > CONUS_BOUNDS[1][1] || bounds[1][1] < CONUS_BOUNDS[0][1]) return;
+            // Compute pixel size of 1 CELL in meters
+            const north = proj4("EPSG:RAP_LCC","EPSG:4326",[pt.x, pt.y + CELL/2]);
+            const northPt = utils.latLngToLayerPoint([north[1], north[0]]);
+            const halfPix = Math.abs(northPt.y - center.y);
 
-      const rect = L.rectangle(bounds, {
-        fillColor: getColor(pt.prob),
-        fillOpacity:0.7,
-        color:'#000',
-        weight:0.3
-      }).addTo(cellLayer);
+            const g = new PIXI.Graphics();
+            g.beginFill(getColor(pt.prob));
+            g.lineStyle(0.2,0x000000);
+            g.drawRect(center.x - halfPix, center.y - halfPix, 2*halfPix, 2*halfPix);
+            g.endFill();
+            container.addChild(g);
+        });
 
-      rect.bindTooltip(`Probability: ${pt.prob.toFixed(4)}`, {className:'custom', sticky:true});
-    });
+    }, pixiContainer);
 
-  })
-  .catch(err => console.error("Failed to load JSON:", err));
-
-// Color mapping
-function getColor(p){
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
-  return '#FFEDA0';
-}
+    overlay.addTo(map);
+});
 </script>
 </body>
 </html>
