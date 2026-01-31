@@ -22,9 +22,12 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const CONUS_bounds = [[22, -128], [51.5, -64]];
-const map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-    .setView([39.5, -98.35], 4);
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
+const CELL_KM = 130;
+const SKIP = 10; // every 10th point for 130 km spacing
+
+const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
+  .setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
@@ -33,8 +36,8 @@ let cellsVisible = true;
 
 // Control panel
 const CustomControl = L.Control.extend({
-  options:{position:'topleft'},
-  onAdd:function(map){
+  options: {position:'topleft'},
+  onAdd: function(map){
     const c = L.DomUtil.create('div','leaflet-control custom-control');
     c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
     L.DomEvent.disableClickPropagation(c);
@@ -45,7 +48,7 @@ map.addControl(new CustomControl());
 
 // Color mapping
 function getColor(p){
-  if(p === null || p === undefined) return '#aaa'; // grey for missing
+  if(p === null || p === undefined) return '#aaa';
   if(p>0.8) return '#800026';
   if(p>0.6) return '#BD0026';
   if(p>0.4) return '#E31A1C';
@@ -53,51 +56,55 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-// Approx 130 km in degrees
-const CELL_KM = 130;
-const KM_PER_DEG_LAT = 111;
-function latStepDeg() { return CELL_KM / KM_PER_DEG_LAT; }
-function lonStepDeg(lat) { return CELL_KM / (KM_PER_DEG_LAT * Math.cos(lat * Math.PI/180)); }
-const SKIP = 10; // pick every 10th cell in row/col
+function formatProb(p){
+  return (p*100).toFixed(3) + '%';
+}
 
-// Load JSON and draw only every 10th row and column
+// Rectangle in projected meters
+function rectangleFromCenter(lat, lon, sizeKm){
+  const center = L.latLng(lat, lon);
+  const half = sizeKm * 500; // half in meters
+  const p = map.project(center, map.getMaxZoom());
+  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
+  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
+  return L.latLngBounds(sw, ne);
+}
+
+// Load JSON
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    // Sort by latitude descending, then longitude ascending
-    data.sort((a,b) => b.lat - a.lat || a.lon - b.lon);
-
-    let lastLat = null;
-    let row = -1;
-    let col = 0;
-
+    // Build lookup by lat/lon string
+    const pointMap = {};
     data.forEach(pt => {
-      if(pt.lat < CONUS_bounds[0][0] || pt.lat > CONUS_bounds[1][0] ||
-         pt.lon < CONUS_bounds[0][1] || pt.lon > CONUS_bounds[1][1]) return;
+      pointMap[pt.lat.toFixed(3) + ',' + pt.lon.toFixed(3)] = pt.prob;
+    });
 
-      // Increment row when latitude changes
-      if(lastLat === null || Math.abs(pt.lat - lastLat) > 1e-4) { 
-        row++;
-        col = 0;
-        lastLat = pt.lat;
-      } else {
-        col++;
-      }
+    // Get unique latitudes and longitudes, sorted ascending
+    const uniqueLats = [...new Set(data.map(pt => pt.lat))].sort((a,b) => a-b);
+    const uniqueLons = [...new Set(data.map(pt => pt.lon))].sort((a,b) => a-b);
 
-      // Draw only every 10th cell
-      if(row % SKIP !== 0 || col % SKIP !== 0) return;
+    // Pick every SKIP-th lat/lon
+    const latIndices = uniqueLats.map((lat,i) => i % SKIP === 0 ? lat : null).filter(l=>l!==null);
+    const lonIndices = uniqueLons.map((lon,i) => i % SKIP === 0 ? lon : null).filter(l=>l!==null);
 
-      const latStep = latStepDeg();
-      const lonStep = lonStepDeg(pt.lat);
-      const bounds = [[pt.lat, pt.lon], [pt.lat + latStep, pt.lon + lonStep]];
+    // Draw cells
+    latIndices.forEach(lat => {
+      lonIndices.forEach(lon => {
+        const key = lat.toFixed(3) + ',' + lon.toFixed(3);
+        const prob = pointMap[key] ?? 0;
 
-      L.rectangle(bounds, {
-        fillColor: getColor(pt.prob),
-        fillOpacity:0.6,
-        color:'#000',
-        weight:0.5
-      }).addTo(cellLayer)
-        .bindPopup(`Probability: ${(pt.prob*100).toFixed(3)}%`);
+        const bounds = rectangleFromCenter(lat, lon, CELL_KM);
+        if(bounds.intersects(L.latLngBounds(CONUS_BOUNDS))){
+          L.rectangle(bounds, {
+            fillColor: getColor(prob),
+            fillOpacity: 0.6,
+            color: '#000',
+            weight: 0.5
+          }).addTo(cellLayer)
+            .bindPopup(`<b>Tornado probability</b><br>${formatProb(prob)}`);
+        }
+      });
     });
   })
   .catch(err => console.error("Failed to load JSON:", err));
