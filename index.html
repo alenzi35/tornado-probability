@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability RAP Grid (PixiOverlay)</title>
+  <title>Tornado Probability RAP Grid (Canvas Overlay)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
@@ -27,12 +27,12 @@
 <script>
 // ---------- MAP ----------
 const CONUS_BOUNDS = [[22, -125], [51, -66]];
-var map = L.map('map', { 
-    minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
+const map = L.map('map', {
+  minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
 }).setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution:'© OpenStreetMap contributors'
+  attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
 const tooltip = document.getElementById("tooltip");
@@ -44,7 +44,6 @@ proj4.defs("EPSG:RAP_LCC",
 
 const CELL = 13545; // meters
 
-// ---------- COLOR ----------
 function getColor(p){
   if(p>0.8) return 0x800026;
   if(p>0.6) return 0xBD0026;
@@ -60,29 +59,34 @@ fetch("map/data/tornado_prob.json")
 
     const pixiContainer = new PIXI.Container();
 
-    const pixiOverlay = L.pixiOverlay(function(utils){
+    const pixiOverlay = L.pixiOverlay(function(utils) {
       const container = utils.getContainer();
       container.removeChildren();
 
+      // Calculate pixels per meter at current zoom
+      // Reference: project origin at lat0/lon0
+      const zoom = map.getZoom();
+
+      // Loop through all cells
       data.forEach(pt => {
+
         // Project cell center to lat/lon
         const [lon, lat] = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y]);
         const centerPoint = utils.latLngToLayerPoint([lat, lon]);
 
-        // Convert cell size (meters) to pixels at this zoom
-        const north = proj4("EPSG:RAP_LCC","EPSG:4326",[pt.x, pt.y + CELL/2]);
+        // Determine pixel size for 13.545 km at this latitude/zoom
+        const north = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y + CELL/2]);
         const northPoint = utils.latLngToLayerPoint([north[1], north[0]]);
         const halfPixel = Math.abs(northPoint.y - centerPoint.y);
 
+        // Draw square
         const g = new PIXI.Graphics();
         g.beginFill(getColor(pt.prob));
         g.lineStyle(0.2, 0x000000);
-
-        // Draw square in pixel space
         g.drawRect(centerPoint.x - halfPixel, centerPoint.y - halfPixel,
                    2*halfPixel, 2*halfPixel);
-
         g.endFill();
+
         container.addChild(g);
 
         // Interaction
