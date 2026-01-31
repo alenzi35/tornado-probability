@@ -55,58 +55,47 @@ function getColor(p){
 
 // ---------- LOAD JSON ----------
 fetch("map/data/tornado_prob.json")
-  .then(resp=>resp.json())
-  .then(data=>{
-    // ---------- PIXI LAYER ----------
+  .then(resp => resp.json())
+  .then(data => {
+
     const pixiContainer = new PIXI.Container();
-    
+
     const pixiOverlay = L.pixiOverlay(function(utils){
       const container = utils.getContainer();
-      container.removeChildren(); // clear
-      const zoom = utils.getMap().getZoom();
+      container.removeChildren();
 
-      data.forEach(pt=>{
-        // Project cell corners to lat/lon
-        const corners = [
-          [pt.x - CELL/2, pt.y - CELL/2],
-          [pt.x + CELL/2, pt.y - CELL/2],
-          [pt.x + CELL/2, pt.y + CELL/2],
-          [pt.x - CELL/2, pt.y + CELL/2]
-        ];
+      data.forEach(pt => {
+        // Project cell center to lat/lon
+        const [lon, lat] = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y]);
+        const centerPoint = utils.latLngToLayerPoint([lat, lon]);
 
-        const latLonCorners = corners.map(c=>{
-          const [lon, lat] = proj4("EPSG:RAP_LCC", "EPSG:4326", c);
-          return [lat, lon];
-        });
+        // Convert cell size (meters) to pixels at this zoom
+        const north = proj4("EPSG:RAP_LCC","EPSG:4326",[pt.x, pt.y + CELL/2]);
+        const northPoint = utils.latLngToLayerPoint([north[1], north[0]]);
+        const halfPixel = Math.abs(northPoint.y - centerPoint.y);
 
-        // Filter outside CONUS
-        if(latLonCorners.some(c=>c[0]<22||c[0]>51||c[1]<-125||c[1]>-66)) return;
-
-        // Convert to layer points
-        const pts = latLonCorners.map(c=>utils.latLngToLayerPoint(L.latLng(c[0], c[1])));
-
-        // Draw rectangle polygon
         const g = new PIXI.Graphics();
         g.beginFill(getColor(pt.prob));
         g.lineStyle(0.2, 0x000000);
-        g.moveTo(pts[0].x, pts[0].y);
-        for(let i=1;i<pts.length;i++) g.lineTo(pts[i].x, pts[i].y);
-        g.lineTo(pts[0].x, pts[0].y);
-        g.endFill();
 
+        // Draw square in pixel space
+        g.drawRect(centerPoint.x - halfPixel, centerPoint.y - halfPixel,
+                   2*halfPixel, 2*halfPixel);
+
+        g.endFill();
         container.addChild(g);
 
         // Interaction
         g.interactive = true;
-        g.on('mouseover', e=>{
+        g.on('mouseover', e => {
           tooltip.style.display = 'block';
           tooltip.innerHTML = `<b>Probability:</b> ${pt.prob.toFixed(4)}`;
         });
-        g.on('mousemove', e=>{
+        g.on('mousemove', e => {
           tooltip.style.left = e.data.global.x + 10 + 'px';
           tooltip.style.top = e.data.global.y + 10 + 'px';
         });
-        g.on('mouseout', e=>{
+        g.on('mouseout', e => {
           tooltip.style.display = 'none';
         });
       });
@@ -115,9 +104,9 @@ fetch("map/data/tornado_prob.json")
 
     pixiOverlay.addTo(map);
     map.fitBounds(L.latLngBounds([22, -125], [51, -66]));
-  })
-  .catch(err=>console.error(err));
 
+  })
+  .catch(err => console.error(err));
 </script>
 </body>
 </html>
