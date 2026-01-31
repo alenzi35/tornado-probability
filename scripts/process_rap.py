@@ -15,7 +15,7 @@ GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
 # Logistic regression coefficients for 1-hour probability
-INTERCEPT = -1.5686
+INTERCEPT = -14
 COEFFS = {
     "CAPE": 2.88592370e-03,
     "CIN":  2.38728498e-05,
