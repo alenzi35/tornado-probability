@@ -37,7 +37,7 @@
 /* ================= CONFIG ================= */
 
 const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
-const CELL_SIZE_KM = 64;   // VERIFIED by Levan → Redmond measurement
+const CELL_KM = 64;   // VERIFIED by Utah measurement
 
 /* ========================================== */
 
@@ -84,19 +84,20 @@ function formatProb(p){
   return (p * 100).toFixed(3) + '%';
 }
 
-/* ========= TRUE EARTH-DISTANCE RECT ========= */
+/* ========= KM → DEGREE CELL (STABLE) ========= */
 
 function cellBoundsFromCenter(lat, lon, sizeKm){
-  const half = sizeKm / 2;
+  const halfKm = sizeKm / 2;
 
-  const north = L.GeometryUtil.destination([lat, lon], 0,   half * 1000);
-  const south = L.GeometryUtil.destination([lat, lon], 180, half * 1000);
-  const east  = L.GeometryUtil.destination([lat, lon], 90,  half * 1000);
-  const west  = L.GeometryUtil.destination([lat, lon], 270, half * 1000);
+  const kmPerDegLat = 110.574;
+  const kmPerDegLon = 111.320 * Math.cos(lat * Math.PI / 180);
+
+  const dLat = halfKm / kmPerDegLat;
+  const dLon = halfKm / kmPerDegLon;
 
   return L.latLngBounds(
-    [south.lat, west.lng],
-    [north.lat, east.lng]
+    [lat - dLat, lon - dLon],
+    [lat + dLat, lon + dLon]
   );
 }
 
@@ -110,7 +111,7 @@ fetch("map/data/tornado_prob.json")
 
     data.forEach(pt => {
 
-      const bounds = cellBoundsFromCenter(pt.lat, pt.lon, CELL_SIZE_KM);
+      const bounds = cellBoundsFromCenter(pt.lat, pt.lon, CELL_KM);
 
       if (!bounds.intersects(conus)) return;
 
@@ -126,7 +127,7 @@ fetch("map/data/tornado_prob.json")
       .addTo(cellLayer);
     });
   })
-  .catch(err => console.error(err));
+  .catch(err => console.error("JSON load failed:", err));
 
 /* ================= TOGGLE ================= */
 
