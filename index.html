@@ -1,116 +1,60 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability RAP Grid (Canvas Overlay)</title>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <style>
-    body { margin:0; font-family:Arial, sans-serif; }
-    #map { height:100vh; width:100%; }
-    #tooltip {
-      position:absolute; background:white; padding:4px 6px; border-radius:4px;
-      pointer-events:none; font-size:14px; border:1px solid #333;
-      display:none;
-    }
-  </style>
+<meta charset="utf-8">
+<title>RAP Grid Cells</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<style>
+#map { height:100vh; width:100%; }
+</style>
 </head>
 <body>
 <div id="map"></div>
-<div id="tooltip"></div>
-
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.2.4/dist/browser/pixi.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-pixi-overlay@2.0.0/dist/leaflet-pixi-overlay.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
-// ---------- MAP ----------
-const CONUS_BOUNDS = [[22, -125], [51, -66]];
-const map = L.map('map', {
-  minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
-}).setView([39.5, -98.35], 4);
-
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution:'© OpenStreetMap contributors'
-}).addTo(map);
-
-const tooltip = document.getElementById("tooltip");
-
-// ---------- PROJECTION ----------
-proj4.defs("EPSG:RAP_LCC",
-  "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs"
-);
+const map = L.map('map').setView([39.5,-98.35],4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
 const CELL = 13545; // meters
+proj4.defs("EPSG:RAP_LCC","+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs");
 
-function getColor(p){
-  if(p>0.8) return 0x800026;
-  if(p>0.6) return 0xBD0026;
-  if(p>0.4) return 0xE31A1C;
-  if(p>0.2) return 0xFC4E2A;
-  return 0xFFEDA0;
-}
+// Color function
+function getColor(p){ return p>0.8 ? 0x800026 : p>0.6 ? 0xBD0026 : p>0.4 ? 0xE31A1C : p>0.2 ? 0xFC4E2A : 0xFFEDA0; }
 
-// ---------- LOAD JSON ----------
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => {
-
+// Load your RAP JSON
+fetch('map/data/tornado_prob.json').then(r=>r.json()).then(data=>{
     const pixiContainer = new PIXI.Container();
 
-    const pixiOverlay = L.pixiOverlay(function(utils) {
-      const container = utils.getContainer();
-      container.removeChildren();
+    const overlay = L.pixiOverlay(utils=>{
+        const container = utils.getContainer();
+        container.removeChildren();
 
-      // Calculate pixels per meter at current zoom
-      // Reference: project origin at lat0/lon0
-      const zoom = map.getZoom();
+        data.forEach(pt=>{
+            // Project LCC cell center to Leaflet point
+            const [lon, lat] = proj4("EPSG:RAP_LCC","EPSG:4326",[pt.x, pt.y]);
+            const center = utils.latLngToLayerPoint([lat, lon]);
 
-      // Loop through all cells
-      data.forEach(pt => {
+            // Compute pixel size of 1 CELL in meters
+            const north = proj4("EPSG:RAP_LCC","EPSG:4326",[pt.x, pt.y + CELL/2]);
+            const northPt = utils.latLngToLayerPoint([north[1], north[0]]);
+            const halfPix = Math.abs(northPt.y - center.y);
 
-        // Project cell center to lat/lon
-        const [lon, lat] = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y]);
-        const centerPoint = utils.latLngToLayerPoint([lat, lon]);
-
-        // Determine pixel size for 13.545 km at this latitude/zoom
-        const north = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y + CELL/2]);
-        const northPoint = utils.latLngToLayerPoint([north[1], north[0]]);
-        const halfPixel = Math.abs(northPoint.y - centerPoint.y);
-
-        // Draw square
-        const g = new PIXI.Graphics();
-        g.beginFill(getColor(pt.prob));
-        g.lineStyle(0.2, 0x000000);
-        g.drawRect(centerPoint.x - halfPixel, centerPoint.y - halfPixel,
-                   2*halfPixel, 2*halfPixel);
-        g.endFill();
-
-        container.addChild(g);
-
-        // Interaction
-        g.interactive = true;
-        g.on('mouseover', e => {
-          tooltip.style.display = 'block';
-          tooltip.innerHTML = `<b>Probability:</b> ${pt.prob.toFixed(4)}`;
+            const g = new PIXI.Graphics();
+            g.beginFill(getColor(pt.prob));
+            g.lineStyle(0.2,0x000000);
+            g.drawRect(center.x - halfPix, center.y - halfPix, 2*halfPix, 2*halfPix);
+            g.endFill();
+            container.addChild(g);
         });
-        g.on('mousemove', e => {
-          tooltip.style.left = e.data.global.x + 10 + 'px';
-          tooltip.style.top = e.data.global.y + 10 + 'px';
-        });
-        g.on('mouseout', e => {
-          tooltip.style.display = 'none';
-        });
-      });
 
-    }, pixiContainer, { autoPreventDefault: false });
+    }, pixiContainer);
 
-    pixiOverlay.addTo(map);
-    map.fitBounds(L.latLngBounds([22, -125], [51, -66]));
-
-  })
-  .catch(err => console.error(err));
+    overlay.addTo(map);
+});
 </script>
 </body>
 </html>
