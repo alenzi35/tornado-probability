@@ -22,11 +22,10 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]]; // approximate CONUS
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
 const CELL_KM = 130;
-const SKIP = 10; // pick every 10th point (~130 km)
+const SKIP = 10; // every 10th point for 130 km spacing
 
-// Initialize map
 const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
   .setView([39.5, -98.35], 4);
 
@@ -49,7 +48,7 @@ map.addControl(new CustomControl());
 
 // Color mapping
 function getColor(p){
-  if(p === null || p === undefined) return '#aaa'; // grey for missing
+  if(p === null || p === undefined) return '#aaa';
   if(p>0.8) return '#800026';
   if(p>0.6) return '#BD0026';
   if(p>0.4) return '#E31A1C';
@@ -61,7 +60,7 @@ function formatProb(p){
   return (p*100).toFixed(3) + '%';
 }
 
-// Compute rectangle in projected meters
+// Rectangle in projected meters
 function rectangleFromCenter(lat, lon, sizeKm){
   const center = L.latLng(lat, lon);
   const half = sizeKm * 500; // half in meters
@@ -71,45 +70,42 @@ function rectangleFromCenter(lat, lon, sizeKm){
   return L.latLngBounds(sw, ne);
 }
 
-// Load JSON and draw 130 km cells
+// Load JSON
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    // Build a 2D grid to index points by row/col
-    data.sort((a,b) => a.lat - b.lat || a.lon - b.lon); // sort by lat, then lon
-
-    let lastLat = null, row = [], rows = [];
+    // Build lookup by lat/lon string
+    const pointMap = {};
     data.forEach(pt => {
-      if(lastLat === null || Math.abs(pt.lat - lastLat) < 0.001){ // same row
-        row.push(pt);
-      } else {
-        rows.push(row);
-        row = [pt];
-        lastLat = pt.lat;
-      }
-      if(lastLat === null) lastLat = pt.lat;
+      pointMap[pt.lat.toFixed(3) + ',' + pt.lon.toFixed(3)] = pt.prob;
     });
-    if(row.length) rows.push(row);
 
-    // Now pick every SKIP-th row and column to get 130 km spacing
-    for(let i=0; i<rows.length; i+=SKIP){
-      const rowPts = rows[i];
-      for(let j=0; j<rowPts.length; j+=SKIP){
-        const pt = rowPts[j];
-        const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
+    // Get unique latitudes and longitudes, sorted ascending
+    const uniqueLats = [...new Set(data.map(pt => pt.lat))].sort((a,b) => a-b);
+    const uniqueLons = [...new Set(data.map(pt => pt.lon))].sort((a,b) => a-b);
 
-        // Only include if intersects CONUS
+    // Pick every SKIP-th lat/lon
+    const latIndices = uniqueLats.map((lat,i) => i % SKIP === 0 ? lat : null).filter(l=>l!==null);
+    const lonIndices = uniqueLons.map((lon,i) => i % SKIP === 0 ? lon : null).filter(l=>l!==null);
+
+    // Draw cells
+    latIndices.forEach(lat => {
+      lonIndices.forEach(lon => {
+        const key = lat.toFixed(3) + ',' + lon.toFixed(3);
+        const prob = pointMap[key] ?? 0;
+
+        const bounds = rectangleFromCenter(lat, lon, CELL_KM);
         if(bounds.intersects(L.latLngBounds(CONUS_BOUNDS))){
           L.rectangle(bounds, {
-            fillColor: getColor(pt.prob),
+            fillColor: getColor(prob),
             fillOpacity: 0.6,
             color: '#000',
             weight: 0.5
           }).addTo(cellLayer)
-            .bindPopup(`<b>Tornado probability</b><br>${formatProb(pt.prob)}`);
+            .bindPopup(`<b>Tornado probability</b><br>${formatProb(prob)}`);
         }
-      }
-    }
+      });
+    });
   })
   .catch(err => console.error("Failed to load JSON:", err));
 
