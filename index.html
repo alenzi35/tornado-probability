@@ -4,15 +4,15 @@
   <title>Tornado Probability Map (130 km RAP Cells)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
   <style>
-    body { margin:0; font-family:Arial,sans-serif; background:#f4f4f4; }
+    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; }
-
-    .leaflet-popup-content { font-size:14px; }
+    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
+    .leaflet-control.custom-control {
+      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+    }
+    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
   </style>
 </head>
 <body>
@@ -22,65 +22,82 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-/* ---------------- MAP SETUP ---------------- */
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]]; // approximate CONUS
+const CELL_KM = 130;
 
-const CONUS = [[22,-128],[51.5,-64]];
-const map = L.map('map', {
-  minZoom:4,
-  maxZoom:18,
-  zoomSnap:0.25,
-  maxBounds:CONUS,
-  maxBoundsViscosity:0
-}).setView([39.5,-98.35],4);
+const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
+  .setView([39.5, -98.35], 4);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution:'© OpenStreetMap'
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
 const cellLayer = L.layerGroup().addTo(map);
+let cellsVisible = true;
 
-/* ---------------- GRID CONSTANTS ---------------- */
+// Control panel
+const CustomControl = L.Control.extend({
+  options: {position:'topleft'},
+  onAdd: function(map){
+    const c = L.DomUtil.create('div','leaflet-control custom-control');
+    c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
+    L.DomEvent.disableClickPropagation(c);
+    return c;
+  }
+});
+map.addControl(new CustomControl());
 
-/* Each RAP AWP130 cell ≈ 130 km */
-const CELL_LAT_STEP = 130 / 111.32; // ~1.167°
-const CELL_LON_STEP = 130 / 85.0;   // ~1.529° (mid-lat approximation)
-
-/* ---------------- HELPERS ---------------- */
-
+// Color mapping
 function getColor(p){
-  if (p > 0.8) return '#800026';
-  if (p > 0.6) return '#BD0026';
-  if (p > 0.4) return '#E31A1C';
-  if (p > 0.2) return '#FC4E2A';
+  if(p === null || p === undefined) return '#aaa'; // grey for missing
+  if(p>0.8) return '#800026';
+  if(p>0.6) return '#BD0026';
+  if(p>0.4) return '#E31A1C';
+  if(p>0.2) return '#FC4E2A';
   return '#FFEDA0';
 }
 
-/* ---------------- LOAD + PLOT CELLS ---------------- */
+function formatProb(p){
+  return (p*100).toFixed(3) + '%';
+}
 
+// Compute rectangle bounds in meters to avoid lat/lon distortion
+function rectangleFromCenter(lat, lon, sizeKm){
+  const center = L.latLng(lat, lon);
+  const half = sizeKm * 500; // half in meters
+  const p = map.project(center, map.getMaxZoom());
+  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
+  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
+  return L.latLngBounds(sw, ne);
+}
+
+// Load JSON and draw only cells overlapping CONUS
 fetch("map/data/tornado_prob.json")
-  .then(r => r.json())
+  .then(resp => resp.json())
   .then(data => {
-    data.forEach(pt => {
-      const lat0 = pt.lat;
-      const lon0 = pt.lon;
+    // Determine cells to keep: only rows/cols that intersect CONUS
+    const filtered = data.filter(pt => {
+      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
+      return bounds.intersects(L.latLngBounds(CONUS_BOUNDS));
+    });
 
-      const bounds = [
-        [lat0, lon0],
-        [lat0 + CELL_LAT_STEP, lon0 + CELL_LON_STEP]
-      ];
-
+    filtered.forEach(pt => {
+      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
       L.rectangle(bounds, {
         fillColor: getColor(pt.prob),
-        fillOpacity:0.6,
-        weight:0.5,
-        color:'#000'
-      })
-      .addTo(cellLayer)
-      .bindPopup(`Probability: ${(pt.prob*100).toFixed(2)}%`);
+        fillOpacity: 0.6,
+        color: '#000',
+        weight: 0.5
+      }).addTo(cellLayer)
+        .bindPopup(`<b>Tornado probability</b><br>${formatProb(pt.prob)}`);
     });
   })
   .catch(err => console.error("Failed to load JSON:", err));
 
+// Toggle visibility
+document.getElementById('toggleCells').onclick = () => {
+  cellsVisible = !cellsVisible;
+  cellLayer.eachLayer(l => l.setStyle({ fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0 }));
+};
 </script>
+
 </body>
 </html>
