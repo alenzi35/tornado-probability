@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (130 km RAP Cells)</title>
+  <title>Tornado Probability Map (Single Cell Test)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
@@ -9,94 +9,67 @@
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
     #map { height:650px; margin:10px; border-radius:8px; position:relative; }
-    .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
-    }
-    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Map (130 km RAP Cells)</h1>
+<h1>Tornado Probability Map — Single Cell Test</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]]; // approximate CONUS
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
 const CELL_KM = 130;
 
-const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-  .setView([39.5, -98.35], 4);
+// Initialize map
+const map = L.map('map', {
+  maxBounds: CONUS_BOUNDS,
+  maxBoundsViscosity: 0,
+  minZoom: 4,
+  maxZoom: 18,
+  zoomSnap: 0.25
+}).setView([39.3, -111.7], 6); // Utah
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
 
-const cellLayer = L.layerGroup().addTo(map);
-let cellsVisible = true;
-
-// Control panel
-const CustomControl = L.Control.extend({
-  options: {position:'topleft'},
-  onAdd: function(map){
-    const c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
-    L.DomEvent.disableClickPropagation(c);
-    return c;
-  }
-});
-map.addControl(new CustomControl());
-
-// Color mapping
-function getColor(p){
-  if(p === null || p === undefined) return '#aaa'; // grey for missing
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
-  return '#FFEDA0';
-}
-
-function formatProb(p){
-  return (p*100).toFixed(3) + '%';
-}
-
-// Compute rectangle bounds in meters to avoid lat/lon distortion
+// Rectangle computation (UNCHANGED logic)
 function rectangleFromCenter(lat, lon, sizeKm){
   const center = L.latLng(lat, lon);
-  const half = sizeKm * 500; // half in meters
-  const p = map.project(center, map.getMaxZoom());
-  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
-  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
+  const halfMeters = sizeKm * 500; // half-width in meters
+  const zoom = map.getMaxZoom();
+  const p = map.project(center, zoom);
+  const sw = map.unproject([p.x - halfMeters, p.y + halfMeters], zoom);
+  const ne = map.unproject([p.x + halfMeters, p.y - halfMeters], zoom);
   return L.latLngBounds(sw, ne);
 }
 
-// Load JSON and draw only cells overlapping CONUS
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => {
-    // Determine cells to keep: only rows/cols that intersect CONUS
-    const filtered = data.filter(pt => {
-      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
-      return bounds.intersects(L.latLngBounds(CONUS_BOUNDS));
-    });
+// ---- DRAW EXACTLY ONE CELL ----
 
-    filtered.forEach(pt => {
-      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
-      L.rectangle(bounds, {
-        fillColor: getColor(pt.prob),
-        fillOpacity: 0.6,
-        color: '#000',
-        weight: 0.5
-      }).addTo(cellLayer)
-        .bindPopup(`<b>Tornado probability</b><br>${formatProb(pt.prob)}`);
-    });
-  })
-  .catch(err => console.error("Failed to load JSON:", err));
+// Center point in Utah
+const testLat = 39.3;
+const testLon = -111.7;
 
-// Toggle visibility
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  cellLayer.eachLayer(l => l.setStyle({ fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0 }));
-};
+// Create bounds
+const bounds = rectangleFromCenter(testLat, testLon, CELL_KM);
+
+// Draw rectangle
+L.rectangle(bounds, {
+  fillColor: '#E31A1C',
+  fillOpacity: 0.6,
+  color: '#000',
+  weight: 1
+}).addTo(map)
+  .bindPopup(`
+    <b>Single Test Cell</b><br>
+    Center: ${testLat}, ${testLon}<br>
+    Size: ${CELL_KM} km × ${CELL_KM} km
+  `);
+
+// Fit map tightly to the cell
+map.fitBounds(bounds);
+
 </script>
 
 </body>
