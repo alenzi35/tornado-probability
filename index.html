@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Heatmap (CONUS, Canvas)</title>
+  <title>Tornado Probability RAP Grid (PixiOverlay)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
   <style>
     body { margin:0; font-family:Arial, sans-serif; }
     #map { height:100vh; width:100%; }
@@ -21,6 +20,8 @@
 <div id="tooltip"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7.2.4/dist/browser/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-pixi-overlay@2.0.0/dist/leaflet-pixi-overlay.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
@@ -34,72 +35,89 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
-// ---------- PROJ4 ----------
+const tooltip = document.getElementById("tooltip");
+
+// ---------- PROJECTION ----------
 proj4.defs("EPSG:RAP_LCC",
   "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs"
 );
 
-// ---------- COLORS ----------
-function getColor(p){
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
-  return '#FFEDA0';
-}
-
-// ---------- CELL SIZE ----------
 const CELL = 13545; // meters
 
-// ---------- CANVAS LAYER ----------
-let canvasLayer = L.layerGroup().addTo(map);
-const tooltip = document.getElementById("tooltip");
+// ---------- COLOR ----------
+function getColor(p){
+  if(p>0.8) return 0x800026;
+  if(p>0.6) return 0xBD0026;
+  if(p>0.4) return 0xE31A1C;
+  if(p>0.2) return 0xFC4E2A;
+  return 0xFFEDA0;
+}
 
+// ---------- LOAD JSON ----------
 fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => {
+  .then(resp=>resp.json())
+  .then(data=>{
+    // ---------- PIXI LAYER ----------
+    const pixiContainer = new PIXI.Container();
+    
+    const pixiOverlay = L.pixiOverlay(function(utils){
+      const container = utils.getContainer();
+      container.removeChildren(); // clear
+      const zoom = utils.getMap().getZoom();
 
-    // draw cells
-    data.forEach(pt => {
-      // convert center x/y to lat/lon for Leaflet (cell center)
-      const [lonC, latC] = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y]);
+      data.forEach(pt=>{
+        // Project cell corners to lat/lon
+        const corners = [
+          [pt.x - CELL/2, pt.y - CELL/2],
+          [pt.x + CELL/2, pt.y - CELL/2],
+          [pt.x + CELL/2, pt.y + CELL/2],
+          [pt.x - CELL/2, pt.y + CELL/2]
+        ];
 
-      // project cell corners in LCC to lat/lon
-      const half = CELL/2;
-      const corners = [
-        [pt.x - half, pt.y - half],
-        [pt.x + half, pt.y - half],
-        [pt.x + half, pt.y + half],
-        [pt.x - half, pt.y + half]
-      ].map(c=>{
-        const [lon, lat] = proj4("EPSG:RAP_LCC","EPSG:4326", c);
-        return [lat, lon];
+        const latLonCorners = corners.map(c=>{
+          const [lon, lat] = proj4("EPSG:RAP_LCC", "EPSG:4326", c);
+          return [lat, lon];
+        });
+
+        // Filter outside CONUS
+        if(latLonCorners.some(c=>c[0]<22||c[0]>51||c[1]<-125||c[1]>-66)) return;
+
+        // Convert to layer points
+        const pts = latLonCorners.map(c=>utils.latLngToLayerPoint(L.latLng(c[0], c[1])));
+
+        // Draw rectangle polygon
+        const g = new PIXI.Graphics();
+        g.beginFill(getColor(pt.prob));
+        g.lineStyle(0.2, 0x000000);
+        g.moveTo(pts[0].x, pts[0].y);
+        for(let i=1;i<pts.length;i++) g.lineTo(pts[i].x, pts[i].y);
+        g.lineTo(pts[0].x, pts[0].y);
+        g.endFill();
+
+        container.addChild(g);
+
+        // Interaction
+        g.interactive = true;
+        g.on('mouseover', e=>{
+          tooltip.style.display = 'block';
+          tooltip.innerHTML = `<b>Probability:</b> ${pt.prob.toFixed(4)}`;
+        });
+        g.on('mousemove', e=>{
+          tooltip.style.left = e.data.global.x + 10 + 'px';
+          tooltip.style.top = e.data.global.y + 10 + 'px';
+        });
+        g.on('mouseout', e=>{
+          tooltip.style.display = 'none';
+        });
       });
 
-      // filter cells outside CONUS
-      if(corners.some(c => c[0] < 22 || c[0] > 51 || c[1] < -125 || c[1] > -66)) return;
+    }, pixiContainer, { autoPreventDefault: false });
 
-      // draw polygon
-      const poly = L.polygon(corners, {
-        fillColor: getColor(pt.prob),
-        fillOpacity: 0.6,
-        color:'#000',
-        weight:0.2
-      }).addTo(canvasLayer);
-
-      // tooltip on hover
-      poly.on('mousemove', e => {
-        tooltip.style.display = 'block';
-        tooltip.style.left = e.originalEvent.pageX + 10 + 'px';
-        tooltip.style.top = e.originalEvent.pageY + 10 + 'px';
-        tooltip.innerHTML = `<b>Probability:</b> ${pt.prob.toFixed(4)}`;
-      });
-      poly.on('mouseout', e => { tooltip.style.display = 'none'; });
-    });
-
-    map.fitBounds(canvasLayer.getBounds());
+    pixiOverlay.addTo(map);
+    map.fitBounds(L.latLngBounds([22, -125], [51, -66]));
   })
-  .catch(err => console.error(err));
+  .catch(err=>console.error(err));
+
 </script>
 </body>
 </html>
