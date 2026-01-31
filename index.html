@@ -22,20 +22,22 @@
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-var CONUS_bounds = [[22, -128], [51.5, -64]];
-var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-    .setView([39.5, -98.35], 4);
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]]; // approximate CONUS
+const CELL_KM = 130;
+
+const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
+  .setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
 
-var cellLayer = L.layerGroup().addTo(map);
-var cellsVisible = true;
+const cellLayer = L.layerGroup().addTo(map);
+let cellsVisible = true;
 
 // Control panel
-var CustomControl = L.Control.extend({
-  options:{position:'topleft'},
-  onAdd:function(map){
-    var c = L.DomUtil.create('div','leaflet-control custom-control');
+const CustomControl = L.Control.extend({
+  options: {position:'topleft'},
+  onAdd: function(map){
+    const c = L.DomUtil.create('div','leaflet-control custom-control');
     c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
     L.DomEvent.disableClickPropagation(c);
     return c;
@@ -53,36 +55,39 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-// RAP AWP130 resolution
-const CELL_LAT_STEP = 1.18; // degrees latitude ~130km
-const CELL_LON_STEP = 1.94; // degrees longitude ~130km
-const ORIGIN_LAT = 22;
-const ORIGIN_LON = -128;
-const SKIP = 10; // only every 10th point in each direction
+function formatProb(p){
+  return (p*100).toFixed(3) + '%';
+}
 
-function latToIndex(lat) { return Math.round((lat - ORIGIN_LAT) / (CELL_LAT_STEP / SKIP)); }
-function lonToIndex(lon) { return Math.round((lon - ORIGIN_LON) / (CELL_LON_STEP / SKIP)); }
+// Compute rectangle bounds in meters to avoid lat/lon distortion
+function rectangleFromCenter(lat, lon, sizeKm){
+  const center = L.latLng(lat, lon);
+  const half = sizeKm * 500; // half in meters
+  const p = map.project(center, map.getMaxZoom());
+  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
+  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
+  return L.latLngBounds(sw, ne);
+}
 
-// Load JSON and draw
+// Load JSON and draw only cells overlapping CONUS
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    data.forEach(pt => {
-      const i = latToIndex(pt.lat);
-      const j = lonToIndex(pt.lon);
+    // Determine cells to keep: only rows/cols that intersect CONUS
+    const filtered = data.filter(pt => {
+      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
+      return bounds.intersects(L.latLngBounds(CONUS_BOUNDS));
+    });
 
-      // Only keep every 10th cell to avoid overlap
-      if(i % SKIP !== 0 || j % SKIP !== 0) return;
-
-      const bounds = [[pt.lat, pt.lon], [pt.lat + CELL_LAT_STEP, pt.lon + CELL_LON_STEP]];
-
+    filtered.forEach(pt => {
+      const bounds = rectangleFromCenter(pt.lat, pt.lon, CELL_KM);
       L.rectangle(bounds, {
-        fillColor:getColor(pt.prob),
-        fillOpacity:0.6,
-        color:'#000',
-        weight:0.5
+        fillColor: getColor(pt.prob),
+        fillOpacity: 0.6,
+        color: '#000',
+        weight: 0.5
       }).addTo(cellLayer)
-        .bindPopup(`Probability: ${(pt.prob*100).toFixed(2)}%`);
+        .bindPopup(`<b>Tornado probability</b><br>${formatProb(pt.prob)}`);
     });
   })
   .catch(err => console.error("Failed to load JSON:", err));
