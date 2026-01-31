@@ -1,76 +1,115 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>RAP Grid Cell Size Measurement</title>
+  <title>Tornado Probability Map (130 km RAP Cells)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
+    h1 { text-align:center; margin:10px 0; }
+    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
+    .leaflet-control.custom-control {
+      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+    }
+    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
+  </style>
 </head>
 <body>
-<h1>RAP Grid Cell Size Measurement</h1>
-<div id="output"></div>
 
+<h1>Tornado Probability Map (130 km RAP Cells)</h1>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-// Haversine formula to convert lat/lon differences to km
-function haversine(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in km
-  const toRad = x => x * Math.PI / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]]; // approximate CONUS
+const CELL_KM = 130;
+
+const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
+  .setView([39.5, -98.35], 4);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+
+const cellLayer = L.layerGroup().addTo(map);
+let cellsVisible = true;
+
+// Control panel
+const CustomControl = L.Control.extend({
+  options: {position:'topleft'},
+  onAdd: function(map){
+    const c = L.DomUtil.create('div','leaflet-control custom-control');
+    c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
+    L.DomEvent.disableClickPropagation(c);
+    return c;
+  }
+});
+map.addControl(new CustomControl());
+
+// Color mapping
+function getColor(p){
+  if(p === null || p === undefined) return '#aaa'; // grey for missing
+  if(p>0.8) return '#800026';
+  if(p>0.6) return '#BD0026';
+  if(p>0.4) return '#E31A1C';
+  if(p>0.2) return '#FC4E2A';
+  return '#FFEDA0';
 }
 
+function formatProb(p){
+  return (p*100).toFixed(3) + '%';
+}
+
+// Projected rectangle to avoid degree distortion
+function rectangleFromCenter(lat, lon, sizeKm){
+  const center = L.latLng(lat, lon);
+  const half = sizeKm * 500; // half in meters
+  const p = map.project(center, map.getMaxZoom());
+  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
+  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
+  return L.latLngBounds(sw, ne);
+}
+
+// Load JSON and draw full 130 km grid over CONUS
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    if(data.length < 2) {
-      document.getElementById('output').innerText = "Not enough points to measure spacing.";
-      return;
-    }
-
-    let widths = [];
-    let heights = [];
-
-    data.forEach(p0 => {
-      let nearestLat = null;
-      let nearestLon = null;
-      let minLatDiff = Infinity;
-      let minLonDiff = Infinity;
-
-      data.forEach(p => {
-        if(p === p0) return;
-        const latDiff = Math.abs(p.lat - p0.lat);
-        const lonDiff = Math.abs(p.lon - p0.lon);
-
-        if(latDiff > 0 && latDiff < minLatDiff) { minLatDiff = latDiff; nearestLat = p; }
-        if(lonDiff > 0 && lonDiff < minLonDiff) { minLonDiff = lonDiff; nearestLon = p; }
-      });
-
-      if(nearestLat) {
-        heights.push(haversine(p0.lat, p0.lon, nearestLat.lat, p0.lon));
-      }
-      if(nearestLon) {
-        widths.push(haversine(p0.lat, p0.lon, p0.lat, nearestLon.lon));
-      }
+    // Build a mapping from rounded lat/lon to probability for fast lookup
+    const probMap = {};
+    data.forEach(pt => {
+      const latKey = pt.lat.toFixed(3);
+      const lonKey = pt.lon.toFixed(3);
+      probMap[latKey + ',' + lonKey] = pt.prob;
     });
 
-    const avgWidth = widths.reduce((a,b)=>a+b,0)/widths.length;
-    const avgHeight = heights.reduce((a,b)=>a+b,0)/heights.length;
+    // Grid spacing ~130 km = 10x13 km
+    const LAT_STEP = 0.13 * 10; // ~130 km
+    const LON_STEP = 0.13 * 10; // approximate, small error at mid-lat
 
-    const output = `
-      Approximate RAP grid cell size:<br>
-      Width ≈ ${avgWidth.toFixed(3)} km<br>
-      Height ≈ ${avgHeight.toFixed(3)} km
-    `;
+    for(let lat = CONUS_BOUNDS[0][0]; lat <= CONUS_BOUNDS[1][0]; lat += LAT_STEP){
+      for(let lon = CONUS_BOUNDS[0][1]; lon <= CONUS_BOUNDS[1][1]; lon += LON_STEP){
+        // Snap to nearest JSON point
+        let nearestLat = Math.round(lat*100)/100;
+        let nearestLon = Math.round(lon*100)/100;
+        const prob = probMap[nearestLat + ',' + nearestLon] ?? 0;
 
-    document.getElementById('output').innerHTML = output;
-    console.log("Approx RAP cell size:", avgWidth.toFixed(3), "km ×", avgHeight.toFixed(3), "km");
+        const bounds = rectangleFromCenter(lat + LAT_STEP/2, lon + LON_STEP/2, CELL_KM);
+        L.rectangle(bounds, {
+          fillColor: getColor(prob),
+          fillOpacity: 0.6,
+          color: '#000',
+          weight: 0.5
+        }).addTo(cellLayer)
+          .bindPopup(`<b>Tornado probability</b><br>${formatProb(prob)}`);
+      }
+    }
   })
-  .catch(err => {
-    console.error("Failed to load JSON:", err);
-    document.getElementById('output').innerText = "Failed to load JSON.";
-  });
+  .catch(err => console.error("Failed to load JSON:", err));
+
+// Toggle visibility
+document.getElementById('toggleCells').onclick = () => {
+  cellsVisible = !cellsVisible;
+  cellLayer.eachLayer(l => l.setStyle({ fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0 }));
+};
 </script>
 
 </body>
