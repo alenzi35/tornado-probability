@@ -55,10 +55,10 @@ function drawCell(pt){
     [pt.x - half, pt.y + half]
   ];
 
-  // Project to Web Mercator
+  // Project LCC -> lat/lon (EPSG:4326)
   const cornersLatLon = corners.map(c=>{
-    const [mx, my] = proj4("EPSG:RAP_LCC","EPSG:3857", c);
-    return map.unproject([mx, my]);
+    const [lon, lat] = proj4("EPSG:RAP_LCC","EPSG:4326", c);
+    return [lat, lon];
   });
 
   return L.polygon(cornersLatLon, {
