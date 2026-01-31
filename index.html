@@ -1,119 +1,76 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (130 km RAP Cells)</title>
+  <title>RAP Grid Cell Size Measurement</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-  <style>
-    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
-    h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
-    .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
-    }
-    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
-  </style>
 </head>
 <body>
+<h1>RAP Grid Cell Size Measurement</h1>
+<div id="output"></div>
 
-<h1>Tornado Probability Map (130 km RAP Cells)</h1>
-<div id="map"></div>
-
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
-const CELL_KM = 130;
-const SKIP = 10; // every 10th point for 130 km spacing
-
-const map = L.map('map', { maxBounds: CONUS_BOUNDS, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-  .setView([39.5, -98.35], 4);
-
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
-
-const cellLayer = L.layerGroup().addTo(map);
-let cellsVisible = true;
-
-// Control panel
-const CustomControl = L.Control.extend({
-  options: {position:'topleft'},
-  onAdd: function(map){
-    const c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
-    L.DomEvent.disableClickPropagation(c);
-    return c;
-  }
-});
-map.addControl(new CustomControl());
-
-// Color mapping
-function getColor(p){
-  if(p === null || p === undefined) return '#aaa';
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
-  return '#FFEDA0';
+// Haversine formula to convert lat/lon differences to km
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 }
 
-function formatProb(p){
-  return (p*100).toFixed(3) + '%';
-}
-
-// Rectangle in projected meters
-function rectangleFromCenter(lat, lon, sizeKm){
-  const center = L.latLng(lat, lon);
-  const half = sizeKm * 500; // half in meters
-  const p = map.project(center, map.getMaxZoom());
-  const sw = map.unproject([p.x - half, p.y + half], map.getMaxZoom());
-  const ne = map.unproject([p.x + half, p.y - half], map.getMaxZoom());
-  return L.latLngBounds(sw, ne);
-}
-
-// Load JSON
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    // Build lookup by lat/lon string
-    const pointMap = {};
-    data.forEach(pt => {
-      pointMap[pt.lat.toFixed(3) + ',' + pt.lon.toFixed(3)] = pt.prob;
-    });
+    if(data.length < 2) {
+      document.getElementById('output').innerText = "Not enough points to measure spacing.";
+      return;
+    }
 
-    // Get unique latitudes and longitudes, sorted ascending
-    const uniqueLats = [...new Set(data.map(pt => pt.lat))].sort((a,b) => a-b);
-    const uniqueLons = [...new Set(data.map(pt => pt.lon))].sort((a,b) => a-b);
+    let widths = [];
+    let heights = [];
 
-    // Pick every SKIP-th lat/lon
-    const latIndices = uniqueLats.map((lat,i) => i % SKIP === 0 ? lat : null).filter(l=>l!==null);
-    const lonIndices = uniqueLons.map((lon,i) => i % SKIP === 0 ? lon : null).filter(l=>l!==null);
+    data.forEach(p0 => {
+      let nearestLat = null;
+      let nearestLon = null;
+      let minLatDiff = Infinity;
+      let minLonDiff = Infinity;
 
-    // Draw cells
-    latIndices.forEach(lat => {
-      lonIndices.forEach(lon => {
-        const key = lat.toFixed(3) + ',' + lon.toFixed(3);
-        const prob = pointMap[key] ?? 0;
+      data.forEach(p => {
+        if(p === p0) return;
+        const latDiff = Math.abs(p.lat - p0.lat);
+        const lonDiff = Math.abs(p.lon - p0.lon);
 
-        const bounds = rectangleFromCenter(lat, lon, CELL_KM);
-        if(bounds.intersects(L.latLngBounds(CONUS_BOUNDS))){
-          L.rectangle(bounds, {
-            fillColor: getColor(prob),
-            fillOpacity: 0.6,
-            color: '#000',
-            weight: 0.5
-          }).addTo(cellLayer)
-            .bindPopup(`<b>Tornado probability</b><br>${formatProb(prob)}`);
-        }
+        if(latDiff > 0 && latDiff < minLatDiff) { minLatDiff = latDiff; nearestLat = p; }
+        if(lonDiff > 0 && lonDiff < minLonDiff) { minLonDiff = lonDiff; nearestLon = p; }
       });
-    });
-  })
-  .catch(err => console.error("Failed to load JSON:", err));
 
-// Toggle visibility
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  cellLayer.eachLayer(l => l.setStyle({ fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0 }));
-};
+      if(nearestLat) {
+        heights.push(haversine(p0.lat, p0.lon, nearestLat.lat, p0.lon));
+      }
+      if(nearestLon) {
+        widths.push(haversine(p0.lat, p0.lon, p0.lat, nearestLon.lon));
+      }
+    });
+
+    const avgWidth = widths.reduce((a,b)=>a+b,0)/widths.length;
+    const avgHeight = heights.reduce((a,b)=>a+b,0)/heights.length;
+
+    const output = `
+      Approximate RAP grid cell size:<br>
+      Width ≈ ${avgWidth.toFixed(3)} km<br>
+      Height ≈ ${avgHeight.toFixed(3)} km
+    `;
+
+    document.getElementById('output').innerHTML = output;
+    console.log("Approx RAP cell size:", avgWidth.toFixed(3), "km ×", avgHeight.toFixed(3), "km");
+  })
+  .catch(err => {
+    console.error("Failed to load JSON:", err);
+    document.getElementById('output').innerText = "Failed to load JSON.";
+  });
 </script>
 
 </body>
