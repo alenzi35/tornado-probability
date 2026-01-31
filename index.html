@@ -1,75 +1,144 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (Single Cell Test)</title>
+  <title>Tornado Probability Map (RAP Cells)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
   <style>
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
     h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
+    #map { height:650px; margin:10px; border-radius:8px; }
+    .leaflet-control.custom-control {
+      background:white;
+      padding:10px;
+      border-radius:6px;
+      box-shadow:0 0 6px rgba(0,0,0,0.3);
+      font-size:14px;
+    }
+    .leaflet-control.custom-control button {
+      width:100%;
+      margin:4px 0;
+      cursor:pointer;
+      height:30px;
+    }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Map — Single Cell Test</h1>
+<h1>Tornado Probability Map (RAP Grid)</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
-const CELL_KM = 130;
 
-// Initialize map
+<script>
+/* ================= CONFIG ================= */
+
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
+const CELL_SIZE_KM = 64;   // VERIFIED by Levan → Redmond measurement
+
+/* ========================================== */
+
 const map = L.map('map', {
   maxBounds: CONUS_BOUNDS,
   maxBoundsViscosity: 0,
   minZoom: 4,
   maxZoom: 18,
   zoomSnap: 0.25
-}).setView([39.3, -111.7], 6); // Utah
+}).setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors'
+  attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
-// Rectangle computation (UNCHANGED logic)
-function rectangleFromCenter(lat, lon, sizeKm){
-  const center = L.latLng(lat, lon);
-  const halfMeters = sizeKm * 500; // half-width in meters
-  const zoom = map.getMaxZoom();
-  const p = map.project(center, zoom);
-  const sw = map.unproject([p.x - halfMeters, p.y + halfMeters], zoom);
-  const ne = map.unproject([p.x + halfMeters, p.y - halfMeters], zoom);
-  return L.latLngBounds(sw, ne);
+const cellLayer = L.layerGroup().addTo(map);
+let visible = true;
+
+/* ================= UI ================= */
+
+const CustomControl = L.Control.extend({
+  options:{ position:'topleft' },
+  onAdd:function(){
+    const c = L.DomUtil.create('div','leaflet-control custom-control');
+    c.innerHTML = `<button id="toggleCells">Toggle Cells</button>`;
+    L.DomEvent.disableClickPropagation(c);
+    return c;
+  }
+});
+map.addControl(new CustomControl());
+
+/* ================= COLORS ================= */
+
+function getColor(p){
+  if(p == null) return '#aaa';
+  if(p > 0.8) return '#800026';
+  if(p > 0.6) return '#BD0026';
+  if(p > 0.4) return '#E31A1C';
+  if(p > 0.2) return '#FC4E2A';
+  return '#FFEDA0';
 }
 
-// ---- DRAW EXACTLY ONE CELL ----
+function formatProb(p){
+  return (p * 100).toFixed(3) + '%';
+}
 
-// Center point in Utah
-const testLat = 39.3;
-const testLon = -111.7;
+/* ========= TRUE EARTH-DISTANCE RECT ========= */
 
-// Create bounds
-const bounds = rectangleFromCenter(testLat, testLon, CELL_KM);
+function cellBoundsFromCenter(lat, lon, sizeKm){
+  const half = sizeKm / 2;
 
-// Draw rectangle
-L.rectangle(bounds, {
-  fillColor: '#E31A1C',
-  fillOpacity: 0.6,
-  color: '#000',
-  weight: 1
-}).addTo(map)
-  .bindPopup(`
-    <b>Single Test Cell</b><br>
-    Center: ${testLat}, ${testLon}<br>
-    Size: ${CELL_KM} km × ${CELL_KM} km
-  `);
+  const north = L.GeometryUtil.destination([lat, lon], 0,   half * 1000);
+  const south = L.GeometryUtil.destination([lat, lon], 180, half * 1000);
+  const east  = L.GeometryUtil.destination([lat, lon], 90,  half * 1000);
+  const west  = L.GeometryUtil.destination([lat, lon], 270, half * 1000);
 
-// Fit map tightly to the cell
-map.fitBounds(bounds);
+  return L.latLngBounds(
+    [south.lat, west.lng],
+    [north.lat, east.lng]
+  );
+}
 
+/* ================= LOAD DATA ================= */
+
+fetch("map/data/tornado_prob.json")
+  .then(r => r.json())
+  .then(data => {
+
+    const conus = L.latLngBounds(CONUS_BOUNDS);
+
+    data.forEach(pt => {
+
+      const bounds = cellBoundsFromCenter(pt.lat, pt.lon, CELL_SIZE_KM);
+
+      if (!bounds.intersects(conus)) return;
+
+      L.rectangle(bounds, {
+        fillColor: getColor(pt.prob),
+        fillOpacity: 0.6,
+        color: '#000',
+        weight: 0.4
+      })
+      .bindPopup(
+        `<b>Tornado Probability</b><br>${formatProb(pt.prob)}`
+      )
+      .addTo(cellLayer);
+    });
+  })
+  .catch(err => console.error(err));
+
+/* ================= TOGGLE ================= */
+
+document.getElementById('toggleCells').onclick = () => {
+  visible = !visible;
+  cellLayer.eachLayer(l => {
+    l.setStyle({
+      fillOpacity: visible ? 0.6 : 0,
+      weight: visible ? 0.4 : 0
+    });
+  });
+};
 </script>
 
 </body>
