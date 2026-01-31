@@ -58,18 +58,37 @@ const CELL_KM = 130;
 const KM_PER_DEG_LAT = 111;
 function latStepDeg() { return CELL_KM / KM_PER_DEG_LAT; }
 function lonStepDeg(lat) { return CELL_KM / (KM_PER_DEG_LAT * Math.cos(lat * Math.PI/180)); }
+const SKIP = 10; // pick every 10th cell in row/col
 
-// Load JSON and draw all cells
+// Load JSON and draw only every 10th row and column
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
+    // Sort by latitude descending, then longitude ascending
+    data.sort((a,b) => b.lat - a.lat || a.lon - b.lon);
+
+    let lastLat = null;
+    let row = -1;
+    let col = 0;
+
     data.forEach(pt => {
       if(pt.lat < CONUS_bounds[0][0] || pt.lat > CONUS_bounds[1][0] ||
          pt.lon < CONUS_bounds[0][1] || pt.lon > CONUS_bounds[1][1]) return;
 
+      // Increment row when latitude changes
+      if(lastLat === null || Math.abs(pt.lat - lastLat) > 1e-4) { 
+        row++;
+        col = 0;
+        lastLat = pt.lat;
+      } else {
+        col++;
+      }
+
+      // Draw only every 10th cell
+      if(row % SKIP !== 0 || col % SKIP !== 0) return;
+
       const latStep = latStepDeg();
       const lonStep = lonStepDeg(pt.lat);
-
       const bounds = [[pt.lat, pt.lon], [pt.lat + latStep, pt.lon + lonStep]];
 
       L.rectangle(bounds, {
