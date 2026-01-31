@@ -1,77 +1,32 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (LCC 13 km)</title>
+  <title>Tornado Probability Heatmap</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
+
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-  
-  <!-- Custom styles -->
   <style>
     body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
-    h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
-    .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
-    }
-    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
-    #backBtn { display:none; }
+    #map { height:100vh; width:100%; }
+    .leaflet-popup-content-wrapper { font-size: 14px; }
   </style>
 </head>
 <body>
 
-<h1>Tornado Probability Map (13 km LCC)</h1>
 <div id="map"></div>
 
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<!-- proj4.js for LCC -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
-/************* PROJECTIONS *************/
-// Define RAP AWIP130 LCC
-proj4.defs("EPSG:RAP_LCC",
-  "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs"
-);
+/************* MAP *************/
+var map = L.map('map', { minZoom:4, maxZoom:18 }).setView([39.5, -98.35], 4);
 
-// Convert LCC meters to Web Mercator for Leaflet
-function lccToWebMerc(x, y){
-  return proj4("EPSG:RAP_LCC", "EPSG:3857", [x, y]);
-}
-
-/************* MAP SETUP *************/
-var map = L.map('map', { 
-  minZoom:4, maxZoom:18, zoomSnap:0.25
-}).setView([39.5, -98.35], 4);
-
-// OSM basemap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution:'© OpenStreetMap contributors'
 }).addTo(map);
-
-/************* LAYERS *************/
-var aggregateLayer = L.layerGroup().addTo(map);
-var cellLayer = L.layerGroup();
-var cellsVisible = true;
-
-/************* CONTROL PANEL *************/
-var CustomControl = L.Control.extend({
-  options:{position:'topleft'},
-  onAdd:function(map){
-    var c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `
-      <button id="toggleCells">Toggle Cells</button>
-      <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Click an aggregate to view 13 km cells</div>
-    `;
-    L.DomEvent.disableClickPropagation(c);
-    return c;
-  }
-});
-map.addControl(new CustomControl());
 
 /************* COLOR FUNCTION *************/
 function getColor(p){
@@ -82,96 +37,43 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-/************* LOAD JSON *************/
-var jsonData = [];
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => { jsonData = data; drawAggregates(); })
-  .catch(err => console.error("Failed to load JSON:", err));
+/************* GRID CELL SIZE *************/
+// Approx 13 km in degrees (lat/lon)
+const dLat = 0.117; // ~13 km latitude
+const dLon = 0.18;  // ~13 km longitude at mid-latitudes
 
-/************* AGGREGATE GRID *************/
-function drawAggregates(){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-  document.getElementById("backBtn").style.display="none";
-
-  var latStep=3.0, lngStep=4.0;
-
-  for(let lat=24; lat<50; lat+=latStep){
-    for(let lng=-125; lng<-66; lng+=lngStep){
-      let rect = L.rectangle(
-        [[lat,lng],[lat+latStep,lng+lngStep]],
-        {fillColor:'#aaa', fillOpacity:0.2, color:'#000', weight:1}
-      ).addTo(aggregateLayer);
-
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(1)}–${(lat+latStep).toFixed(1)}<br>Lon ${lng.toFixed(1)}–${(lng+lngStep).toFixed(1)}`);
-
-      rect.on('dblclick', function(){
-        drawCellsInAggregate(lat,lng,latStep,lngStep);
-        document.getElementById("backBtn").style.display="block";
-      });
-    }
-  }
-}
-
-/************* DRAW 13 km CELLS *************/
-const CELL = 13000; // 13 km
-
+/************* DRAW ONE CELL *************/
 function drawCell(pt){
-  const half = CELL/2;
+  const lat = pt.lat;
+  const lon = pt.lon;
 
-  // Four corners in LCC meters
-  const cornersLCC = [
-    [pt.x - half, pt.y - half],
-    [pt.x + half, pt.y - half],
-    [pt.x + half, pt.y + half],
-    [pt.x - half, pt.y + half]
+  const bounds = [
+    [lat - dLat/2, lon - dLon/2],
+    [lat + dLat/2, lon + dLon/2]
   ];
 
-  // Convert to Web Mercator and then Leaflet lat/lon
-  const cornersLatLon = cornersLCC.map(c=>{
-    const [mx, my] = lccToWebMerc(c[0], c[1]);
-    return map.unproject([mx, my]); // Leaflet expects [lng, lat]
-  });
-
-  return L.polygon(cornersLatLon, {
+  return L.rectangle(bounds, {
     fillColor: getColor(pt.prob),
     fillOpacity: 0.6,
     color: '#000',
-    weight: 0.5
-  });
+    weight: 0.2
+  }).bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
 }
 
-/************* DRAW CELLS IN AGGREGATE *************/
-function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
+/************* LOAD JSON AND DRAW ALL CELLS *************/
+fetch("map/data/tornado_prob.json")
+  .then(resp => resp.json())
+  .then(data => {
+    const cellLayer = L.layerGroup().addTo(map);
 
-  const latEnd = latStart + latStep;
-  const lngEnd = lngStart + lngStep;
-
-  jsonData.forEach(pt=>{
-    // Optional: if JSON still has lat/lon, filter by bounds
-    if(pt.lat>=latStart && pt.lat<latEnd && pt.lon>=lngStart && pt.lon<lngEnd){
-      let cell = drawCell(pt);
-      cell.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
+    data.forEach(pt => {
+      const cell = drawCell(pt);
       cell.addTo(cellLayer);
-    }
-  });
+    });
 
-  cellLayer.addTo(map);
-  map.fitBounds(cellLayer.getBounds());
-}
-
-/************* TOGGLE CELLS *************/
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
-  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
-};
-
-/************* BACK TO AGGREGATES *************/
-document.getElementById('backBtn').onclick = () => drawAggregates();
+    map.fitBounds(cellLayer.getBounds());
+  })
+  .catch(err => console.error("Failed to load JSON:", err));
 
 </script>
 </body>
