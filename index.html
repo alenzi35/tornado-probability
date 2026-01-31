@@ -1,26 +1,31 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Heatmap (CONUS, 13.545 km)</title>
+  <title>Tornado Probability Heatmap (CONUS, Canvas)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
+    body { margin:0; font-family:Arial, sans-serif; }
     #map { height:100vh; width:100%; }
-    .leaflet-popup-content-wrapper { font-size: 14px; }
+    #tooltip {
+      position:absolute; background:white; padding:4px 6px; border-radius:4px;
+      pointer-events:none; font-size:14px; border:1px solid #333;
+      display:none;
+    }
   </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="tooltip"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
 
 <script>
-// ---------- MAP SETUP ----------
-const CONUS_BOUNDS = [[22, -125], [51, -66]]; 
+// ---------- MAP ----------
+const CONUS_BOUNDS = [[22, -125], [51, -66]];
 var map = L.map('map', { 
     minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
 }).setView([39.5, -98.35], 4);
@@ -29,7 +34,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
-// ---------- PROJ4 FOR LCC ----------
+// ---------- PROJ4 ----------
 proj4.defs("EPSG:RAP_LCC",
   "+proj=lcc +lat_1=30 +lat_2=60 +lat_0=38.5 +lon_0=-98.5 +ellps=GRS80 +units=m +no_defs"
 );
@@ -46,41 +51,55 @@ function getColor(p){
 // ---------- CELL SIZE ----------
 const CELL = 13545; // meters
 
-function drawCell(pt){
-  const half = CELL/2;
-  const corners = [
-    [pt.x - half, pt.y - half],
-    [pt.x + half, pt.y - half],
-    [pt.x + half, pt.y + half],
-    [pt.x - half, pt.y + half]
-  ];
+// ---------- CANVAS LAYER ----------
+let canvasLayer = L.layerGroup().addTo(map);
+const tooltip = document.getElementById("tooltip");
 
-  // Project LCC -> lat/lon (EPSG:4326)
-  const cornersLatLon = corners.map(c=>{
-    const [lon, lat] = proj4("EPSG:RAP_LCC","EPSG:4326", c);
-    return [lat, lon];
-  });
-
-  return L.polygon(cornersLatLon, {
-    fillColor: getColor(pt.prob),
-    fillOpacity: 0.6,
-    color:'#000',
-    weight:0.2
-  }).bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
-}
-
-// ---------- LOAD JSON ----------
 fetch("map/data/tornado_prob.json")
-  .then(resp=>resp.json())
-  .then(data=>{
-    const cellLayer = L.layerGroup().addTo(map);
-    data.forEach(pt=>{
-      const cell = drawCell(pt);
-      cell.addTo(cellLayer);
+  .then(resp => resp.json())
+  .then(data => {
+
+    // draw cells
+    data.forEach(pt => {
+      // convert center x/y to lat/lon for Leaflet (cell center)
+      const [lonC, latC] = proj4("EPSG:RAP_LCC", "EPSG:4326", [pt.x, pt.y]);
+
+      // project cell corners in LCC to lat/lon
+      const half = CELL/2;
+      const corners = [
+        [pt.x - half, pt.y - half],
+        [pt.x + half, pt.y - half],
+        [pt.x + half, pt.y + half],
+        [pt.x - half, pt.y + half]
+      ].map(c=>{
+        const [lon, lat] = proj4("EPSG:RAP_LCC","EPSG:4326", c);
+        return [lat, lon];
+      });
+
+      // filter cells outside CONUS
+      if(corners.some(c => c[0] < 22 || c[0] > 51 || c[1] < -125 || c[1] > -66)) return;
+
+      // draw polygon
+      const poly = L.polygon(corners, {
+        fillColor: getColor(pt.prob),
+        fillOpacity: 0.6,
+        color:'#000',
+        weight:0.2
+      }).addTo(canvasLayer);
+
+      // tooltip on hover
+      poly.on('mousemove', e => {
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.originalEvent.pageX + 10 + 'px';
+        tooltip.style.top = e.originalEvent.pageY + 10 + 'px';
+        tooltip.innerHTML = `<b>Probability:</b> ${pt.prob.toFixed(4)}`;
+      });
+      poly.on('mouseout', e => { tooltip.style.display = 'none'; });
     });
-    map.fitBounds(cellLayer.getBounds());
+
+    map.fitBounds(canvasLayer.getBounds());
   })
-  .catch(err=>console.error(err));
+  .catch(err => console.error(err));
 </script>
 </body>
 </html>
