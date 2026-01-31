@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Heatmap</title>
+  <title>Tornado Probability Heatmap (CONUS, 13.545 km)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -22,7 +22,10 @@
 
 <script>
 /************* MAP *************/
-var map = L.map('map', { minZoom:4, maxZoom:18 }).setView([39.5, -98.35], 4);
+const CONUS_BOUNDS = [[22, -125], [51, -66]]; // SW, NE
+var map = L.map('map', { 
+  minZoom:4, maxZoom:18, maxBounds: CONUS_BOUNDS, maxBoundsViscosity: 0.5
+}).setView([39.5, -98.35], 4);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution:'© OpenStreetMap contributors'
@@ -37,15 +40,19 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-/************* GRID CELL SIZE *************/
-// Approx 13 km in degrees (lat/lon)
-const dLat = 0.117; // ~13 km latitude
-const dLon = 0.18;  // ~13 km longitude at mid-latitudes
+/************* GRID SETTINGS *************/
+const dLat = 13.545 / 111; // ~0.122° latitude for 13.545 km
+
+function getDLon(lat){
+  const latRad = lat * Math.PI / 180;
+  return 13.545 / (111 * Math.cos(latRad)); // longitude width in degrees
+}
 
 /************* DRAW ONE CELL *************/
 function drawCell(pt){
   const lat = pt.lat;
   const lon = pt.lon;
+  const dLon = getDLon(lat);
 
   const bounds = [
     [lat - dLat/2, lon - dLon/2],
@@ -67,8 +74,11 @@ fetch("map/data/tornado_prob.json")
     const cellLayer = L.layerGroup().addTo(map);
 
     data.forEach(pt => {
-      const cell = drawCell(pt);
-      cell.addTo(cellLayer);
+      // Only plot cells inside CONUS
+      if(pt.lat >= 22 && pt.lat <= 51 && pt.lon >= -125 && pt.lon <= -66){
+        const cell = drawCell(pt);
+        cell.addTo(cellLayer);
+      }
     });
 
     map.fitBounds(cellLayer.getBounds());
