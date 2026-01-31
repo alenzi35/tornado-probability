@@ -55,27 +55,38 @@ function getColor(p){
 
 // 130 km cell approximation
 const CELL_KM = 130;
-const KM_PER_DEG_LAT = 111; // km per degree latitude
-const SKIP = 10; // every 10th point
-
-// Convert latitude/longitude to rectangle size in degrees
-function latStepDeg() {
-  return CELL_KM / KM_PER_DEG_LAT;
-}
-function lonStepDeg(lat) {
-  return CELL_KM / (KM_PER_DEG_LAT * Math.cos(lat * Math.PI/180));
-}
+const KM_PER_DEG_LAT = 111;
+function latStepDeg() { return CELL_KM / KM_PER_DEG_LAT; }
+function lonStepDeg(lat) { return CELL_KM / (KM_PER_DEG_LAT * Math.cos(lat * Math.PI/180)); }
+const SKIP = 10;
 
 // Load JSON and draw cells
 fetch("map/data/tornado_prob.json")
   .then(resp => resp.json())
   .then(data => {
-    data.forEach((pt, index) => {
+
+    // Sort by latitude descending, then longitude ascending
+    data.sort((a,b) => b.lat - a.lat || a.lon - b.lon);
+
+    let lastLat = null;
+    let row = -1;
+    let col = 0;
+
+    data.forEach(pt => {
       if(pt.lat < CONUS_bounds[0][0] || pt.lat > CONUS_bounds[1][0] ||
          pt.lon < CONUS_bounds[0][1] || pt.lon > CONUS_bounds[1][1]) return;
 
-      // Only every 10th RAP point
-      if(index % SKIP !== 0) return;
+      // Increment row when latitude changes
+      if(lastLat === null || Math.abs(pt.lat - lastLat) > 1e-4) { 
+        row++;
+        col = 0;
+        lastLat = pt.lat;
+      } else {
+        col++;
+      }
+
+      // Skip cells to get 130 km resolution
+      if(row % SKIP !== 0 || col % SKIP !== 0) return;
 
       const latStep = latStepDeg();
       const lonStep = lonStepDeg(pt.lat);
