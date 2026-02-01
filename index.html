@@ -1,70 +1,115 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Tornado Probability Map</title>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <title>Tornado Probability – RAP Grid (LCC)</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css">
   <style>
-    body { margin:0; background:#f4f4f4; font-family:Arial; }
-    h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; }
+    body { margin:0; font-family:Arial; background:#f4f4f4; }
+    h1 { text-align:center; margin:10px; }
+    #map { width:100%; height:650px; }
   </style>
 </head>
-<body>
 
-<h1>Tornado Probability (Raw RAP Cells)</h1>
+<body>
+<h1>Tornado Probability (True RAP Grid)</h1>
 <div id="map"></div>
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ol@latest/dist/ol.js"></script>
+
 <script>
-const CONUS = [[22, -128], [51.5, -64]];
+/* ---------------- PROJECTIONS ---------------- */
 
-const map = L.map('map', {
-  maxBounds: CONUS,
-  minZoom: 4,
-  maxZoom: 18
-}).setView([39.5, -98.35], 4);
+// RAP Lambert Conformal (NOAA standard)
+proj4.defs("EPSG:RAP_LCC",
+  "+proj=lcc +lat_1=25 +lat_2=25 +lat_0=25 " +
+  "+lon_0=-95 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution:'© OpenStreetMap'
-}).addTo(map);
+ol.proj.proj4.register(proj4);
 
-const cellLayer = L.layerGroup().addTo(map);
+const LCC = ol.proj.get("EPSG:RAP_LCC");
+const WGS84 = ol.proj.get("EPSG:4326");
+
+/* ---------------- MAP ---------------- */
+
+const map = new ol.Map({
+  target: "map",
+  layers: [
+    new ol.layer.Tile({
+      source: new ol.source.OSM()
+    })
+  ],
+  view: new ol.View({
+    projection: LCC,
+    center: ol.proj.transform([-98.35, 39.5], WGS84, LCC),
+    zoom: 3,
+    minZoom: 2,
+    maxZoom: 12
+  })
+});
+
+/* ---------------- COLOR SCALE ---------------- */
 
 function getColor(p){
-  return p > 0.8 ? '#800026' :
-         p > 0.6 ? '#BD0026' :
-         p > 0.4 ? '#E31A1C' :
-         p > 0.2 ? '#FC4E2A' :
-                   '#FFEDA0';
+  return p > 0.8 ? "rgba(128,0,38,0.7)" :
+         p > 0.6 ? "rgba(189,0,38,0.7)" :
+         p > 0.4 ? "rgba(227,26,28,0.7)" :
+         p > 0.2 ? "rgba(252,78,42,0.7)" :
+                   "rgba(255,237,160,0.7)";
 }
+
+/* ---------------- RAP CELL LAYER ---------------- */
+
+const cellSource = new ol.source.Vector();
+const cellLayer = new ol.layer.Vector({ source: cellSource });
+map.addLayer(cellLayer);
+
+// True RAP grid spacing
+const HALF = 13545 / 2; // meters
 
 fetch("map/data/tornado_prob.json")
   .then(r => r.json())
   .then(data => {
+
     data.forEach(pt => {
 
-      // RAP grid spacing (km)
-      const HALF_LAT = (13.545 / 111) / 2;
-      const HALF_LON = HALF_LAT / Math.cos(pt.lat * Math.PI / 180);
+      // Project center point to LCC meters
+      const center = ol.proj.transform(
+        [pt.lon, pt.lat],
+        WGS84,
+        LCC
+      );
 
-      const bounds = [
-        [pt.lat - HALF_LAT, pt.lon - HALF_LON],
-        [pt.lat + HALF_LAT, pt.lon + HALF_LON]
-      ];
+      // Build true square in meters
+      const poly = new ol.geom.Polygon([[
+        [center[0]-HALF, center[1]-HALF],
+        [center[0]+HALF, center[1]-HALF],
+        [center[0]+HALF, center[1]+HALF],
+        [center[0]-HALF, center[1]+HALF],
+        [center[0]-HALF, center[1]-HALF]
+      ]]);
 
-      L.rectangle(bounds, {
-        fillColor: getColor(pt.prob),
-        fillOpacity: 0.6,
-        color: null,
-        weight: 0
-      }).addTo(cellLayer);
+      cellSource.addFeature(
+        new ol.Feature({
+          geometry: poly,
+          prob: pt.prob
+        })
+      );
     });
 
-    console.log("Rendered cells:", data.length);
+    cellLayer.setStyle(feature => new ol.style.Style({
+      fill: new ol.style.Fill({
+        color: getColor(feature.get("prob"))
+      }),
+      stroke: null
+    }));
+
+    console.log("Rendered RAP cells:", data.length);
   })
-  .catch(e => console.error(e));
+  .catch(err => console.error(err));
 </script>
 
 </body>
