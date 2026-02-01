@@ -8,84 +8,48 @@ import json
 DATE = "20260128"
 HOUR = "19"
 FCST = "02"
-
-# RAP GRIB file URL (AWIP32 product)
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
-# Logistic regression coefficients for 1-hour probability
-INTERCEPT = -14
-COEFFS = {
-    "CAPE": 2.88592370e-03,
-    "CIN":  2.38728498e-05,
-    "HLCY": 8.85192696e-03
-}
-# ----------------------------------------
+INTERCEPT = -1.5686
+COEFFS = {"CAPE": 2.88592370e-03, "CIN": 2.38728498e-05, "HLCY": 8.85192696e-03}
 
-# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ---------------- DOWNLOAD RAP ----------------
 print("Downloading RAP GRIB...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-print("✅ Download complete.")
 
-# ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
+def get_v(name, **kwargs):
+    grbs.seek(0)
+    return grbs.select(shortName=name, **kwargs)[0]
 
-# ---------------- HELPER TO PICK VAR ----------------
-def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
-    """
-    Pick first GRIB message matching shortName, optionally typeOfLevel and bottom/top.
-    """
-    for g in grbs:
-        if g.shortName.lower() != shortname.lower():
-            continue
-        if typeOfLevel and g.typeOfLevel != typeOfLevel:
-            continue
-        if bottom is not None and top is not None:
-            if not hasattr(g, "bottomLevel") or not hasattr(g, "topLevel"):
-                continue
-            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
-                continue
-        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
-        return g
-    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
+cape = get_v("cape", typeOfLevel="surface").values
+cin = get_v("cin", typeOfLevel="surface").values
+hlcy_m = get_v("hlcy", typeOfLevel="heightAboveGroundLayer", bottomLevel=0, topLevel=1000)
+hlcy = hlcy_m.values
+lats, lons = hlcy_m.latlons()
 
-# ---------------- EXTRACT VARIABLES ----------------
-grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
-grbs.seek(0)
-cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
-grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
+# Calculate actual grid resolution for tiling
+d_lat = float(np.abs(lats[1,0] - lats[0,0]))
+d_lon = float(np.abs(lons[0,1] - lons[0,0]))
 
-cape = cape_msg.values
-cin  = cin_msg.values
-hlcy = hlcy_msg.values
-
-lats, lons = cape_msg.latlons()
-
-# ---------------- COMPUTE PROBABILITY ----------------
-linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
+linear = INTERCEPT + (COEFFS["CAPE"] * cape) + (COEFFS["CIN"] * cin) + (COEFFS["HLCY"] * hlcy)
 prob = 1 / (1 + np.exp(-linear))
 
-# ---------------- WRITE JSON ----------------
 features = []
 rows, cols = prob.shape
 for i in range(rows):
     for j in range(cols):
         features.append({
-            "lat": float(lats[i, j]),
-            "lon": float(lons[i, j]),
-            "prob": float(prob[i, j])
+            "lt": float(lats[i, j]),
+            "ln": float(lons[i, j]),
+            "p": float(prob[i, j])
         })
 
 with open(OUTPUT_JSON, "w") as f:
-    json.dump(features, f, indent=2)
+    json.dump({"meta": {"d_lat": d_lat, "d_lon": d_lon}, "cells": features}, f)
 
-print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
-print("TOTAL GRID POINTS:", len(features))
-print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
+print(f"✅ Processed {len(features)} cells.")
