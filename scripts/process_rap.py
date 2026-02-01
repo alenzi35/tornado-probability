@@ -2,19 +2,20 @@ import os
 import urllib.request
 import pygrib
 import numpy as np
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
+import json
+from pyproj import Proj, transform
 
 # ---------------- CONFIG ----------------
 DATE = "20260128"
 HOUR = "19"
 FCST = "02"
 
+# RAP GRIB file URL (AWIP32 product)
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_PNG = "map/rap_prob.png"
+OUTPUT_JSON = "map/data/tornado_prob.json"
 
-# Logistic regression
+# Logistic regression coefficients
 INTERCEPT = -1.5686
 COEFFS = {
     "CAPE": 2.88592370e-03,
@@ -22,48 +23,75 @@ COEFFS = {
     "HLCY": 8.85192696e-03
 }
 
+# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
-os.makedirs("map", exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-# ---------------- DOWNLOAD ----------------
+# ---------------- DOWNLOAD RAP ----------------
+print("Downloading RAP GRIB...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("✅ Download complete.")
 
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-cape = grbs.select(shortName="cape", typeOfLevel="surface")[0].values
-cin  = grbs.select(shortName="cin",  typeOfLevel="surface")[0].values
-hlcy = grbs.select(shortName="hlcy", typeOfLevel="heightAboveGroundLayer")[0].values
+# ---------------- HELPER ----------------
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    for g in grbs:
+        if g.shortName.lower() != shortname.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
+        if bottom is not None and top is not None:
+            if not hasattr(g, "bottomLevel") or not hasattr(g, "topLevel"):
+                continue
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+                continue
+        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
+        return g
+    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
 
-lats, lons = grbs.select(shortName="cape")[0].latlons()
+# ---------------- EXTRACT VARIABLES ----------------
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")
+grbs.seek(0)
+cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)
 
-# ---------------- PROBABILITY ----------------
-linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
-prob = 1 / (1 + np.exp(-linear))
+cape = cape_msg.values
+cin  = cin_msg.values
+hlcy = hlcy_msg.values
+
+lats, lons = cape_msg.latlons()
 
 # ---------------- LCC PROJECTION ----------------
-rap_lcc = ccrs.LambertConformal(
-    central_longitude=-97.5,
-    central_latitude=38.5,
-    standard_parallels=(38.5, 38.5)
-)
+# Lambert Conformal Conic (match RAP)
+proj_lcc = Proj(proj='lcc', lat_1=25, lat_2=60, lat_0=38, lon_0=-97, x_0=0, y_0=0, units='m')
 
-fig = plt.figure(figsize=(14, 9))
-ax = plt.axes(projection=rap_lcc)
+# ---------------- COMPUTE PROBABILITY ----------------
+linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
+prob = 1 / (1 + np.exp(-linear))
 
-ax.set_extent([-125, -66, 24, 50], crs=ccrs.PlateCarree())
+# ---------------- WRITE JSON ----------------
+features = []
+rows, cols = prob.shape
+for i in range(rows):
+    for j in range(cols):
+        lat = float(lats[i,j])
+        lon = float(lons[i,j])
+        px, py = proj_lcc(lon, lat)  # convert to LCC meters
+        features.append({
+            "lat": lat,
+            "lon": lon,
+            "x": px,
+            "y": py,
+            "prob": float(prob[i,j])
+        })
 
-mesh = ax.pcolormesh(
-    lons, lats, prob,
-    transform=ccrs.PlateCarree(),
-    shading="nearest",   # IMPORTANT: preserves touching cells
-    cmap="hot"
-)
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(features, f, indent=2)
 
-plt.colorbar(mesh, orientation="vertical", pad=0.02, label="Tornado Probability")
-plt.title("RAP Tornado Probability (Native Grid)")
-
-plt.savefig(OUTPUT_PNG, dpi=150, bbox_inches="tight")
-plt.close()
-
-print("✅ Saved:", OUTPUT_PNG)
+print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
+print("TOTAL GRID POINTS:", len(features))
+print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
