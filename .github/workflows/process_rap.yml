@@ -26,8 +26,7 @@ jobs:
           pip install pygrib numpy matplotlib cartopy
 
       - name: Run RAP processing script
-        run: |
-          python scripts/process_rap.py
+        run: python scripts/process_rap.py
 
       - name: Commit and push PNG
         run: |
