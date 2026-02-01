@@ -1,105 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <title>Tornado Probability – RAP Grid (LCC)</title>
-
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css">
+  <title>Tornado Probability Map</title>
+  <link rel="stylesheet" href="https://unpkg.com" />
   <style>
-    body { margin:0; font-family:Arial; background:#f4f4f4; }
-    h1 { text-align:center; margin:10px; }
-    #map { width:100%; height:650px; }
+    body { margin:0; }
+    #map { height: 100vh; background: #0b0b0b; }
   </style>
 </head>
-
 <body>
-<h1>Tornado Probability (Raw RAP Cells, Touching)</h1>
 <div id="map"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/ol@latest/dist/ol.js"></script>
-
+<script src="https://unpkg.com"></script>
 <script>
-/* ---------------- PROJECTIONS ---------------- */
-// RAP Lambert Conformal
-proj4.defs("EPSG:RAP_LCC",
-  "+proj=lcc +lat_1=25 +lat_2=25 +lat_0=25 " +
-  "+lon_0=-95 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
-);
-ol.proj.proj4.register(proj4);
-const LCC = ol.proj.get("EPSG:RAP_LCC");
-const WGS84 = ol.proj.get("EPSG:4326");
+var map = L.map('map', { 
+    preferCanvas: true, // Required for performance
+    minZoom: 4 
+}).setView([39.5, -98.35], 5);
 
-/* ---------------- MAP ---------------- */
-const map = new ol.Map({
-  target: "map",
-  layers: [
-    new ol.layer.Tile({
-      source: new ol.source.OSM()
-    })
-  ],
-  view: new ol.View({
-    projection: LCC,
-    center: ol.proj.transform([-98.35, 39.5], WGS84, LCC),
-    zoom: 3,
-    minZoom: 2,
-    maxZoom: 12
-  })
-});
+L.tileLayer('https://{s}://{z}/{x}/{y}{r}.png').addTo(map);
 
-/* ---------------- COLOR SCALE ---------------- */
-function getColor(p){
-  return p > 0.8 ? "rgba(128,0,38,0.7)" :
-         p > 0.6 ? "rgba(189,0,38,0.7)" :
-         p > 0.4 ? "rgba(227,26,28,0.7)" :
-         p > 0.2 ? "rgba(252,78,42,0.7)" :
-                   "rgba(255,237,160,0.7)";
+function getColor(p) {
+    return p > 0.15 ? '#800026' : p > 0.05 ? '#E31A1C' : p > 0.02 ? '#FC4E2A' : '#FFEDA0';
 }
 
-/* ---------------- RAP CELL LAYER ---------------- */
-const cellSource = new ol.source.Vector();
-const cellLayer = new ol.layer.Vector({ source: cellSource });
-map.addLayer(cellLayer);
-
-// Use full RAP cell spacing to remove gaps
-const HALF = 13545; // meters (full half-width to fill the space)
-
-/* ---------------- LOAD JSON ---------------- */
 fetch("map/data/tornado_prob.json")
-  .then(r => r.json())
+  .then(res => res.json())
   .then(data => {
-
-    data.forEach(pt => {
-      // Project cell center to LCC meters
-      const center = ol.proj.transform([pt.lon, pt.lat], WGS84, LCC);
-
-      // Draw square around center using full cell spacing
-      const poly = new ol.geom.Polygon([[
-        [center[0]-HALF, center[1]-HALF],
-        [center[0]+HALF, center[1]-HALF],
-        [center[0]+HALF, center[1]+HALF],
-        [center[0]-HALF, center[1]+HALF],
-        [center[0]-HALF, center[1]-HALF]
-      ]]);
-
-      cellSource.addFeature(new ol.Feature({
-        geometry: poly,
-        prob: pt.prob
-      }));
-    });
-
-    // Style based on probability
-    cellLayer.setStyle(feature => new ol.style.Style({
-      fill: new ol.style.Fill({
-        color: getColor(feature.get("prob"))
-      }),
-      stroke: null
-    }));
-
-    console.log("Rendered RAP cells:", data.length);
-  })
-  .catch(err => console.error(err));
+      const { d_lat, d_lon } = data.meta;
+      data.cells.forEach(pt => {
+          // Half-offset centers the rectangle on the coordinate
+          let bounds = [
+              [pt.lt - d_lat/2, pt.ln - d_lon/2], 
+              [pt.lt + d_lat/2, pt.ln + d_lon/2]
+          ];
+          L.rectangle(bounds, {
+              fillColor: getColor(pt.p),
+              fillOpacity: 0.5,
+              weight: 0, // Removes the border gap
+              interactive: false
+          }).addTo(map);
+      });
+  });
 </script>
-
 </body>
 </html>
