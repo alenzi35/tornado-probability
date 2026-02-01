@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>RAP Tornado Probability Overlay</title>
+  <title>RAP Tornado Probability Map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <style>html,body,#map{height:100%;margin:0}</style>
@@ -16,8 +16,8 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
   attribution:'© OpenStreetMap contributors'
 }).addTo(map);
 
-// Overlay the pre-rendered RAP grid image
-var imgBounds = [[22,-125],[50,-66]];  // match the extent used in Python
+// Overlay the RAP tornado probability PNG
+var imgBounds = [[22,-125],[50,-66]];  // must match Python extent
 L.imageOverlay('map/data/tornado_prob.png', imgBounds).addTo(map);
 </script>
 </body>
