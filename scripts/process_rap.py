@@ -1,62 +1,91 @@
-import os, pygrib, json, numpy as np
-import pyproj
+import os
+import urllib.request
+import pygrib
+import numpy as np
+import json
 
+# ---------------- CONFIG ----------------
 DATE = "20260128"
 HOUR = "19"
 FCST = "02"
+
+# RAP GRIB file URL (AWIP32 product)
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
+# Logistic regression coefficients for 1-hour probability
 INTERCEPT = -1.5686
-COEFFS = {"CAPE":2.88592370e-03,"CIN":2.38728498e-05,"HLCY":8.85192696e-03}
+COEFFS = {
+    "CAPE": 2.88592370e-03,
+    "CIN":  2.38728498e-05,
+    "HLCY": 8.85192696e-03
+}
+# ----------------------------------------
 
+# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# Download GRIB
-if not os.path.exists(GRIB_PATH):
-    import urllib.request
-    print("Downloading RAP GRIB...")
-    urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+# ---------------- DOWNLOAD RAP ----------------
+print("Downloading RAP GRIB...")
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("✅ Download complete.")
 
+# ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
+
+# ---------------- HELPER TO PICK VAR ----------------
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    """
+    Pick first GRIB message matching shortName, optionally typeOfLevel and bottom/top.
+    """
     for g in grbs:
-        if g.shortName.lower() != shortname.lower(): continue
-        if typeOfLevel and g.typeOfLevel != typeOfLevel: continue
+        if g.shortName.lower() != shortname.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
         if bottom is not None and top is not None:
-            if not hasattr(g,"bottomLevel") or not hasattr(g,"topLevel"): continue
-            if not (abs(g.bottomLevel-bottom)<1 and abs(g.topLevel-top)<1): continue
+            if not hasattr(g, "bottomLevel") or not hasattr(g, "topLevel"):
+                continue
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+                continue
+        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
         return g
-    raise RuntimeError(f"{shortname} not found")
+    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
 
-cape = pick_var(grbs,"cape","surface").values
-cin  = pick_var(grbs,"cin","surface").values
-hlcy = pick_var(grbs,"hlcy","heightAboveGroundLayer",0,1000).values
-rows, cols = cape.shape
+# ---------------- EXTRACT VARIABLES ----------------
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
+grbs.seek(0)
+cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
 
-# RAP LCC projection
-proj_LCC = pyproj.Proj("+proj=lcc +lat_1=25 +lat_2=25 +lat_0=25 +lon_0=-95 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+cape = cape_msg.values
+cin  = cin_msg.values
+hlcy = hlcy_msg.values
 
-# True spacing
-dx = 13545  # meters
-dy = 13545
+lats, lons = cape_msg.latlons()
 
-# Origin
-lat0, lon0 = pick_var(grbs,"cape","surface").latlons()
-x0, y0 = proj_LCC(lon0[0,0], lat0[0,0])
+# ---------------- COMPUTE PROBABILITY ----------------
+linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
+prob = 1 / (1 + np.exp(-linear))
 
+# ---------------- WRITE JSON ----------------
 features = []
+rows, cols = prob.shape
 for i in range(rows):
     for j in range(cols):
-        x = x0 + j*dx
-        y = y0 + i*dy
-        linear = INTERCEPT + COEFFS["CAPE"]*cape[i,j] + COEFFS["CIN"]*cin[i,j] + COEFFS["HLCY"]*hlcy[i,j]
-        prob = 1 / (1 + np.exp(-linear))
-        features.append({"x": float(x), "y": float(y), "prob": float(prob)})
+        features.append({
+            "lat": float(lats[i, j]),
+            "lon": float(lons[i, j]),
+            "prob": float(prob[i, j])
+        })
 
-with open(OUTPUT_JSON,"w") as f:
-    json.dump(features,f,indent=2)
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(features, f, indent=2)
 
-print("✅ Written JSON with true LCC coordinates")
+print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
+print("TOTAL GRID POINTS:", len(features))
+print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
