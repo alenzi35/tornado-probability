@@ -3,6 +3,7 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
+from pyproj import Proj
 
 # ---------------- CONFIG ----------------
 DATE = "20260128"
@@ -11,7 +12,7 @@ FCST = "02"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/tornado_prob.json"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 INTERCEPT = -1.5686
 COEFFS = {
@@ -20,7 +21,6 @@ COEFFS = {
     "HLCY": 8.85192696e-03
 }
 
-# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
@@ -32,7 +32,6 @@ print("✅ Download complete.")
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-# ---------------- HELPER TO PICK VAR ----------------
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     for g in grbs:
         if g.shortName.lower() != shortname.lower():
@@ -62,39 +61,34 @@ hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
 
+# ---------------- RAP LCC PROJECTION ----------------
+# RAP LCC definition (from RAP GRIB)
+proj = Proj(proj='lcc', lat_1=38.5, lat_2=38.5, lat_0=38.5, lon_0=-97, x_0=0, y_0=0, datum='WGS84')
+
+x, y = proj(lons, lats)  # convert lat/lon to LCC meters
+
 # ---------------- COMPUTE PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# ---------------- HELPER: km → deg ----------------
-def km_to_deg(lat, km):
-    deg_lat = km / 111.32
-    deg_lon = km / (111.32 * np.cos(np.radians(lat)))
-    return deg_lat, deg_lon
-
-HALF_KM = 13.545 / 2  # half-width in km
+# ---------------- WRITE JSON WITH LCC ----------------
 features = []
-
-# ---------------- WRITE RECTANGLES ----------------
 rows, cols = prob.shape
+half_km = 13.545 / 2  # half-width in km
+
 for i in range(rows):
     for j in range(cols):
-        lat = lats[i, j]
-        lon = lons[i, j]
-        dlat, dlon = km_to_deg(lat, HALF_KM)
-        linear_value = linear[i,j]
-        prob_value = 1 / (1 + np.exp(-linear_value))
+        px, py = x[i,j], y[i,j]
         features.append({
-            "lat_min": float(lat - dlat),
-            "lat_max": float(lat + dlat),
-            "lon_min": float(lon - dlon),
-            "lon_max": float(lon + dlon),
-            "prob": float(prob_value)
+            "x_min": float(px - half_km*1000),
+            "x_max": float(px + half_km*1000),
+            "y_min": float(py - half_km*1000),
+            "y_max": float(py + half_km*1000),
+            "prob": float(prob[i,j])
         })
 
 with open(OUTPUT_JSON, "w") as f:
     json.dump(features, f, indent=2)
 
-print("✅ Tornado probability JSON written with exact rectangle lat/lon")
+print("✅ Tornado probability JSON written in LCC meters")
 print("TOTAL CELLS:", len(features))
-print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
