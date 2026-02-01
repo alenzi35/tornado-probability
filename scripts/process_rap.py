@@ -3,24 +3,27 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
-from pyproj import Proj, Transformer
 
 # ---------------- CONFIG ----------------
 DATE = "20260128"
 HOUR = "19"
 FCST = "02"
 
+# RAP GRIB file URL (AWIP32 product)
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
-INTERCEPT = -1.5686
+# Logistic regression coefficients for 1-hour probability
+INTERCEPT = -14
 COEFFS = {
     "CAPE": 2.88592370e-03,
     "CIN":  2.38728498e-05,
     "HLCY": 8.85192696e-03
 }
+# ----------------------------------------
 
+# ---------------- CREATE FOLDERS ----------------
 os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
@@ -32,7 +35,11 @@ print("✅ Download complete.")
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
+# ---------------- HELPER TO PICK VAR ----------------
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    """
+    Pick first GRIB message matching shortName, optionally typeOfLevel and bottom/top.
+    """
     for g in grbs:
         if g.shortName.lower() != shortname.lower():
             continue
@@ -43,16 +50,17 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
                 continue
             if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
+        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
         return g
-    raise RuntimeError(f"{shortname} NOT FOUND")
+    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
 
 # ---------------- EXTRACT VARIABLES ----------------
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")
+cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
 grbs.seek(0)
-cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")
+cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
 grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)
+hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
 
 cape = cape_msg.values
 cin  = cin_msg.values
@@ -64,24 +72,20 @@ lats, lons = cape_msg.latlons()
 linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# ---------------- LCC PROJECTION ----------------
-# Lambert Conformal Conic matching RAP
-proj_lcc = Proj(proj='lcc', lat_1=30, lat_2=60, lat_0=38.5, lon_0=-98.5, ellps='GRS80')
-
+# ---------------- WRITE JSON ----------------
 features = []
 rows, cols = prob.shape
 for i in range(rows):
     for j in range(cols):
-        x, y = proj_lcc(lons[i, j], lats[i, j])  # meters
         features.append({
-            "x": float(x),
-            "y": float(y),
+            "lat": float(lats[i, j]),
+            "lon": float(lons[i, j]),
             "prob": float(prob[i, j])
         })
 
-# ---------------- WRITE JSON ----------------
 with open(OUTPUT_JSON, "w") as f:
     json.dump(features, f, indent=2)
 
 print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
 print("TOTAL GRID POINTS:", len(features))
+print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
