@@ -12,7 +12,7 @@ RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com.{DATE}/rap.t{HOUR}z.awip32f{FC
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
-INTERCEPT = -1.5686
+INTERCEPT = -4
 COEFFS = {"CAPE": 2.88592370e-03, "CIN": 2.38728498e-05, "HLCY": 8.85192696e-03}
 
 os.makedirs("data", exist_ok=True)
