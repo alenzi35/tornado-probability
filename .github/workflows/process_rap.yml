@@ -1,4 +1,4 @@
-name: Process RAP Tornado Data (PNG)
+name: Process RAP Tornado Data
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -19,19 +19,35 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libeccodes-dev libgeos-dev libproj-dev proj-data proj-bin
-          pip install pygrib numpy matplotlib cartopy
+          sudo apt-get install -y \
+            libeccodes-dev \
+            libproj-dev \
+            proj-data \
+            proj-bin \
+            libgeos-dev \
+            libgl1 \
+            libglib2.0-0
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            pygrib \
+            numpy \
+            matplotlib \
+            cartopy
 
       - name: Run RAP processing script
-        run: python scripts/process_rap.py
+        run: |
+          python scripts/process_rap.py
 
-      - name: Commit and push PNG
+      - name: Commit and push generated image
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add map/data/tornado_prob.png
-          git commit -m "Update tornado probability PNG" || echo "Nothing to commit"
+          git add map/rap_prob.png
+          git commit -m "Update RAP tornado probability image" || echo "Nothing to commit"
           git push
