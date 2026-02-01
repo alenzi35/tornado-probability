@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Interactive RAP Tornado Grid (LCC)</title>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAP Tornado Probability</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    body { margin:0; font-family:Arial, sans-serif; }
-    #map { height:90vh; width:100%; }
+    body { margin:0; }
+    #map { height:100vh; }
   </style>
 </head>
 <body>
@@ -15,68 +14,30 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
-<script src="https://unpkg.com/proj4leaflet"></script>
-
 <script>
-// ------------------ DEFINE LCC CRS ------------------
-var LCC = new L.Proj.CRS('EPSG:RAP_LCC',
-  '+proj=lcc +lat_1=25 +lat_2=60 +lat_0=38 +lon_0=-97 +x_0=0 +y_0=0 +units=m +no_defs',
-  {
-    resolutions: [8192, 4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1] // approximate zoom levels
-  }
-);
+  // Initialize map centered on CONUS
+  const map = L.map('map').setView([39, -98], 4);
 
-// ------------------ INIT MAP ------------------
-var map = L.map('map', {
-    crs: LCC,
-    center: [0,0], // center in LCC meters will adjust later
-    zoom: 4
-});
+  // Base map tiles
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
 
-// ------------------ TILE LAYER ------------------
-// You can overlay OSM tiles if you transform them to LCC, 
-// or use a static background for reference. Here we skip for clarity.
+  // RAP native bounds (approximate AWIP32)
+  const bounds = [
+    [21.5, -127],  // Southwest lat/lon
+    [52.5, -65]    // Northeast lat/lon
+  ];
 
-// ------------------ LOAD JSON ------------------
-fetch('map/data/tornado_prob.json')
-  .then(resp => resp.json())
-  .then(data => drawGrid(data))
-  .catch(err => console.error(err));
+  // Overlay RAP tornado probability PNG
+  L.imageOverlay(
+    'map/data/tornado_prob.png', // path relative to index.html
+    bounds,
+    { opacity: 0.7 }
+  ).addTo(map);
 
-// ------------------ DRAW GRID CELLS ------------------
-function getColor(p){
-    if(p>0.8) return '#800026';
-    if(p>0.6) return '#BD0026';
-    if(p>0.4) return '#E31A1C';
-    if(p>0.2) return '#FC4E2A';
-    return '#FFEDA0';
-}
-
-function drawGrid(jsonData){
-    var cellLayer = L.layerGroup().addTo(map);
-
-    jsonData.forEach(pt => {
-        // RAP native x,y in meters (we need to store or compute these in Python)
-        var x = pt.x; // meters in LCC
-        var y = pt.y; // meters in LCC
-
-        // Cell size 13,545 m
-        var halfSize = 13545/2;
-
-        var bounds = [
-            [y - halfSize, x - halfSize],
-            [y + halfSize, x + halfSize]
-        ];
-
-        L.rectangle(bounds, {fillColor: getColor(pt.prob), fillOpacity:0.6, color:'#000', weight:0.2})
-         .addTo(cellLayer)
-         .bindPopup(`Probability: ${pt.prob.toFixed(3)}`);
-    });
-
-    // Zoom to full extent
-    map.fitBounds(cellLayer.getBounds());
-}
+  // Optional: restrict view to CONUS
+  map.setMaxBounds(bounds);
 </script>
 
 </body>
