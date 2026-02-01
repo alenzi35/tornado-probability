@@ -2,12 +2,9 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>RAP Grid – OpenLayers (LCC)</title>
-
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@latest/ol.css">
-  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/ol@latest/dist/ol.js"></script>
-
+  <title>OL Baseline</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@9.2.4/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol@9.2.4/dist/ol.js"></script>
   <style>
     html, body { margin:0; padding:0; height:100%; }
     #map { width:100%; height:100%; }
@@ -18,97 +15,18 @@
 <div id="map"></div>
 
 <script>
-/* ================================
-   1️⃣ Register Lambert projection
-   ================================ */
-
-proj4.defs("EPSG:RAP_LCC", `
-  +proj=lcc
-  +lat_1=38.5
-  +lat_2=38.5
-  +lat_0=38.5
-  +lon_0=-97.5
-  +x_0=0
-  +y_0=0
-  +datum=WGS84
-  +units=m
-  +no_defs
-`);
-
-ol.proj.proj4.register(proj4);
-
-const RAP = ol.proj.get("EPSG:RAP_LCC");
-RAP.setExtent([-3000000, -2000000, 3000000, 2500000]);
-
-/* ================================
-   2️⃣ Map
-   ================================ */
-
-const map = new ol.Map({
-  target: 'map',
-  layers: [
-    new ol.layer.Tile({
-      source: new ol.source.OSM() // auto reprojected
-    })
-  ],
-  view: new ol.View({
-    projection: RAP,
-    center: [0, 0],
-    zoom: 4
-  })
-});
-
-/* ================================
-   3️⃣ Example RAP cells
-   ================================ */
-
-const features = [];
-
-// Example: 10x10 RAP grid centered near origin
-const cellSize = 13545; // meters
-
-for (let i = -5; i < 5; i++) {
-  for (let j = -5; j < 5; j++) {
-
-    const x = i * cellSize;
-    const y = j * cellSize;
-
-    const cell = new ol.Feature({
-      geometry: new ol.geom.Polygon([[
-        [x, y],
-        [x + cellSize, y],
-        [x + cellSize, y + cellSize],
-        [x, y + cellSize],
-        [x, y]
-      ]]),
-      prob: Math.random()
-    });
-
-    features.push(cell);
-  }
-}
-
-/* ================================
-   4️⃣ Vector layer
-   ================================ */
-
-const cellLayer = new ol.layer.Vector({
-  source: new ol.source.Vector({ features }),
-  style: feature => {
-    const p = feature.get('prob');
-    return new ol.style.Style({
-      fill: new ol.style.Fill({
-        color: `rgba(255,0,0,${p})`
-      }),
-      stroke: new ol.style.Stroke({
-        color: '#000',
-        width: 0.5
+  const map = new ol.Map({
+    target: 'map',
+    layers: [
+      new ol.layer.Tile({
+        source: new ol.source.OSM()
       })
-    });
-  }
-});
-
-map.addLayer(cellLayer);
+    ],
+    view: new ol.View({
+      center: ol.proj.fromLonLat([-98, 39]),
+      zoom: 4
+    })
+  });
 </script>
 
 </body>
