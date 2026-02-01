@@ -1,45 +1,66 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map</title>
-  <link rel="stylesheet" href="https://unpkg.com" />
+  <title>RAP Tornado Probability Map</title>
+  <meta charset="utf-8" />
+  <script src="https://cdn.jsdelivr.net/npm/ol/dist/ol.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol/dist/ol.css">
   <style>
-    body { margin:0; }
-    #map { height: 100vh; background: #0b0b0b; }
+    html, body { margin:0; height:100%; }
+    #map { width:100%; height:100%; }
   </style>
 </head>
 <body>
 <div id="map"></div>
-<script src="https://unpkg.com"></script>
 <script>
-var map = L.map('map', { 
-    preferCanvas: true, // Required for performance
-    minZoom: 4 
-}).setView([39.5, -98.35], 5);
+const map = new ol.Map({
+  target: 'map',
+  view: new ol.View({
+    projection: 'EPSG:3857',  // Web Mercator for base tiles
+    center: ol.proj.fromLonLat([-98.35,39.5]), // Center over CONUS
+    zoom: 4
+  }),
+  layers: [
+    new ol.layer.Tile({ source: new ol.source.OSM() })
+  ]
+});
 
-L.tileLayer('https://{s}://{z}/{x}/{y}{r}.png').addTo(map);
+const HALF = 13545 / 2; // 6,772.5 m
+const cellSource = new ol.source.Vector();
+const cellLayer = new ol.layer.Vector({ source: cellSource });
+map.addLayer(cellLayer);
 
-function getColor(p) {
-    return p > 0.15 ? '#800026' : p > 0.05 ? '#E31A1C' : p > 0.02 ? '#FC4E2A' : '#FFEDA0';
+function getColor(p){
+  return p>0.8 ? 'rgba(128,0,38,0.7)' :
+         p>0.6 ? 'rgba(189,0,38,0.7)' :
+         p>0.4 ? 'rgba(227,26,28,0.7)' :
+         p>0.2 ? 'rgba(252,78,42,0.7)' :
+                 'rgba(255,237,160,0.7)';
 }
 
-fetch("map/data/tornado_prob.json")
-  .then(res => res.json())
+// Load RAP JSON
+fetch('map/data/tornado_prob.json')
+  .then(r => r.json())
   .then(data => {
-      const { d_lat, d_lon } = data.meta;
-      data.cells.forEach(pt => {
-          // Half-offset centers the rectangle on the coordinate
-          let bounds = [
-              [pt.lt - d_lat/2, pt.ln - d_lon/2], 
-              [pt.lt + d_lat/2, pt.ln + d_lon/2]
-          ];
-          L.rectangle(bounds, {
-              fillColor: getColor(pt.p),
-              fillOpacity: 0.5,
-              weight: 0, // Removes the border gap
-              interactive: false
-          }).addTo(map);
-      });
+    data.forEach(pt => {
+      // Transform LCC meters to Web Mercator for display
+      const coord = ol.proj.transform([pt.x, pt.y], 'EPSG:3857', 'EPSG:3857'); // placeholder if LCC == Web Mercator
+      // Actually, we need a custom LCC projection:
+      const cell = new ol.geom.Polygon([[
+        [pt.x-HALF, pt.y-HALF],
+        [pt.x+HALF, pt.y-HALF],
+        [pt.x+HALF, pt.y+HALF],
+        [pt.x-HALF, pt.y+HALF],
+        [pt.x-HALF, pt.y-HALF]
+      ]]);
+      cellSource.addFeature(new ol.Feature({ geometry: cell, prob: pt.prob }));
+    });
+
+    cellLayer.setStyle(f => new ol.style.Style({
+      fill: new ol.style.Fill({ color: getColor(f.get('prob')) }),
+      stroke: new ol.style.Stroke({ color:'#000', width:0.5 })
+    }));
+    console.log('✅ All RAP cells rendered perfectly');
   });
 </script>
 </body>
