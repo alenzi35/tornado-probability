@@ -18,11 +18,14 @@ os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
 # ---------------- DOWNLOAD RAP ----------------
+print("Downloading RAP GRIB...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("✅ Download complete.")
 
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
+# ---------------- HELPER TO PICK VAR ----------------
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     for g in grbs:
         if g.shortName.lower() != shortname.lower():
@@ -34,23 +37,32 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
                 continue
             if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
+        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
         return g
-    raise RuntimeError(f"{shortname} NOT FOUND")
+    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
 
-# ---------------- EXTRACT VARIABLES ----------------
-cape = pick_var(grbs, "cape", typeOfLevel="surface").values
-cin  = pick_var(grbs, "cin", typeOfLevel="surface").values
-hlcy = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000).values
+# ---------------- EXTRACT VARIABLES (WORKING VERSION) ----------------
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
+grbs.seek(0)
+cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
 
-lats, lons = pick_var(grbs, "cape", typeOfLevel="surface").latlons()
+cape = cape_msg.values
+cin  = cin_msg.values
+hlcy = hlcy_msg.values
+
+lats, lons = cape_msg.latlons()
 
 # ---------------- COMPUTE PROBABILITY ----------------
 INTERCEPT = -1.5686
 COEFFS = {"CAPE": 2.88592370e-03, "CIN": 2.38728498e-05, "HLCY": 8.85192696e-03}
+
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# ---------------- PLOT CELLS ----------------
+# ---------------- PLOT CELLS IN LCC ----------------
 plt.figure(figsize=(12,8))
 ax = plt.axes(projection=ccrs.LambertConformal())
 ax.set_extent([-125, -66, 22, 50], crs=ccrs.PlateCarree())
