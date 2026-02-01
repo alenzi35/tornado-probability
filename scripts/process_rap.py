@@ -12,75 +12,58 @@ FCST = "02"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_IMG = "map/data/tornado_prob.png"
+OUTPUT_PNG = "map/rap_prob.png"
+
+# Logistic regression
+INTERCEPT = -1.5686
+COEFFS = {
+    "CAPE": 2.88592370e-03,
+    "CIN":  2.38728498e-05,
+    "HLCY": 8.85192696e-03
+}
 
 os.makedirs("data", exist_ok=True)
-os.makedirs("map/data", exist_ok=True)
+os.makedirs("map", exist_ok=True)
 
-# ---------------- DOWNLOAD RAP ----------------
-print("Downloading RAP GRIB...")
+# ---------------- DOWNLOAD ----------------
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-print("✅ Download complete.")
 
 # ---------------- OPEN GRIB ----------------
 grbs = pygrib.open(GRIB_PATH)
 
-# ---------------- HELPER TO PICK VAR ----------------
-def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
-    for g in grbs:
-        if g.shortName.lower() != shortname.lower():
-            continue
-        if typeOfLevel and g.typeOfLevel != typeOfLevel:
-            continue
-        if bottom is not None and top is not None:
-            if not hasattr(g, "bottomLevel") or not hasattr(g, "topLevel"):
-                continue
-            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
-                continue
-        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
-        return g
-    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
+cape = grbs.select(shortName="cape", typeOfLevel="surface")[0].values
+cin  = grbs.select(shortName="cin",  typeOfLevel="surface")[0].values
+hlcy = grbs.select(shortName="hlcy", typeOfLevel="heightAboveGroundLayer")[0].values
 
-# ---------------- EXTRACT VARIABLES (WORKING VERSION) ----------------
-grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
-grbs.seek(0)
-cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
-grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
+lats, lons = grbs.select(shortName="cape")[0].latlons()
 
-cape = cape_msg.values
-cin  = cin_msg.values
-hlcy = hlcy_msg.values
-
-lats, lons = cape_msg.latlons()
-
-# ---------------- COMPUTE PROBABILITY ----------------
-INTERCEPT = -1.5686
-COEFFS = {"CAPE": 2.88592370e-03, "CIN": 2.38728498e-05, "HLCY": 8.85192696e-03}
-
+# ---------------- PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# ---------------- PLOT CELLS IN LCC ----------------
-plt.figure(figsize=(12,8))
-ax = plt.axes(projection=ccrs.LambertConformal())
-ax.set_extent([-125, -66, 22, 50], crs=ccrs.PlateCarree())
+# ---------------- LCC PROJECTION ----------------
+rap_lcc = ccrs.LambertConformal(
+    central_longitude=-97.5,
+    central_latitude=38.5,
+    standard_parallels=(38.5, 38.5)
+)
 
-# Approx 13.545 km in degrees (~0.122 deg latitude)
-cell_size_lat = 0.122
-cell_size_lon = 0.122 / np.cos(np.radians(lats.mean()))
+fig = plt.figure(figsize=(14, 9))
+ax = plt.axes(projection=rap_lcc)
 
-for i in range(prob.shape[0]):
-    for j in range(prob.shape[1]):
-        rect = plt.Rectangle(
-            (lons[i,j]-cell_size_lon/2, lats[i,j]-cell_size_lat/2),
-            cell_size_lon, cell_size_lat,
-            color=plt.cm.hot(prob[i,j]), linewidth=0, transform=ccrs.PlateCarree()
-        )
-        ax.add_patch(rect)
+ax.set_extent([-125, -66, 24, 50], crs=ccrs.PlateCarree())
 
-plt.axis('off')
-plt.savefig(OUTPUT_IMG, bbox_inches='tight', dpi=150)
+mesh = ax.pcolormesh(
+    lons, lats, prob,
+    transform=ccrs.PlateCarree(),
+    shading="nearest",   # IMPORTANT: preserves touching cells
+    cmap="hot"
+)
+
+plt.colorbar(mesh, orientation="vertical", pad=0.02, label="Tornado Probability")
+plt.title("RAP Tornado Probability (Native Grid)")
+
+plt.savefig(OUTPUT_PNG, dpi=150, bbox_inches="tight")
 plt.close()
-print("✅ Tornado probability image saved:", OUTPUT_IMG)
+
+print("✅ Saved:", OUTPUT_PNG)
