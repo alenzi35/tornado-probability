@@ -2,89 +2,92 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Interactive RAP Tornado Map</title>
-  <script src="https://unpkg.com/deck.gl@8.9.0/dist.min.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <title>RAP Native Grid Viewer</title>
   <style>
-    body { margin:0; }
-    #map { width:100%; height:100vh; }
-    .tooltip {
-      position: absolute;
-      z-index: 10;
-      background: white;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      pointer-events: none;
-      box-shadow: 0 0 6px rgba(0,0,0,0.3);
+    html, body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas {
+      display: block;
     }
   </style>
 </head>
 <body>
-
-<div id="map"></div>
-<div id="tooltip" class="tooltip" style="display:none;"></div>
+<canvas id="map"></canvas>
 
 <script>
-  // Initialize Leaflet map
-  const map = L.map('map').setView([38, -97], 4);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
 
-  // Deck.gl overlay
-  const deckOverlay = new deck.DeckGL({
-    canvas: 'deck-canvas',
-    width: '100%',
-    height: '100%',
-    initialViewState: {
-      longitude: -97,
-      latitude: 38,
-      zoom: 4,
-      pitch: 0,
-      bearing: 0
-    },
-    controller: true,
-    layers: []
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let scale = 0.00015;      // meters → pixels
+let offsetX = canvas.width / 2;
+let offsetY = canvas.height / 2;
+
+let dragging = false;
+let lastX, lastY;
+
+function worldToScreen(x, y) {
+  return [
+    x * scale + offsetX,
+    -y * scale + offsetY
+  ];
+}
+
+function drawCell(cell, size) {
+  const [sx, sy] = worldToScreen(cell.x, cell.y);
+  const px = size * scale;
+
+  ctx.fillStyle = `rgba(255,0,0,${cell.value})`;
+  ctx.fillRect(
+    sx - px / 2,
+    sy - px / 2,
+    px,
+    px
+  );
+}
+
+fetch("map/data/rap_lcc.json")
+  .then(r => r.json())
+  .then(data => {
+    const size = data.dx;
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const cell of data.cells) {
+        drawCell(cell, size);
+      }
+      requestAnimationFrame(render);
+    }
+    render();
   });
 
-  // Load LCC JSON
-  fetch('map/data/tornado_prob_lcc.json')
-    .then(resp => resp.json())
-    .then(data => {
-      const layer = new deck.GridCellLayer({
-        id: 'tornado-grid',
-        data: data,
-        getPosition: d => [d.x, d.y, 0],
-        cellSize: 13545,  // 13.545 km
-        elevationScale: 0,
-        extruded: false,
-        pickable: true,
-        getColor: d => {
-          const p = d.prob;
-          if(p>0.8) return [128,0,38];
-          if(p>0.6) return [189,0,38];
-          if(p>0.4) return [227,26,28];
-          if(p>0.2) return [252,78,42];
-          return [255,237,160];
-        },
-        onHover: info => {
-          const tooltip = document.getElementById('tooltip');
-          if(info.object){
-            tooltip.style.display = 'block';
-            tooltip.style.left = info.x + 'px';
-            tooltip.style.top = info.y + 'px';
-            tooltip.innerHTML = `Probability: ${info.object.prob.toFixed(3)}`;
-          } else {
-            tooltip.style.display = 'none';
-          }
-        }
-      });
+// --- Interaction ---
+canvas.addEventListener("mousedown", e => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
 
-      deckOverlay.setProps({ layers: [layer] });
-    });
+canvas.addEventListener("mouseup", () => dragging = false);
+canvas.addEventListener("mouseleave", () => dragging = false);
+
+canvas.addEventListener("mousemove", e => {
+  if (!dragging) return;
+  offsetX += e.clientX - lastX;
+  offsetY += e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+canvas.addEventListener("wheel", e => {
+  const zoom = e.deltaY < 0 ? 1.1 : 0.9;
+  scale *= zoom;
+});
 </script>
-
 </body>
 </html>
