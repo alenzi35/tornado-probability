@@ -1,72 +1,107 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>RAP Grid – Guaranteed Render</title>
+<meta charset="UTF-8">
+<title>RAP Grid Viewer</title>
 <style>
-  html, body { margin:0; background:black; overflow:hidden; }
-  canvas { display:block; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: black;
+  }
+  canvas {
+    display: block;
+  }
 </style>
 </head>
+
 <body>
-<canvas id="c"></canvas>
+<canvas id="map"></canvas>
 
 <script>
-const canvas = document.getElementById("c");
+/* ================== SETUP ================== */
+const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
 
-// radians → degrees
-const RAD2DEG = 180 / Math.PI;
+/* ================== CAMERA ================== */
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
+
+canvas.addEventListener("mousedown", e => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+window.addEventListener("mouseup", () => dragging = false);
+
+window.addEventListener("mousemove", e => {
+  if (!dragging) return;
+  offsetX += e.clientX - lastX;
+  offsetY += e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  draw();
+});
+
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const zoom = e.deltaY < 0 ? 1.1 : 0.9;
+  scale *= zoom;
+  draw();
+});
+
+/* ================== LOAD DATA ================== */
+let cells = [];
 
 fetch("map/data/tornado_prob.json")
-  .then(r => r.json())
-  .then(data => {
-
-    // convert + find bounds
-    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
-
-    for (const c of data) {
-      c.lat_min *= RAD2DEG;
-      c.lat_max *= RAD2DEG;
-      c.lon_min *= RAD2DEG;
-      c.lon_max *= RAD2DEG;
-
-      minX = Math.min(minX, c.lon_min);
-      maxX = Math.max(maxX, c.lon_max);
-      minY = Math.min(minY, c.lat_min);
-      maxY = Math.max(maxY, c.lat_max);
-    }
-
-    const scaleX = canvas.width  / (maxX - minX);
-    const scaleY = canvas.height / (maxY - minY);
-    const scale = Math.min(scaleX, scaleY);
-
-    function proj(lat, lon) {
-      return [
-        (lon - minX) * scale,
-        canvas.height - (lat - minY) * scale
-      ];
-    }
-
-    for (const c of data) {
-      const [x1,y1] = proj(c.lat_min, c.lon_min);
-      const [x2,y2] = proj(c.lat_max, c.lon_max);
-
-      ctx.fillStyle = `rgba(255,0,0,${c.prob})`;
-      ctx.fillRect(
-        Math.min(x1,x2),
-        Math.min(y1,y2),
-        Math.abs(x2-x1),
-        Math.abs(y2-y1)
-      );
-    }
-
-    console.log("✅ Rendered", data.length, "cells");
+  .then(r => {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
   })
-  .catch(err => console.error(err));
+  .then(data => {
+    console.log("Loaded cells:", data.length);
+    cells = data;
+    draw();
+  })
+  .catch(err => {
+    alert("FAILED TO LOAD JSON: " + err);
+  });
+
+/* ================== DRAW ================== */
+function draw() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+
+  for (const c of cells) {
+    const x = c.lon_min * 10;
+    const y = -c.lat_max * 10;
+    const w = (c.lon_max - c.lon_min) * 10;
+    const h = (c.lat_max - c.lat_min) * 10;
+
+    const p = Math.min(1, Math.max(0, c.prob));
+    ctx.fillStyle = `rgb(${Math.floor(255*p)},0,${Math.floor(255*(1-p))})`;
+    ctx.fillRect(x, y, w, h);
+  }
+}
+
+/* ================== FAILSAFE ================== */
+ctx.fillStyle = "white";
+ctx.font = "20px sans-serif";
+ctx.fillText("Waiting for RAP grid…", 20, 30);
 </script>
 </body>
 </html>
