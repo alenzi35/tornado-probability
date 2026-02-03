@@ -1,93 +1,73 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>RAP Native Grid Viewer</title>
-  <style>
-    html, body {
-      margin: 0;
-      overflow: hidden;
-      background: #000;
-    }
-    canvas {
-      display: block;
-    }
-  </style>
+<meta charset="utf-8">
+<title>RAP Grid Debug Viewer</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: black; }
+  canvas { display: block; }
+</style>
 </head>
 <body>
-<canvas id="map"></canvas>
+<canvas id="c"></canvas>
 
 <script>
-const canvas = document.getElementById("map");
+const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
-let scale = 0.00015;      // meters → pixels
+let scale = 800;     // zoom
 let offsetX = canvas.width / 2;
 let offsetY = canvas.height / 2;
 
-let dragging = false;
-let lastX, lastY;
-
-function worldToScreen(x, y) {
+function project(lat, lon) {
+  // simple equirectangular (DEBUG ONLY)
   return [
-    x * scale + offsetX,
-    -y * scale + offsetY
+    lon * scale + offsetX,
+    -lat * scale + offsetY
   ];
 }
 
-function drawCell(cell, size) {
-  const [sx, sy] = worldToScreen(cell.x, cell.y);
-  const px = size * scale;
-
-  ctx.fillStyle = `rgba(255,0,0,${cell.value})`;
-  ctx.fillRect(
-    sx - px / 2,
-    sy - px / 2,
-    px,
-    px
-  );
-}
-
-fetch("map/data/rap_lcc.json")
+fetch("map/data/tornado_prob.json")
   .then(r => r.json())
   .then(data => {
-    const size = data.dx;
+    function draw() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    function render() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      for (const cell of data.cells) {
-        drawCell(cell, size);
+      for (const c of data) {
+        const [x1,y1] = project(c.lat_min, c.lon_min);
+        const [x2,y2] = project(c.lat_max, c.lon_max);
+
+        ctx.fillStyle = `rgba(255,0,0,${c.prob})`;
+        ctx.fillRect(
+          Math.min(x1,x2),
+          Math.min(y1,y2),
+          Math.abs(x2-x1),
+          Math.abs(y2-y1)
+        );
       }
-      requestAnimationFrame(render);
+      requestAnimationFrame(draw);
     }
-    render();
+    draw();
   });
 
-// --- Interaction ---
-canvas.addEventListener("mousedown", e => {
-  dragging = true;
-  lastX = e.clientX;
-  lastY = e.clientY;
-});
+// pan
+let drag=false, lx, ly;
+canvas.onmousedown=e=>{drag=true;lx=e.x;ly=e.y};
+canvas.onmouseup=()=>drag=false;
+canvas.onmousemove=e=>{
+  if(!drag)return;
+  offsetX+=e.x-lx;
+  offsetY+=e.y-ly;
+  lx=e.x; ly=e.y;
+};
 
-canvas.addEventListener("mouseup", () => dragging = false);
-canvas.addEventListener("mouseleave", () => dragging = false);
-
-canvas.addEventListener("mousemove", e => {
-  if (!dragging) return;
-  offsetX += e.clientX - lastX;
-  offsetY += e.clientY - lastY;
-  lastX = e.clientX;
-  lastY = e.clientY;
-});
-
-canvas.addEventListener("wheel", e => {
-  const zoom = e.deltaY < 0 ? 1.1 : 0.9;
-  scale *= zoom;
-});
+// zoom
+canvas.onwheel=e=>{
+  scale *= e.deltaY<0 ? 1.1 : 0.9;
+};
 </script>
 </body>
 </html>
