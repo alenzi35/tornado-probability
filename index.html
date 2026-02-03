@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>RAP Grid Viewer</title>
+<title>RAP Native Grid Viewer</title>
 <style>
   html, body {
     margin: 0;
@@ -10,17 +10,14 @@
     overflow: hidden;
     background: black;
   }
-  canvas {
-    display: block;
-  }
+  canvas { display: block; }
 </style>
 </head>
-
 <body>
+
 <canvas id="map"></canvas>
 
 <script>
-/* ================== SETUP ================== */
 const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
 
@@ -31,7 +28,11 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-/* ================== CAMERA ================== */
+/* ================= DATA ================= */
+let cells = [];
+let bounds = null;
+
+/* ================= CAMERA ================= */
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
@@ -44,9 +45,7 @@ canvas.addEventListener("mousedown", e => {
   lastX = e.clientX;
   lastY = e.clientY;
 });
-
 window.addEventListener("mouseup", () => dragging = false);
-
 window.addEventListener("mousemove", e => {
   if (!dragging) return;
   offsetX += e.clientX - lastX;
@@ -55,53 +54,74 @@ window.addEventListener("mousemove", e => {
   lastY = e.clientY;
   draw();
 });
-
 canvas.addEventListener("wheel", e => {
   e.preventDefault();
-  const zoom = e.deltaY < 0 ? 1.1 : 0.9;
-  scale *= zoom;
+  scale *= e.deltaY < 0 ? 1.1 : 0.9;
   draw();
 });
 
-/* ================== LOAD DATA ================== */
-let cells = [];
-
+/* ================= LOAD ================= */
 fetch("map/data/tornado_prob.json")
-  .then(r => {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  })
+  .then(r => r.json())
   .then(data => {
-    console.log("Loaded cells:", data.length);
     cells = data;
+    computeBounds();
+    centerView();
     draw();
   })
-  .catch(err => {
-    alert("FAILED TO LOAD JSON: " + err);
-  });
+  .catch(e => alert("JSON load failed: " + e));
 
-/* ================== DRAW ================== */
+/* ================= BOUNDS ================= */
+function computeBounds() {
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+
+  for (const c of cells) {
+    minX = Math.min(minX, c.lon_min);
+    maxX = Math.max(maxX, c.lon_max);
+    minY = Math.min(minY, c.lat_min);
+    maxY = Math.max(maxY, c.lat_max);
+  }
+
+  bounds = { minX, maxX, minY, maxY };
+}
+
+/* ================= CENTER ================= */
+function centerView() {
+  const gridWidth = bounds.maxX - bounds.minX;
+  const gridHeight = bounds.maxY - bounds.minY;
+
+  const sx = canvas.width / gridWidth;
+  const sy = canvas.height / gridHeight;
+  scale = Math.min(sx, sy) * 0.9;
+
+  offsetX = canvas.width / 2 - (bounds.minX + gridWidth / 2) * scale;
+  offsetY = canvas.height / 2 + (bounds.minY + gridHeight / 2) * scale;
+}
+
+/* ================= DRAW ================= */
 function draw() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+
+  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
 
   for (const c of cells) {
-    const x = c.lon_min * 10;
-    const y = -c.lat_max * 10;
-    const w = (c.lon_max - c.lon_min) * 10;
-    const h = (c.lat_max - c.lat_min) * 10;
-
-    const p = Math.min(1, Math.max(0, c.prob));
-    ctx.fillStyle = `rgb(${Math.floor(255*p)},0,${Math.floor(255*(1-p))})`;
-    ctx.fillRect(x, y, w, h);
+    const p = Math.max(0, Math.min(1, c.prob));
+    ctx.fillStyle = `rgb(${255*p|0},0,${255*(1-p)|0})`;
+    ctx.fillRect(
+      c.lon_min,
+      c.lat_min,
+      c.lon_max - c.lon_min,
+      c.lat_max - c.lat_min
+    );
   }
 }
 
-/* ================== FAILSAFE ================== */
+/* ================= FALLBACK ================= */
 ctx.fillStyle = "white";
 ctx.font = "20px sans-serif";
-ctx.fillText("Waiting for RAP grid…", 20, 30);
+ctx.fillText("Loading RAP grid…", 20, 30);
 </script>
 </body>
 </html>
