@@ -2,10 +2,10 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>RAP Grid Debug Viewer</title>
+<title>RAP Grid – Guaranteed Render</title>
 <style>
-  html, body { margin: 0; overflow: hidden; background: black; }
-  canvas { display: block; }
+  html, body { margin:0; background:black; overflow:hidden; }
+  canvas { display:block; }
 </style>
 </head>
 <body>
@@ -18,56 +18,55 @@ const ctx = canvas.getContext("2d");
 canvas.width = innerWidth;
 canvas.height = innerHeight;
 
-let scale = 800;     // zoom
-let offsetX = canvas.width / 2;
-let offsetY = canvas.height / 2;
-
-function project(lat, lon) {
-  // simple equirectangular (DEBUG ONLY)
-  return [
-    lon * scale + offsetX,
-    -lat * scale + offsetY
-  ];
-}
+// radians → degrees
+const RAD2DEG = 180 / Math.PI;
 
 fetch("map/data/tornado_prob.json")
   .then(r => r.json())
   .then(data => {
-    function draw() {
-      ctx.clearRect(0,0,canvas.width,canvas.height);
 
-      for (const c of data) {
-        const [x1,y1] = project(c.lat_min, c.lon_min);
-        const [x2,y2] = project(c.lat_max, c.lon_max);
+    // convert + find bounds
+    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
 
-        ctx.fillStyle = `rgba(255,0,0,${c.prob})`;
-        ctx.fillRect(
-          Math.min(x1,x2),
-          Math.min(y1,y2),
-          Math.abs(x2-x1),
-          Math.abs(y2-y1)
-        );
-      }
-      requestAnimationFrame(draw);
+    for (const c of data) {
+      c.lat_min *= RAD2DEG;
+      c.lat_max *= RAD2DEG;
+      c.lon_min *= RAD2DEG;
+      c.lon_max *= RAD2DEG;
+
+      minX = Math.min(minX, c.lon_min);
+      maxX = Math.max(maxX, c.lon_max);
+      minY = Math.min(minY, c.lat_min);
+      maxY = Math.max(maxY, c.lat_max);
     }
-    draw();
-  });
 
-// pan
-let drag=false, lx, ly;
-canvas.onmousedown=e=>{drag=true;lx=e.x;ly=e.y};
-canvas.onmouseup=()=>drag=false;
-canvas.onmousemove=e=>{
-  if(!drag)return;
-  offsetX+=e.x-lx;
-  offsetY+=e.y-ly;
-  lx=e.x; ly=e.y;
-};
+    const scaleX = canvas.width  / (maxX - minX);
+    const scaleY = canvas.height / (maxY - minY);
+    const scale = Math.min(scaleX, scaleY);
 
-// zoom
-canvas.onwheel=e=>{
-  scale *= e.deltaY<0 ? 1.1 : 0.9;
-};
+    function proj(lat, lon) {
+      return [
+        (lon - minX) * scale,
+        canvas.height - (lat - minY) * scale
+      ];
+    }
+
+    for (const c of data) {
+      const [x1,y1] = proj(c.lat_min, c.lon_min);
+      const [x2,y2] = proj(c.lat_max, c.lon_max);
+
+      ctx.fillStyle = `rgba(255,0,0,${c.prob})`;
+      ctx.fillRect(
+        Math.min(x1,x2),
+        Math.min(y1,y2),
+        Math.abs(x2-x1),
+        Math.abs(y2-y1)
+      );
+    }
+
+    console.log("✅ Rendered", data.length, "cells");
+  })
+  .catch(err => console.error(err));
 </script>
 </body>
 </html>
