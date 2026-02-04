@@ -2,59 +2,58 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Interactive RAP Tornado Map (LCC)</title>
+<title>Interactive RAP Tornado Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://openseadragon.github.io/openseadragon/openseadragon.min.js"></script>
 <style>
-  body{margin:0;}
-  #map{width:100vw;height:100vh;}
+  html, body { margin:0; height:100%; }
+  #openseadragon { width:100%; height:100%; background:black; }
+  .popup { position:absolute; background:white; padding:4px; border:1px solid #000; pointer-events:none; }
 </style>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
-<script src="https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js"></script>
 </head>
 <body>
-<div id="map"></div>
+
+<div id="openseadragon"></div>
+<div id="popup" class="popup" style="display:none;"></div>
+
 <script>
-
-// --- Define LCC CRS (matches RAP native grid) ---
-const crs = new L.Proj.CRS('EPSG:9999',
-    '+proj=lcc +lat_1=33 +lat_2=45 +lat_0=40 +lon_0=-97 +x_0=0 +y_0=0 +ellps=GRS80',
-    {
-        resolutions: [4000,2000,1000,500,250,125],
-        origin: [0,0]
+// --- Initialize OpenSeadragon ---
+const viewer = OpenSeadragon({
+    id: "openseadragon",
+    prefixUrl: "https://openseadragon.github.io/openseadragon/images/",
+    tileSources: {
+        type: "image",
+        url: "map/data/tornado_prob_lcc.png",
+        buildPyramid: false
     }
-);
-
-// --- Initialize map ---
-const map = L.map('map', {crs: crs, center:[0,0], zoom:2});
-
-// --- Replace these with values from Python output ---
-const x_min = X_MIN_FROM_PYTHON; // e.g.,  -1420000
-const x_max = X_MAX_FROM_PYTHON; // e.g.,  1730000
-const y_min = Y_MIN_FROM_PYTHON; // e.g.,  -200000
-const y_max = Y_MAX_FROM_PYTHON; // e.g.,  2200000
-
-// --- Add PNG overlay ---
-const bounds = [[y_min, x_min], [y_max, x_max]];
-L.imageOverlay('map/data/tornado_prob_lcc.png', bounds).addTo(map);
-map.fitBounds(bounds);
-
-// --- Optional: interactive transparent rectangles from JSON ---
-fetch('map/data/tornado_prob_lcc.json')
-.then(r => r.json())
-.then(data => {
-    const cell_size = 13545; // meters
-    data.forEach(cell => {
-        L.rectangle(
-          [[cell.y, cell.x],[cell.y+cell_size, cell.x+cell_size]],
-          {color:'#000', weight:0.1, fillOpacity:0, interactive:true}
-        )
-        .addTo(map)
-        .bindPopup(`Probability: ${cell.prob.toFixed(3)}`);
-    });
 });
 
+// --- Optional: overlay popups using JSON ---
+fetch("map/data/tornado_prob_lcc.json").then(r => r.json()).then(data => {
+    const popup = document.getElementById("popup");
+
+    viewer.addHandler("canvas-click", event => {
+        const webPoint = event.position; // screen coordinates
+        const viewportPoint = viewer.viewport.pointFromPixel(webPoint);
+        const imagePoint = viewer.viewport.viewportToImageCoordinates(viewportPoint);
+
+        // Find the closest cell
+        const cell = data.find(c => {
+            return imagePoint.x >= c.x && imagePoint.x <= c.x + 13545 &&
+                   imagePoint.y >= c.y && imagePoint.y <= c.y + 13545;
+        });
+
+        if(cell){
+            popup.style.display = "block";
+            popup.style.left = (webPoint.x + 10) + "px";
+            popup.style.top  = (webPoint.y + 10) + "px";
+            popup.innerHTML = `Tornado probability: ${cell.prob.toFixed(3)}`;
+        } else {
+            popup.style.display = "none";
+        }
+    });
+});
 </script>
+
 </body>
 </html>
