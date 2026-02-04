@@ -23,13 +23,13 @@ const viewer = OpenSeadragon({
     prefixUrl: "https://openseadragon.github.io/openseadragon/images/",
     tileSources: {
         type: "image",
-        url: "map/data/tornado_prob_lcc.png",
+        url: "map/data/tornado_prob.png",
         buildPyramid: false
     }
 });
 
-// --- Optional: overlay popups using JSON ---
-fetch("map/data/tornado_prob_lcc.json").then(r => r.json()).then(data => {
+// --- Load JSON overlay ---
+fetch("map/data/tornado_prob_pixels.json").then(r => r.json()).then(data => {
     const popup = document.getElementById("popup");
 
     viewer.addHandler("canvas-click", event => {
@@ -37,10 +37,10 @@ fetch("map/data/tornado_prob_lcc.json").then(r => r.json()).then(data => {
         const viewportPoint = viewer.viewport.pointFromPixel(webPoint);
         const imagePoint = viewer.viewport.viewportToImageCoordinates(viewportPoint);
 
-        // Find the closest cell
+        // Find cell at clicked pixel
         const cell = data.find(c => {
-            return imagePoint.x >= c.x && imagePoint.x <= c.x + 13545 &&
-                   imagePoint.y >= c.y && imagePoint.y <= c.y + 13545;
+            return imagePoint.x >= c.col && imagePoint.x < c.col + 1 &&
+                   imagePoint.y >= c.row && imagePoint.y < c.row + 1;
         });
 
         if(cell){
