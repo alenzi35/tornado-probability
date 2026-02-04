@@ -5,7 +5,10 @@
 <title>Interactive RAP Tornado Map (LCC)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<style>body{margin:0;}#map{width:100vw;height:100vh;}</style>
+<style>
+  body{margin:0;}
+  #map{width:100vw;height:100vh;}
+</style>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
 <script src="https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js"></script>
@@ -13,30 +16,45 @@
 <body>
 <div id="map"></div>
 <script>
-const crs = new L.Proj.CRS('EPSG:3338',
+
+// --- Define LCC CRS (matches RAP native grid) ---
+const crs = new L.Proj.CRS('EPSG:9999',
     '+proj=lcc +lat_1=33 +lat_2=45 +lat_0=40 +lon_0=-97 +x_0=0 +y_0=0 +ellps=GRS80',
     {
-        resolutions: [1,0.5,0.25,0.125], // zoom levels
+        resolutions: [4000,2000,1000,500,250,125],
         origin: [0,0]
     }
 );
 
+// --- Initialize map ---
 const map = L.map('map', {crs: crs, center:[0,0], zoom:2});
 
-const bounds = [[0,0],[1000000,1000000]]; // adjust to x_min,y_min / x_max,y_max
-L.imageOverlay('map/data/tornado_prob_lcc.png', bounds).addTo(map);
+// --- Replace these with values from Python output ---
+const x_min = X_MIN_FROM_PYTHON; // e.g.,  -1420000
+const x_max = X_MAX_FROM_PYTHON; // e.g.,  1730000
+const y_min = Y_MIN_FROM_PYTHON; // e.g.,  -200000
+const y_max = Y_MAX_FROM_PYTHON; // e.g.,  2200000
 
-// Optional: interactive rectangles using JSON
+// --- Add PNG overlay ---
+const bounds = [[y_min, x_min], [y_max, x_max]];
+L.imageOverlay('map/data/tornado_prob_lcc.png', bounds).addTo(map);
+map.fitBounds(bounds);
+
+// --- Optional: interactive transparent rectangles from JSON ---
 fetch('map/data/tornado_prob_lcc.json')
-.then(r=>r.json())
-.then(data=>{
-    data.forEach(cell=>{
-        const size=13545; // 13.545 km per cell
-        L.rectangle([[cell.y,cell.x],[cell.y+size,cell.x+size]],{
-            color:'#000', weight:0.1, fillOpacity:0, interactive:true
-        }).addTo(map).bindPopup(`Prob: ${cell.prob.toFixed(3)}`);
+.then(r => r.json())
+.then(data => {
+    const cell_size = 13545; // meters
+    data.forEach(cell => {
+        L.rectangle(
+          [[cell.y, cell.x],[cell.y+cell_size, cell.x+cell_size]],
+          {color:'#000', weight:0.1, fillOpacity:0, interactive:true}
+        )
+        .addTo(map)
+        .bindPopup(`Probability: ${cell.prob.toFixed(3)}`);
     });
 });
+
 </script>
 </body>
 </html>
