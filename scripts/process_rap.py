@@ -29,11 +29,12 @@ COEFFS = {
 # ----------------------------------------
 
 
+# ---------------- Folders ----------------
 os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
 
-# ---------------- Download RAP ----------------
+# ---------------- Download ----------------
 print("Downloading RAP...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("Download complete")
@@ -44,7 +45,9 @@ grbs = pygrib.open(GRIB_PATH)
 
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+
     for g in grbs:
+
         if g.shortName.lower() != shortname.lower():
             continue
 
@@ -62,18 +65,32 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     raise RuntimeError(f"{shortname} NOT FOUND")
 
 
-# ---------------- Extract vars ----------------
+
+# ---------------- Load fields ----------------
 grbs.seek(0)
-cape = pick_var(grbs,"cape","surface").values
+cape_msg = pick_var(grbs,"cape","surface")
+cape = cape_msg.values
 
 grbs.seek(0)
-cin  = pick_var(grbs,"cin","surface").values
+cin = pick_var(grbs,"cin","surface").values
 
 grbs.seek(0)
 hlcy = pick_var(
     grbs,"hlcy",
     "heightAboveGroundLayer",0,1000
 ).values
+
+
+# Lat/lon grid
+lats, lons = cape_msg.latlons()
+
+lat_min = float(np.min(lats))
+lat_max = float(np.max(lats))
+lon_min = float(np.min(lons))
+lon_max = float(np.max(lons))
+
+print("Extent:")
+print(lat_min, lat_max, lon_min, lon_max)
 
 
 rows, cols = cape.shape
@@ -90,7 +107,9 @@ linear = (
 prob = 1/(1+np.exp(-linear))
 
 
-# ---------------- Color raster ----------------
+# ---------------- Build raster ----------------
+print("Creating raster...")
+
 img = Image.new("RGB",(cols,rows))
 
 for i in range(rows):
@@ -98,12 +117,13 @@ for i in range(rows):
 
         p = np.clip(prob[i,j],0,1)
 
-        if p<0.3:
+        # Smooth gradient
+        if p < 0.3:
             r = int(255*(p/0.3))
             g = int(255*(p/0.3))
             b = 255
 
-        elif p<0.6:
+        elif p < 0.6:
             r = 255
             g = int(255*(1-(p-0.3)/0.3))
             b = 0
@@ -119,6 +139,7 @@ for i in range(rows):
 img.save(OUTPUT_PNG)
 
 
+
 # ---------------- Overlay geography ----------------
 print("Adding borders...")
 
@@ -131,15 +152,34 @@ rap_proj = ccrs.LambertConformal(
 fig = plt.figure(figsize=(cols/100,rows/100),dpi=100)
 ax = plt.axes(projection=rap_proj)
 
+
+# Set geographic extent
+ax.set_extent(
+    [lon_min, lon_max, lat_min, lat_max],
+    crs=ccrs.PlateCarree()
+)
+
+
 img2 = plt.imread(OUTPUT_PNG)
 
-ax.imshow(img2,origin="upper",transform=rap_proj)
 
-ax.add_feature(cfeature.STATES,linewidth=0.5)
-ax.add_feature(cfeature.COASTLINE,linewidth=0.5)
-ax.add_feature(cfeature.BORDERS,linewidth=0.5)
+# Place raster in lat/lon space
+ax.imshow(
+    img2,
+    origin="upper",
+    extent=[lon_min, lon_max, lat_min, lat_max],
+    transform=ccrs.PlateCarree()
+)
+
+
+# Borders
+ax.add_feature(cfeature.STATES, linewidth=0.7, edgecolor="black")
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor="black")
+ax.add_feature(cfeature.BORDERS, linewidth=0.6, edgecolor="black")
+
 
 ax.axis("off")
+
 
 plt.savefig(
     OUTPUT_PNG,
@@ -151,11 +191,15 @@ plt.savefig(
 plt.close()
 
 
+
 # ---------------- Pixel JSON ----------------
+print("Writing JSON...")
+
 features=[]
 
 for i in range(rows):
     for j in range(cols):
+
         features.append({
             "row":i,
             "col":j,
