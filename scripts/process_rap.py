@@ -62,38 +62,43 @@ cape = cape_msg.values
 cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
-lats, lons = cape_msg.latlons()  # in degrees
+lats, lons = cape_msg.latlons()  # degrees
 rows, cols = cape.shape
 
-# ---------------- Compute probability ----------------
+# ---------------- Compute tornado probability ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1/(1+np.exp(-linear))
 
-# ---------------- LCC projection (native RAP grid) ----------------
+# ---------------- Lambert Conformal Conic projection ----------------
 lcc = Proj(proj='lcc', lat_1=33, lat_2=45, lat_0=40, lon_0=-97, x_0=0, y_0=0, ellps='GRS80')
-x, y = lcc(lons, lats)  # meters
+x, y = lcc(lons, lats)  # in meters
 
-# Normalize coordinates for image
+# ---------------- Create PNG raster ----------------
 x_min, x_max = x.min(), x.max()
 y_min, y_max = y.min(), y.max()
-width, height = cols, rows  # one pixel per RAP cell
+print("Raster bounds (meters):")
+print("x_min, x_max:", x_min, x_max)
+print("y_min, y_max:", y_min, y_max)
 
-# Create raster image (RGB, probability as red channel)
+width, height = cols, rows  # one pixel per RAP cell
 img = Image.new('RGB', (width, height))
+
+# Map probabilities to colors
 for i in range(rows):
     for j in range(cols):
         p = prob[i,j]
-        # Map probability to color
         if p>0.8: color=(128,0,0)
         elif p>0.6: color=(189,0,38)
         elif p>0.4: color=(227,26,28)
         elif p>0.2: color=(252,78,42)
         else: color=(255,237,160)
         img.putpixel((j,i), color)
+
 img.save(OUTPUT_PNG)
 print("✅ PNG raster saved:", OUTPUT_PNG)
 
-# ---------------- JSON overlay (optional interactivity) ----------------
+# ---------------- JSON overlay for interactivity ----------------
+cell_size_m = 13545  # 13.545 km
 features = []
 for i in range(rows):
     for j in range(cols):
@@ -102,6 +107,8 @@ for i in range(rows):
             "y": float(y[i,j]),
             "prob": float(prob[i,j])
         })
+
 with open(OUTPUT_JSON, "w") as f:
     json.dump(features, f, indent=2)
 print("✅ JSON overlay saved:", OUTPUT_JSON)
+print("TOTAL CELLS:", len(features))
