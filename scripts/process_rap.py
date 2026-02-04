@@ -3,7 +3,6 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
-from pyproj import Proj, Transformer
 
 # ---------------- CONFIG ----------------
 DATE = "20260128"
@@ -60,24 +59,29 @@ cape = cape_msg.values
 cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
-lats, lons = cape_msg.latlons()  # This gives lat/lon from GRIB (already in degrees)
+lats, lons = cape_msg.latlons()
 
 # ---------------- Compute probability ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1/(1+np.exp(-linear))
 
-# ---------------- Write Leaflet-ready JSON ----------------
+# ---------------- Generate Leaflet-ready rectangles ----------------
 features = []
 rows, cols = prob.shape
 for i in range(rows):
     for j in range(cols):
-        # Each cell covers roughly 13.545 km; we approximate by bounding lat/lon
-        # You could fine-tune exact edges with lats/cols if needed
+        lat = lats[i,j]
+        lon = lons[i,j]
+
+        # Convert 13.545 km to degrees
+        delta_lat = 13.545 / 111.0
+        delta_lon = 13.545 / (111.0 * np.cos(np.radians(lat)))
+
         features.append({
-            "lat_min": float(lats[i,j]),
-            "lat_max": float(lats[i,j]),  # fine-tune if you have true cell size
-            "lon_min": float(lons[i,j]),
-            "lon_max": float(lons[i,j]),  # fine-tune if you have true cell size
+            "lat_min": float(lat - delta_lat/2),
+            "lat_max": float(lat + delta_lat/2),
+            "lon_min": float(lon - delta_lon/2),
+            "lon_max": float(lon + delta_lon/2),
             "prob": float(prob[i,j])
         })
 
@@ -86,4 +90,3 @@ with open(OUTPUT_JSON,"w") as f:
 
 print("✅ Tornado probability JSON written:", OUTPUT_JSON)
 print("TOTAL CELLS:", len(features))
-print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
