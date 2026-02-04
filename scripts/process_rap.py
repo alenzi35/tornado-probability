@@ -14,7 +14,7 @@ RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob.json"
 
-INTERCEPT = -1.5686
+INTERCEPT = -14
 COEFFS = {
     "CAPE": 2.88592370e-03,
     "CIN":  2.38728498e-05,
