@@ -11,29 +11,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      # ---------------- Checkout ----------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+
+      # ---------------- Python ----------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install system dependencies
+
+      # ---------------- System deps ----------------
+      - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libeccodes-dev
+          sudo apt-get install -y \
+            libeccodes-dev \
+            libgeos-dev \
+            libproj-dev \
+            proj-data \
+            proj-bin \
+            gdal-bin \
+            libgdal-dev
 
-      - name: Install Python dependencies
+
+      # ---------------- Python deps ----------------
+      - name: Install Python packages
         run: |
           pip install --upgrade pip
-          pip install pygrib numpy xarray pillow pyproj
 
-      - name: Run RAP processing script
+          pip install \
+            pygrib \
+            numpy \
+            xarray \
+            pillow \
+            matplotlib \
+            cartopy \
+            shapely \
+            pyproj
+
+
+      # ---------------- Run script ----------------
+      - name: Run RAP processor
         run: |
           python scripts/process_rap.py
 
-      - name: Commit and push output files
+
+      # ---------------- Commit output ----------------
+      - name: Commit and push results
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
@@ -41,5 +68,6 @@ jobs:
           git add map/data/tornado_prob.png
           git add map/data/tornado_prob_pixels.json
 
-          git commit -m "Update RAP tornado probability map" || echo "Nothing to commit"
+          git commit -m "Update RAP tornado map" || echo "Nothing to commit"
+
           git push
