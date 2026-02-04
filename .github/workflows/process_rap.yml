@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ---------------- Checkout ----------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,10 +24,11 @@ jobs:
           python-version: "3.11"
 
 
-      # ---------------- System deps ----------------
+      # ---------------- System dependencies ----------------
       - name: Install system libraries
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             libeccodes-dev \
             libgeos-dev \
@@ -34,13 +36,15 @@ jobs:
             proj-data \
             proj-bin \
             gdal-bin \
-            libgdal-dev
+            libgdal-dev \
+            libatlas-base-dev \
+            gfortran
 
 
-      # ---------------- Python deps ----------------
+      # ---------------- Python dependencies ----------------
       - name: Install Python packages
         run: |
-          pip install --upgrade pip
+          pip install --upgrade pip setuptools wheel
 
           pip install \
             pygrib \
@@ -50,16 +54,17 @@ jobs:
             matplotlib \
             cartopy \
             shapely \
-            pyproj
+            pyproj \
+            scipy
 
 
-      # ---------------- Run script ----------------
+      # ---------------- Run processor ----------------
       - name: Run RAP processor
         run: |
           python scripts/process_rap.py
 
 
-      # ---------------- Commit output ----------------
+      # ---------------- Commit outputs ----------------
       - name: Commit and push results
         run: |
           git config user.name "github-actions"
