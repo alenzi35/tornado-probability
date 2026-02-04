@@ -2,7 +2,9 @@ import os
 import urllib.request
 import pygrib
 import numpy as np
+from PIL import Image
 import json
+from pyproj import Proj
 
 # ---------------- CONFIG ----------------
 DATE = "20260128"
@@ -11,7 +13,8 @@ FCST = "02"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/tornado_prob.json"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
+OUTPUT_PNG  = "map/data/tornado_prob_lcc.png"
 
 INTERCEPT = -1.5686
 COEFFS = {
@@ -59,34 +62,46 @@ cape = cape_msg.values
 cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
-lats, lons = cape_msg.latlons()
+lats, lons = cape_msg.latlons()  # in degrees
+rows, cols = cape.shape
 
 # ---------------- Compute probability ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1/(1+np.exp(-linear))
 
-# ---------------- Generate Leaflet-ready rectangles ----------------
-features = []
-rows, cols = prob.shape
+# ---------------- LCC projection (native RAP grid) ----------------
+lcc = Proj(proj='lcc', lat_1=33, lat_2=45, lat_0=40, lon_0=-97, x_0=0, y_0=0, ellps='GRS80')
+x, y = lcc(lons, lats)  # meters
+
+# Normalize coordinates for image
+x_min, x_max = x.min(), x.max()
+y_min, y_max = y.min(), y.max()
+width, height = cols, rows  # one pixel per RAP cell
+
+# Create raster image (RGB, probability as red channel)
+img = Image.new('RGB', (width, height))
 for i in range(rows):
     for j in range(cols):
-        lat = lats[i,j]
-        lon = lons[i,j]
+        p = prob[i,j]
+        # Map probability to color
+        if p>0.8: color=(128,0,0)
+        elif p>0.6: color=(189,0,38)
+        elif p>0.4: color=(227,26,28)
+        elif p>0.2: color=(252,78,42)
+        else: color=(255,237,160)
+        img.putpixel((j,i), color)
+img.save(OUTPUT_PNG)
+print("✅ PNG raster saved:", OUTPUT_PNG)
 
-        # Convert 13.545 km to degrees
-        delta_lat = 13.545 / 111.0
-        delta_lon = 13.545 / (111.0 * np.cos(np.radians(lat)))
-
+# ---------------- JSON overlay (optional interactivity) ----------------
+features = []
+for i in range(rows):
+    for j in range(cols):
         features.append({
-            "lat_min": float(lat - delta_lat/2),
-            "lat_max": float(lat + delta_lat/2),
-            "lon_min": float(lon - delta_lon/2),
-            "lon_max": float(lon + delta_lon/2),
+            "x": float(x[i,j]),
+            "y": float(y[i,j]),
             "prob": float(prob[i,j])
         })
-
-with open(OUTPUT_JSON,"w") as f:
+with open(OUTPUT_JSON, "w") as f:
     json.dump(features, f, indent=2)
-
-print("✅ Tornado probability JSON written:", OUTPUT_JSON)
-print("TOTAL CELLS:", len(features))
+print("✅ JSON overlay saved:", OUTPUT_JSON)
