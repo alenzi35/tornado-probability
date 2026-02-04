@@ -4,7 +4,6 @@ import pygrib
 import numpy as np
 from PIL import Image
 import json
-from pyproj import Proj
 
 # ---------------- CONFIG ----------------
 DATE = "20260128"
@@ -13,8 +12,8 @@ FCST = "02"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
-OUTPUT_PNG  = "map/data/tornado_prob_lcc.png"
+OUTPUT_JSON = "map/data/tornado_prob_pixels.json"
+OUTPUT_PNG  = "map/data/tornado_prob.png"
 
 INTERCEPT = -1.5686
 COEFFS = {
@@ -62,28 +61,14 @@ cape = cape_msg.values
 cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
-lats, lons = cape_msg.latlons()  # degrees
 rows, cols = cape.shape
 
-# ---------------- Compute tornado probability ----------------
+# ---------------- Compute probability ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1/(1+np.exp(-linear))
 
-# ---------------- Lambert Conformal Conic projection ----------------
-lcc = Proj(proj='lcc', lat_1=33, lat_2=45, lat_0=40, lon_0=-97, x_0=0, y_0=0, ellps='GRS80')
-x, y = lcc(lons, lats)  # in meters
-
 # ---------------- Create PNG raster ----------------
-x_min, x_max = x.min(), x.max()
-y_min, y_max = y.min(), y.max()
-print("Raster bounds (meters):")
-print("x_min, x_max:", x_min, x_max)
-print("y_min, y_max:", y_min, y_max)
-
-width, height = cols, rows  # one pixel per RAP cell
-img = Image.new('RGB', (width, height))
-
-# Map probabilities to colors
+img = Image.new('RGB', (cols, rows))
 for i in range(rows):
     for j in range(cols):
         p = prob[i,j]
@@ -97,18 +82,18 @@ for i in range(rows):
 img.save(OUTPUT_PNG)
 print("✅ PNG raster saved:", OUTPUT_PNG)
 
-# ---------------- JSON overlay for interactivity ----------------
-cell_size_m = 13545  # 13.545 km
+# ---------------- JSON overlay in pixel coordinates ----------------
 features = []
 for i in range(rows):
     for j in range(cols):
         features.append({
-            "x": float(x[i,j]),
-            "y": float(y[i,j]),
+            "row": i,
+            "col": j,
             "prob": float(prob[i,j])
         })
 
 with open(OUTPUT_JSON, "w") as f:
     json.dump(features, f, indent=2)
+
 print("✅ JSON overlay saved:", OUTPUT_JSON)
 print("TOTAL CELLS:", len(features))
