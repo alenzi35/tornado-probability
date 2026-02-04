@@ -2,45 +2,41 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Interactive RAP Tornado Map</title>
+<title>Interactive RAP Tornado Map (LCC)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<style>
-  body { margin:0; }
-  #map { width:100vw; height:100vh; }
-</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>body{margin:0;}#map{width:100vw;height:100vh;}</style>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+<script src="https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js"></script>
 </head>
 <body>
 <div id="map"></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const map = L.map('map').setView([39.5, -98.35], 4);
+const crs = new L.Proj.CRS('EPSG:3338',
+    '+proj=lcc +lat_1=33 +lat_2=45 +lat_0=40 +lon_0=-97 +x_0=0 +y_0=0 +ellps=GRS80',
+    {
+        resolutions: [1,0.5,0.25,0.125], // zoom levels
+        origin: [0,0]
+    }
+);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    attribution:'© OpenStreetMap contributors'
-}).addTo(map);
+const map = L.map('map', {crs: crs, center:[0,0], zoom:2});
 
-function getColor(p){
-  return p>0.8?'#800026':p>0.6?'#BD0026':p>0.4?'#E31A1C':p>0.2?'#FC4E2A':'#FFEDA0';
-}
+const bounds = [[0,0],[1000000,1000000]]; // adjust to x_min,y_min / x_max,y_max
+L.imageOverlay('map/data/tornado_prob_lcc.png', bounds).addTo(map);
 
-// Load RAP JSON
-fetch('map/data/tornado_prob.json')
-  .then(r=>r.json())
-  .then(data=>{
-    let bounds = L.latLngBounds([]);
+// Optional: interactive rectangles using JSON
+fetch('map/data/tornado_prob_lcc.json')
+.then(r=>r.json())
+.then(data=>{
     data.forEach(cell=>{
-      const rect = L.rectangle(
-        [[cell.lat_min, cell.lon_min],[cell.lat_max, cell.lon_max]],
-        {fillColor:getColor(cell.prob), fillOpacity:0.7, color:'#000', weight:0.3}
-      ).addTo(map);
-      rect.bindPopup(`Prob: ${cell.prob.toFixed(3)}`);
-      bounds.extend([[cell.lat_min, cell.lon_min],[cell.lat_max, cell.lon_max]]);
+        const size=13545; // 13.545 km per cell
+        L.rectangle([[cell.y,cell.x],[cell.y+size,cell.x+size]],{
+            color:'#000', weight:0.1, fillOpacity:0, interactive:true
+        }).addTo(map).bindPopup(`Prob: ${cell.prob.toFixed(3)}`);
     });
-    map.fitBounds(bounds);
-  })
-  .catch(console.error);
+});
 </script>
 </body>
 </html>
