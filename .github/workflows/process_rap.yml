@@ -1,13 +1,13 @@
-name: Build RAP Tornado Data
+name: Process RAP Tornado Data
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read   # IMPORTANT: read only, no pushing
+  contents: write
 
 jobs:
-  build:
+  process_rap:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,12 +26,20 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install pygrib numpy pyproj
+          pip install --upgrade pip
+          pip install pygrib numpy xarray pillow pyproj
 
-      - name: Run RAP processing
+      - name: Run RAP processing script
         run: |
           python scripts/process_rap.py
 
-      - name: List generated files (debug)
+      - name: Commit and push output files
         run: |
-          ls -lh map/data
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git add map/data/tornado_prob.png
+          git add map/data/tornado_prob_pixels.json
+
+          git commit -m "Update RAP tornado probability map" || echo "Nothing to commit"
+          git push
