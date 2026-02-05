@@ -1,59 +1,76 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>Interactive RAP Tornado Map</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script src="https://openseadragon.github.io/openseadragon/openseadragon.min.js"></script>
-<style>
-  html, body { margin:0; height:100%; }
-  #openseadragon { width:100%; height:100%; background:black; }
-  .popup { position:absolute; background:white; padding:4px; border:1px solid #000; pointer-events:none; }
-</style>
+    <meta charset="UTF-8">
+    <title>Interactive RAP Tornado Probability Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+    <style>
+        body, html { margin:0; padding:0; height:100%; }
+        #map { width:100%; height:100%; }
+        .legend {
+            background: white;
+            padding: 8px;
+            line-height: 1.4em;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            border-radius: 4px;
+        }
+        .legend-color {
+            display: inline-block;
+            width: 20px;
+            height: 10px;
+            margin-right: 4px;
+        }
+    </style>
 </head>
 <body>
+    <div id="map"></div>
 
-<div id="openseadragon"></div>
-<div id="popup" class="popup" style="display:none;"></div>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
-<script>
-// --- Initialize OpenSeadragon ---
-const viewer = OpenSeadragon({
-    id: "openseadragon",
-    prefixUrl: "https://openseadragon.github.io/openseadragon/images/",
-    tileSources: {
-        type: "image",
-        url: "map/data/tornado_prob.png",
-        buildPyramid: false
-    }
-});
+    <script>
+        // ----------------- Initialize Map -----------------
+        const map = L.map('map').setView([39.5, -98.35], 5); // Center on CONUS
 
-// --- Load JSON overlay ---
-fetch("map/data/tornado_prob_pixels.json").then(r => r.json()).then(data => {
-    const popup = document.getElementById("popup");
+        // Base map (OSM)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
 
-    viewer.addHandler("canvas-click", event => {
-        const webPoint = event.position; // screen coordinates
-        const viewportPoint = viewer.viewport.pointFromPixel(webPoint);
-        const imagePoint = viewer.viewport.viewportToImageCoordinates(viewportPoint);
+        // ----------------- Tornado Tiles -----------------
+        const tornadoLayer = L.tileLayer('map/tiles/{z}/{x}/{y}.png', {
+            tms: false,
+            opacity: 0.6
+        }).addTo(map);
 
-        // Find cell at clicked pixel
-        const cell = data.find(c => {
-            return imagePoint.x >= c.col && imagePoint.x < c.col + 1 &&
-                   imagePoint.y >= c.row && imagePoint.y < c.row + 1;
-        });
+        // ----------------- Legend -----------------
+        const legend = L.control({position: 'bottomright'});
 
-        if(cell){
-            popup.style.display = "block";
-            popup.style.left = (webPoint.x + 10) + "px";
-            popup.style.top  = (webPoint.y + 10) + "px";
-            popup.innerHTML = `Tornado probability: ${cell.prob.toFixed(3)}`;
-        } else {
-            popup.style.display = "none";
-        }
-    });
-});
-</script>
+        legend.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML += '<b>Probability</b><br>';
+            const colors = [
+                {color:'rgb(0,0,255)', label:'0-30%'},
+                {color:'rgb(255,128,0)', label:'30-60%'},
+                {color:'rgb(255,0,0)', label:'60-100%'}
+            ];
+            colors.forEach(c => {
+                div.innerHTML += `<div><span class="legend-color" style="background:${c.color}"></span>${c.label}</div>`;
+            });
+            return div;
+        };
 
+        legend.addTo(map);
+
+        // ----------------- Optional: hover/click -----------------
+        // For real interactivity, you could fetch the JSON with probabilities
+        // and display the value for a given lat/lon on mouseover.
+    </script>
 </body>
 </html>
