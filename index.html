@@ -1,76 +1,110 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Interactive RAP Tornado Probability Map</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
+<title>RAP Tornado Probability Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
 
-    <style>
-        body, html { margin:0; padding:0; height:100%; }
-        #map { width:100%; height:100%; }
-        .legend {
-            background: white;
-            padding: 8px;
-            line-height: 1.4em;
-            font-family: Arial, sans-serif;
-            font-size: 12px;
-            border-radius: 4px;
-        }
-        .legend-color {
-            display: inline-block;
-            width: 20px;
-            height: 10px;
-            margin-right: 4px;
-        }
-    </style>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+}
+
+.legend {
+    background: white;
+    padding: 8px;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    border-radius: 4px;
+}
+
+.legend span {
+    display: inline-block;
+    width: 18px;
+    height: 10px;
+    margin-right: 5px;
+}
+</style>
 </head>
+
 <body>
-    <div id="map"></div>
 
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<div id="map"></div>
 
-    <script>
-        // ----------------- Initialize Map -----------------
-        const map = L.map('map').setView([39.5, -98.35], 5); // Center on CONUS
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-        // Base map (OSM)
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-            maxZoom: 19
-        }).addTo(map);
+<script>
 
-        // ----------------- Tornado Tiles -----------------
-        const tornadoLayer = L.tileLayer('map/tiles/{z}/{x}/{y}.png', {
-            tms: false,
-            opacity: 0.6
-        }).addTo(map);
+//
+// ---------------- Map Init ----------------
+//
 
-        // ----------------- Legend -----------------
-        const legend = L.control({position: 'bottomright'});
+const map = L.map('map', {
+    minZoom: 3,
+    maxZoom: 9
+}).setView([39.5, -98.35], 5);   // CONUS center
 
-        legend.onAdd = function(map) {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML += '<b>Probability</b><br>';
-            const colors = [
-                {color:'rgb(0,0,255)', label:'0-30%'},
-                {color:'rgb(255,128,0)', label:'30-60%'},
-                {color:'rgb(255,0,0)', label:'60-100%'}
-            ];
-            colors.forEach(c => {
-                div.innerHTML += `<div><span class="legend-color" style="background:${c.color}"></span>${c.label}</div>`;
-            });
-            return div;
-        };
 
-        legend.addTo(map);
+//
+// ---------------- Base Layer ----------------
+//
 
-        // ----------------- Optional: hover/click -----------------
-        // For real interactivity, you could fetch the JSON with probabilities
-        // and display the value for a given lat/lon on mouseover.
-    </script>
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19
+}).addTo(map);
+
+
+//
+// ---------------- RAP Overlay ----------------
+//
+// IMPORTANT: Path is relative to repo root on GitHub Pages
+//
+
+const rapLayer = L.tileLayer('./map/tiles/{z}/{x}/{y}.png', {
+    opacity: 0.7,
+    maxZoom: 9,
+    minZoom: 3,
+    noWrap: true
+});
+
+rapLayer.addTo(map);
+
+
+//
+// ---------------- Legend ----------------
+//
+
+const legend = L.control({ position: 'bottomright' });
+
+legend.onAdd = function () {
+
+    const div = L.DomUtil.create('div', 'legend');
+
+    div.innerHTML += '<b>Tornado Probability</b><br>';
+
+    div.innerHTML += '<span style="background:#0000ff"></span> 0–30%<br>';
+    div.innerHTML += '<span style="background:#ff9900"></span> 30–60%<br>';
+    div.innerHTML += '<span style="background:#ff0000"></span> 60–100%<br>';
+
+    return div;
+};
+
+legend.addTo(map);
+
+</script>
+
 </body>
 </html>
