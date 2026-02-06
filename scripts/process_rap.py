@@ -2,116 +2,87 @@ import os
 import json
 import shutil
 import subprocess
-import urllib.request
 import numpy as np
-import pygrib
 import rasterio
 from rasterio.transform import from_bounds
 from rasterio.crs import CRS
 
 # ---------------- Paths ----------------
-
-DATA_DIR = "data"
+DATA_DIR = "map/data"
 MAP_DIR = "map"
 TILE_DIR = "map/tiles"
 
-GRIB_FILE = f"{DATA_DIR}/rap.grib2"
-RASTER_FILE = f"{MAP_DIR}/output.tif"
-TMP_MERCATOR = f"{MAP_DIR}/output_3857.tif"
-
-# Update RAP URL with the current date / forecast hour as needed
-RAP_URL = (
-    "https://nomads.ncep.noaa.gov/pub/data/nccf/com/rap/prod/"
-    "rap.20260206/rap.t00z.awp130pgrbf00.grib2"
-)
+JSON_FILE = os.path.join(DATA_DIR, "tornado_prob.json")
+RASTER_FILE = os.path.join(MAP_DIR, "output.tif")
+TMP_MERCATOR = os.path.join(MAP_DIR, "output_3857.tif")
 
 # ---------------- Setup ----------------
-
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(MAP_DIR, exist_ok=True)
 
-print("Starting RAP processing...")
+print("Starting RAP processing from JSON...")
 
-# ---------------- Download RAP ----------------
+# ---------------- Load JSON ----------------
+with open(JSON_FILE, "r") as f:
+    cells = json.load(f)
 
-if not os.path.exists(GRIB_FILE):
-    print("Downloading RAP GRIB...")
-    urllib.request.urlretrieve(RAP_URL, GRIB_FILE)
-else:
-    print("Using cached RAP file")
+if not cells:
+    raise ValueError("JSON is empty")
 
-# ---------------- Read GRIB ----------------
+print(f"Loaded {len(cells)} cells")
 
-print("Opening GRIB...")
+# ---------------- Determine raster bounds ----------------
+lat_mins = [c["lat_min"] for c in cells]
+lat_maxs = [c["lat_max"] for c in cells]
+lon_mins = [c["lon_min"] for c in cells]
+lon_maxs = [c["lon_max"] for c in cells]
 
-grbs = pygrib.open(GRIB_FILE)
+lat_min = min(lat_mins)
+lat_max = max(lat_maxs)
+lon_min = min(lon_mins)
+lon_max = max(lon_maxs)
 
-# ---------------- Auto-detect Tornado Probability ----------------
+# ---------------- Raster resolution ----------------
+# Assume each JSON cell represents a uniform rectangle
+# Pick first cell size (could average if varying)
+lat_res = cells[0]["lat_max"] - cells[0]["lat_min"]
+lon_res = cells[0]["lon_max"] - cells[0]["lon_min"]
 
-tornado_msg = None
-for msg in grbs:
-    # Print available variables (optional, remove if you don't want long output)
-    # print(msg)
-    if "Tornado" in msg.name or msg.shortName.lower() in ["tor", "torn"]:
-        tornado_msg = msg
-        break
+n_rows = int(np.ceil((lat_max - lat_min) / lat_res))
+n_cols = int(np.ceil((lon_max - lon_min) / lon_res))
 
-if tornado_msg is None:
-    raise ValueError("No Tornado Probability variable found in GRIB.")
+print(f"Raster size: {n_cols} cols x {n_rows} rows")
 
-print(f"Using GRIB message: {tornado_msg.name} ({tornado_msg.shortName})")
+# ---------------- Build empty raster ----------------
+raster = np.zeros((n_rows, n_cols), dtype=np.float32)
 
-data = tornado_msg.values
-lats, lons = tornado_msg.latlons()
+# ---------------- Fill raster ----------------
+for cell in cells:
+    # Compute row index (top row = 0)
+    row = int((lat_max - cell["lat_max"]) / lat_res)
+    col = int((cell["lon_min"] - lon_min) / lon_res)
+    if 0 <= row < n_rows and 0 <= col < n_cols:
+        raster[row, col] = cell["prob"] * 100  # convert 0-1 to 0-100
 
-grbs.close()
-
-print("Grid shape:", data.shape)
-
-# ---------------- Normalize ----------------
-
-data = np.clip(data, 0, 1)
-data = (data * 100).astype(np.float32)
-
-# ---------------- Raster Bounds ----------------
-
-lat_min = lats.min()
-lat_max = lats.max()
-lon_min = lons.min()
-lon_max = lons.max()
-
-print("Bounds:", lat_min, lat_max, lon_min, lon_max)
-
-# ---------------- Build GeoTIFF ----------------
-
-height, width = data.shape
-
-transform = from_bounds(
-    lon_min,
-    lat_min,
-    lon_max,
-    lat_max,
-    width,
-    height
-)
+# ---------------- Create GeoTIFF ----------------
+transform = from_bounds(lon_min, lat_min, lon_max, lat_max, n_cols, n_rows)
 
 with rasterio.open(
     RASTER_FILE,
     "w",
     driver="GTiff",
-    height=height,
-    width=width,
+    height=n_rows,
+    width=n_cols,
     count=1,
-    dtype=data.dtype,
+    dtype=raster.dtype,
     crs=CRS.from_epsg(4326),
-    transform=transform,
+    transform=transform
 ) as dst:
-    dst.write(data, 1)
+    dst.write(raster, 1)
 
 print("GeoTIFF created:", RASTER_FILE)
 
 # ---------------- Reproject to Web Mercator ----------------
-
 print("Reprojecting to EPSG:3857...")
 
 if os.path.exists(TMP_MERCATOR):
@@ -127,7 +98,6 @@ subprocess.run([
 ], check=True)
 
 # ---------------- Generate XYZ Tiles ----------------
-
 print("Generating XYZ tiles...")
 
 if os.path.exists(TILE_DIR):
@@ -144,8 +114,7 @@ subprocess.run([
 ], check=True)
 
 # ---------------- Cleanup ----------------
-
 if os.path.exists(TMP_MERCATOR):
     os.remove(TMP_MERCATOR)
 
-print("DONE. Tiles available at:", TILE_DIR)
+print("DONE. Tiles are available at:", TILE_DIR)
