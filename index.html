@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <title>RAP Tornado Probability Map</title>
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+<!-- Leaflet CSS -->
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -43,40 +45,40 @@ html, body {
 
 <div id="map"></div>
 
+<!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
 
 //
-// ---------------- Map Init ----------------
+// ---------------- Initialize Map ----------------
 //
 
 const map = L.map('map', {
     minZoom: 3,
     maxZoom: 9
-}).setView([39.5, -98.35], 5);   // CONUS center
+}).setView([39.5, -98.35], 5);
 
 
 //
-// ---------------- Base Layer ----------------
+// ---------------- Base Map ----------------
 //
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap',
+    attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19
 }).addTo(map);
 
 
 //
-// ---------------- RAP Overlay ----------------
-//
-// IMPORTANT: Path is relative to repo root on GitHub Pages
+// ---------------- RAP Tile Overlay ----------------
+// IMPORTANT: Absolute path for GitHub Pages
 //
 
-const rapLayer = L.tileLayer('./map/tiles/{z}/{x}/{y}.png', {
+const rapLayer = L.tileLayer('/tornado-probability/map/tiles/{z}/{x}/{y}.png', {
     opacity: 0.7,
-    maxZoom: 9,
     minZoom: 3,
+    maxZoom: 9,
     noWrap: true
 });
 
