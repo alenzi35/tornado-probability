@@ -72,17 +72,15 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 //
 // ---------------- RAP Tile Overlay ----------------
-// IMPORTANT: Absolute path for GitHub Pages
 //
 
 const rapLayer = L.tileLayer('/tornado-probability/map/tiles/{z}/{x}/{y}.png', {
+    tms: true,              // IMPORTANT: GDAL tiles
     opacity: 0.7,
     minZoom: 3,
     maxZoom: 9,
     noWrap: true
-});
-
-rapLayer.addTo(map);
+}).addTo(map);
 
 
 //
