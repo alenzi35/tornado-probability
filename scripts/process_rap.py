@@ -43,8 +43,6 @@ lon_min = min(lon_mins)
 lon_max = max(lon_maxs)
 
 # ---------------- Raster resolution ----------------
-# Assume each JSON cell represents a uniform rectangle
-# Pick first cell size (could average if varying)
 lat_res = cells[0]["lat_max"] - cells[0]["lat_min"]
 lon_res = cells[0]["lon_max"] - cells[0]["lon_min"]
 
@@ -58,11 +56,10 @@ raster = np.zeros((n_rows, n_cols), dtype=np.float32)
 
 # ---------------- Fill raster ----------------
 for cell in cells:
-    # Compute row index (top row = 0)
     row = int((lat_max - cell["lat_max"]) / lat_res)
     col = int((cell["lon_min"] - lon_min) / lon_res)
     if 0 <= row < n_rows and 0 <= col < n_cols:
-        raster[row, col] = cell["prob"] * 100  # convert 0-1 to 0-100
+        raster[row, col] = cell["prob"] * 100  # 0–100
 
 # ---------------- Create GeoTIFF ----------------
 transform = from_bounds(lon_min, lat_min, lon_max, lat_max, n_cols, n_rows)
@@ -97,6 +94,18 @@ subprocess.run([
     TMP_MERCATOR
 ], check=True)
 
+# ---------------- Scale to 8-bit for gdal2tiles ----------------
+TEMP_BYTE = TMP_MERCATOR.replace(".tif", "_byte.tif")
+
+subprocess.run([
+    "gdal_translate",
+    "-of", "VRT",
+    "-ot", "Byte",
+    "-scale", "0", "100", "0", "255",
+    TMP_MERCATOR,
+    TEMP_BYTE + ".vrt"
+], check=True)
+
 # ---------------- Generate XYZ Tiles ----------------
 print("Generating XYZ tiles...")
 
@@ -109,11 +118,12 @@ subprocess.run([
     "-w", "none",
     "--xyz",
     "-z", "3-9",
-    TMP_MERCATOR,
+    TEMP_BYTE + ".vrt",
     TILE_DIR
 ], check=True)
 
 # ---------------- Cleanup ----------------
+os.remove(TEMP_BYTE + ".vrt")
 if os.path.exists(TMP_MERCATOR):
     os.remove(TMP_MERCATOR)
 
