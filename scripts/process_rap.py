@@ -1,130 +1,91 @@
 import os
-import json
-import shutil
-import subprocess
+import urllib.request
+import pygrib
 import numpy as np
-import rasterio
-from rasterio.transform import from_bounds
-from rasterio.crs import CRS
+import json
 
-# ---------------- Paths ----------------
-DATA_DIR = "map/data"
-MAP_DIR = "map"
-TILE_DIR = "map/tiles"
+# ---------------- CONFIG ----------------
+DATE = "20260128"
+HOUR = "19"
+FCST = "02"
 
-JSON_FILE = os.path.join(DATA_DIR, "tornado_prob.json")
-RASTER_FILE = os.path.join(MAP_DIR, "output.tif")
-TMP_MERCATOR = os.path.join(MAP_DIR, "output_3857.tif")
+# RAP GRIB file URL (AWIP32 product)
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+GRIB_PATH = "data/rap.grib2"
+OUTPUT_JSON = "map/data/tornado_prob.json"
 
-# ---------------- Setup ----------------
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(MAP_DIR, exist_ok=True)
+# Logistic regression coefficients for 1-hour probability
+INTERCEPT = -1.5686
+COEFFS = {
+    "CAPE": 2.88592370e-03,
+    "CIN":  2.38728498e-05,
+    "HLCY": 8.85192696e-03
+}
+# ----------------------------------------
 
-print("Starting RAP processing from JSON...")
+# ---------------- CREATE FOLDERS ----------------
+os.makedirs("data", exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-# ---------------- Load JSON ----------------
-with open(JSON_FILE, "r") as f:
-    cells = json.load(f)
+# ---------------- DOWNLOAD RAP ----------------
+print("Downloading RAP GRIB...")
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("✅ Download complete.")
 
-if not cells:
-    raise ValueError("JSON is empty")
+# ---------------- OPEN GRIB ----------------
+grbs = pygrib.open(GRIB_PATH)
 
-print(f"Loaded {len(cells)} cells")
+# ---------------- HELPER TO PICK VAR ----------------
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    """
+    Pick first GRIB message matching shortName, optionally typeOfLevel and bottom/top.
+    """
+    for g in grbs:
+        if g.shortName.lower() != shortname.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
+        if bottom is not None and top is not None:
+            if not hasattr(g, "bottomLevel") or not hasattr(g, "topLevel"):
+                continue
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+                continue
+        print(f"✅ Found {shortname}: level {g.typeOfLevel}")
+        return g
+    raise RuntimeError(f"{shortname} NOT FOUND with specified level criteria")
 
-# ---------------- Determine raster bounds ----------------
-lat_mins = [c["lat_min"] for c in cells]
-lat_maxs = [c["lat_max"] for c in cells]
-lon_mins = [c["lon_min"] for c in cells]
-lon_maxs = [c["lon_max"] for c in cells]
+# ---------------- EXTRACT VARIABLES ----------------
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")  # SBCAPE
+grbs.seek(0)
+cin_msg  = pick_var(grbs, "cin", typeOfLevel="surface")   # SBCIN
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)  # 0–1 km SRH
 
-lat_min = min(lat_mins)
-lat_max = max(lat_maxs)
-lon_min = min(lon_mins)
-lon_max = max(lon_maxs)
+cape = cape_msg.values
+cin  = cin_msg.values
+hlcy = hlcy_msg.values
 
-# ---------------- Raster resolution ----------------
-lat_res = cells[0]["lat_max"] - cells[0]["lat_min"]
-lon_res = cells[0]["lon_max"] - cells[0]["lon_min"]
+lats, lons = cape_msg.latlons()
 
-n_rows = int(np.ceil((lat_max - lat_min) / lat_res))
-n_cols = int(np.ceil((lon_max - lon_min) / lon_res))
+# ---------------- COMPUTE PROBABILITY ----------------
+linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
+prob = 1 / (1 + np.exp(-linear))
 
-print(f"Raster size: {n_cols} cols x {n_rows} rows")
+# ---------------- WRITE JSON ----------------
+features = []
+rows, cols = prob.shape
+for i in range(rows):
+    for j in range(cols):
+        features.append({
+            "lat": float(lats[i, j]),
+            "lon": float(lons[i, j]),
+            "prob": float(prob[i, j])
+        })
 
-# ---------------- Build empty raster ----------------
-raster = np.zeros((n_rows, n_cols), dtype=np.float32)
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(features, f, indent=2)
 
-# ---------------- Fill raster ----------------
-for cell in cells:
-    row = int((lat_max - cell["lat_max"]) / lat_res)
-    col = int((cell["lon_min"] - lon_min) / lon_res)
-    if 0 <= row < n_rows and 0 <= col < n_cols:
-        raster[row, col] = cell["prob"] * 100  # 0–100
-
-# ---------------- Create GeoTIFF ----------------
-transform = from_bounds(lon_min, lat_min, lon_max, lat_max, n_cols, n_rows)
-
-with rasterio.open(
-    RASTER_FILE,
-    "w",
-    driver="GTiff",
-    height=n_rows,
-    width=n_cols,
-    count=1,
-    dtype=raster.dtype,
-    crs=CRS.from_epsg(4326),
-    transform=transform
-) as dst:
-    dst.write(raster, 1)
-
-print("GeoTIFF created:", RASTER_FILE)
-
-# ---------------- Reproject to Web Mercator ----------------
-print("Reprojecting to EPSG:3857...")
-
-if os.path.exists(TMP_MERCATOR):
-    os.remove(TMP_MERCATOR)
-
-subprocess.run([
-    "gdalwarp",
-    "-t_srs", "EPSG:3857",
-    "-r", "bilinear",
-    "-overwrite",
-    RASTER_FILE,
-    TMP_MERCATOR
-], check=True)
-
-# ---------------- Scale to 8-bit for gdal2tiles ----------------
-TEMP_BYTE = TMP_MERCATOR.replace(".tif", "_byte.tif")
-
-subprocess.run([
-    "gdal_translate",
-    "-of", "VRT",
-    "-ot", "Byte",
-    "-scale", "0", "100", "0", "255",
-    TMP_MERCATOR,
-    TEMP_BYTE + ".vrt"
-], check=True)
-
-# ---------------- Generate XYZ Tiles ----------------
-print("Generating XYZ tiles...")
-
-if os.path.exists(TILE_DIR):
-    shutil.rmtree(TILE_DIR)
-
-subprocess.run([
-    "gdal2tiles.py",
-    "-p", "mercator",
-    "-w", "none",
-    "--xyz",
-    "-z", "3-9",
-    TEMP_BYTE + ".vrt",
-    TILE_DIR
-], check=True)
-
-# ---------------- Cleanup ----------------
-os.remove(TEMP_BYTE + ".vrt")
-if os.path.exists(TMP_MERCATOR):
-    os.remove(TMP_MERCATOR)
-
-print("DONE. Tiles are available at:", TILE_DIR)
+print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
+print("TOTAL GRID POINTS:", len(features))
+print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
