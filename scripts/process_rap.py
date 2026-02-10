@@ -69,14 +69,10 @@ hlcy = hlcy_msg.values
 lats, lons = cape_msg.latlons()
 
 # ---------------- COMPUTE GRID SPACING ----------------
+# Approx spacing in degrees
 lat_step = float(np.mean(np.diff(lats[:,0])))
 lon_step = float(np.mean(np.diff(lons[0,:])))
 print(f"Approx grid spacing: {lat_step:.4f}° lat, {lon_step:.4f}° lon")
-
-# ---------------- HANDLE NaNs ----------------
-cape = np.nan_to_num(cape, nan=0.0)
-cin  = np.nan_to_num(cin, nan=0.0)
-hlcy = np.nan_to_num(hlcy, nan=0.0)
 
 # ---------------- COMPUTE PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
