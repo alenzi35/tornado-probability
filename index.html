@@ -1,8 +1,8 @@
-<!-- REWRITTEN index.html - AGGREGATE-FIRST WITH ON-DEMAND SUBCELLS -->
+<!-- REWRITTEN index.html - SIMULATED DATA, NO EXTERNAL JSON -->
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map (Aggregates)</title>
+  <title>Tornado Probability Map (Test Aggregates)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
@@ -19,7 +19,7 @@
 </head>
 <body>
 
-<h1>Tornado Probability Map (Aggregates)</h1>
+<h1>Tornado Probability Map (Test Aggregates)</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -44,7 +44,7 @@ var CustomControl = L.Control.extend({
     c.innerHTML = `
       <button id="toggleCells">Toggle Cells</button>
       <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Aggregates loaded</div>
+      <div id="info">Test data loaded</div>
     `;
     L.DomEvent.disableClickPropagation(c);
     return c;
@@ -61,42 +61,93 @@ function getColor(p){
   return '#FFEDA0';
 }
 
-// ---------------- AGGREGATE LAYER ----------------
-// aggregates.json format: [{id, latStart, latEnd, lonStart, lonEnd, avgProb}]
+// ---------------- TEST AGGREGATES ----------------
+var testAggregates = [];
+for(var lat=25; lat<50; lat+=5){
+  for(var lon=-125; lon<-65; lon+=5){
+    testAggregates.push({
+      latStart: lat,
+      latEnd: lat+5,
+      lonStart: lon,
+      lonEnd: lon+5,
+      avgProb: Math.random() // simulate probability
+    });
+  }
+}
+
+// ---------------- DRAW AGGREGATES ----------------
 function drawAggregates() {
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
   document.getElementById("backBtn").style.display = "none";
 
-  fetch("map/data/aggregates.json")
-    .then(resp => resp.json())
-    .then(data => {
-      data.forEach(agg => {
-        const rect = L.rectangle(
-          [[agg.latStart, agg.lonStart], [agg.latEnd, agg.lonEnd]],
-          { fillColor: getColor(agg.avgProb), fillOpacity: 0.4, color: "#000", weight: 1 }
-        ).addTo(aggregateLayer);
+  testAggregates.forEach((agg, idx)=>{
+    const rect = L.rectangle(
+      [[agg.latStart, agg.lonStart], [agg.latEnd, agg.lonEnd]],
+      { fillColor: getColor(agg.avgProb), fillOpacity: 0.4, color: "#000", weight: 1 }
+    ).addTo(aggregateLayer);
 
-        rect.bindPopup(
-          `<b>Aggregate cell</b><br>` +
-          `Lat ${agg.latStart.toFixed(2)}–${agg.latEnd.toFixed(2)}<br>` +
-          `Lon ${agg.lonStart.toFixed(2)}–${agg.lonEnd.toFixed(2)}<br>` +
-          `Avg Prob: ${agg.avgProb.toFixed(2)}`
-        );
+    rect.bindPopup(
+      `<b>Aggregate cell</b><br>` +
+      `Lat ${agg.latStart.toFixed(1)}–${agg.latEnd.toFixed(1)}<br>` +
+      `Lon ${agg.lonStart.toFixed(1)}–${agg.lonEnd.toFixed(1)}<br>` +
+      `Avg Prob: ${agg.avgProb.toFixed(2)}`
+    );
 
-        rect.on("dblclick", function () {
-          drawCellsInAggregate(agg.id, agg.latStart, agg.lonStart, agg.latEnd, agg.lonEnd);
-          document.getElementById("backBtn").style.display = "block";
-        });
-      });
-    })
-    .catch(err => console.error("Failed to load aggregates.json:", err));
+    rect.on("dblclick", function () {
+      drawCellsInAggregate(idx, agg.latStart, agg.lonStart, agg.latEnd, agg.lonEnd);
+      document.getElementById("backBtn").style.display = "block";
+    });
+  });
 }
 
-// ---------------- SUBCELL LAYER (ON-DEMAND) ----------------
-// subcells JSON: map/data/subcells/<agg_id>.json [{lat, lon, prob}]
+// ---------------- DRAW SUBCELLS ----------------
 function drawCellsInAggregate(aggId, latStart, lonStart, latEnd, lonEnd){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
 
-  fetch(`map/data/subc
+  // Simulate subcells
+  var subCells = [];
+  var rows = 5;
+  var cols = 5;
+  var latStep = (latEnd-latStart)/rows;
+  var lonStep = (lonEnd-lonStart)/cols;
+  for(var i=0;i<rows;i++){
+    for(var j=0;j<cols;j++){
+      subCells.push({
+        lat: latStart+i*latStep,
+        lon: lonStart+j*lonStep,
+        prob: Math.random()
+      });
+    }
+  }
+
+  subCells.forEach(pt=>{
+    const rect = L.rectangle(
+      [[pt.lat, pt.lon],[pt.lat+latStep, pt.lon+lonStep]],
+      { fillColor: getColor(pt.prob), fillOpacity:0.6, color:'#000', weight:0.5 }
+    ).addTo(cellLayer);
+    rect.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(2)}`);
+  });
+
+  cellLayer.addTo(map);
+  map.fitBounds([[latStart, lonStart],[latEnd, lonEnd]]);
+}
+
+// ---------------- TOGGLE CELLS ----------------
+document.getElementById('toggleCells').onclick = () => {
+  cellsVisible = !cellsVisible;
+  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.4:0, weight: cellsVisible?1:0}); });
+  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
+};
+
+// ---------------- BACK BUTTON ----------------
+document.getElementById('backBtn').onclick = () => drawAggregates();
+
+// Initial load
+drawAggregates();
+
+</script>
+
+</body>
+</html>
