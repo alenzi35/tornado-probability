@@ -1,1 +1,111 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RAP Tornado Probability Map</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- Leaflet CSS -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+}
+
+.legend {
+    background: white;
+    padding: 8px;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    border-radius: 4px;
+}
+
+.legend span {
+    display: inline-block;
+    width: 18px;
+    height: 10px;
+    margin-right: 5px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+
+//
+// ---------------- Initialize Map ----------------
+//
+
+const map = L.map('map', {
+    minZoom: 3,
+    maxZoom: 9
+}).setView([39.5, -98.35], 5);
+
+
+//
+// ---------------- Base Map ----------------
+//
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19
+}).addTo(map);
+
+
+//
+// ---------------- RAP Tile Overlay ----------------
+//
+
+const rapLayer = L.tileLayer('/tornado-probability/map/tiles/{z}/{x}/{y}.png', {
+    tms: true,              // IMPORTANT: GDAL tiles
+    opacity: 0.7,
+    minZoom: 3,
+    maxZoom: 9,
+    noWrap: true
+}).addTo(map);
+
+
+//
+// ---------------- Legend ----------------
+//
+
+const legend = L.control({ position: 'bottomright' });
+
+legend.onAdd = function () {
+
+    const div = L.DomUtil.create('div', 'legend');
+
+    div.innerHTML += '<b>Tornado Probability</b><br>';
+
+    div.innerHTML += '<span style="background:#0000ff"></span> 0–30%<br>';
+    div.innerHTML += '<span style="background:#ff9900"></span> 30–60%<br>';
+    div.innerHTML += '<span style="background:#ff0000"></span> 60–100%<br>';
+
+    return div;
+};
+
+legend.addTo(map);
+
+</script>
+
+</body>
+</html>
