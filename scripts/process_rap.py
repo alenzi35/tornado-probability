@@ -68,24 +68,14 @@ hlcy = hlcy_msg.values
 
 lats, lons = cape_msg.latlons()
 
+# ---------------- COMPUTE GRID SPACING ----------------
+# Approx spacing in degrees
+lat_step = float(np.mean(np.diff(lats[:,0])))
+lon_step = float(np.mean(np.diff(lons[0,:])))
+print(f"Approx grid spacing: {lat_step:.4f}° lat, {lon_step:.4f}° lon")
+
 # ---------------- COMPUTE PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"] * cape + COEFFS["CIN"] * cin + COEFFS["HLCY"] * hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# ---------------- WRITE JSON ----------------
-features = []
-rows, cols = prob.shape
-for i in range(rows):
-    for j in range(cols):
-        features.append({
-            "lat": float(lats[i, j]),
-            "lon": float(lons[i, j]),
-            "prob": float(prob[i, j])
-        })
-
-with open(OUTPUT_JSON, "w") as f:
-    json.dump(features, f, indent=2)
-
-print("✅ Tornado probability JSON written to:", OUTPUT_JSON)
-print("TOTAL GRID POINTS:", len(features))
-print("FILE SIZE:", os.path.getsize(OUTPUT_JSON), "bytes")
+# ---------------- WRITE JSON
