@@ -1,4 +1,4 @@
-<!-- REWRITTEN index.html - FULL VERSION -->
+<!-- REWRITTEN index.html - AGGREGATE-FIRST WITH ON-DEMAND SUBCELLS -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -44,20 +44,13 @@ var CustomControl = L.Control.extend({
     c.innerHTML = `
       <button id="toggleCells">Toggle Cells</button>
       <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Test JSON snapshot</div>
+      <div id="info">Aggregates loaded</div>
     `;
     L.DomEvent.disableClickPropagation(c);
     return c;
   }
 });
 map.addControl(new CustomControl());
-
-// Load JSON
-var jsonData = [];
-fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
-  .then(data => { jsonData = data; drawAggregates(); })
-  .catch(err => console.error("Failed to load JSON:", err));
 
 // Color mapping
 function getColor(p){
@@ -69,86 +62,41 @@ function getColor(p){
 }
 
 // ---------------- AGGREGATE LAYER ----------------
+// aggregates.json format: [{id, latStart, latEnd, lonStart, lonEnd, avgProb}]
 function drawAggregates() {
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
   document.getElementById("backBtn").style.display = "none";
 
-  // Compute unique sorted lat/lon values from JSON
-  const lats = Array.from(new Set(jsonData.map(p => p.lat))).sort((a, b) => a - b);
-  const lons = Array.from(new Set(jsonData.map(p => p.lon))).sort((a, b) => a - b);
+  fetch("map/data/aggregates.json")
+    .then(resp => resp.json())
+    .then(data => {
+      data.forEach(agg => {
+        const rect = L.rectangle(
+          [[agg.latStart, agg.lonStart], [agg.latEnd, agg.lonEnd]],
+          { fillColor: getColor(agg.avgProb), fillOpacity: 0.4, color: "#000", weight: 1 }
+        ).addTo(aggregateLayer);
 
-  // Aggregate size in number of cells
-  const aggRows = 10; // number of subcells vertically
-  const aggCols = 10; // number of subcells horizontally
+        rect.bindPopup(
+          `<b>Aggregate cell</b><br>` +
+          `Lat ${agg.latStart.toFixed(2)}–${agg.latEnd.toFixed(2)}<br>` +
+          `Lon ${agg.lonStart.toFixed(2)}–${agg.lonEnd.toFixed(2)}<br>` +
+          `Avg Prob: ${agg.avgProb.toFixed(2)}`
+        );
 
-  for (let i = 0; i < lats.length; i += aggRows) {
-    for (let j = 0; j < lons.length; j += aggCols) {
-      const latStart = lats[i];
-      const lngStart = lons[j];
-      const latEnd = lats[Math.min(i + aggRows - 1, lats.length - 1)];
-      const lngEnd = lons[Math.min(j + aggCols - 1, lons.length - 1)];
-
-      const rect = L.rectangle(
-        [[latStart, lngStart], [latEnd, lngEnd]],
-        { fillColor: "#aaa", fillOpacity: 0.2, color: "#000", weight: 1 }
-      ).addTo(aggregateLayer);
-
-      rect.bindPopup(
-        `<b>Aggregate cell</b><br>` +
-        `Lat ${latStart.toFixed(2)}–${latEnd.toFixed(2)}<br>` +
-        `Lon ${lngStart.toFixed(2)}–${lngEnd.toFixed(2)}`
-      );
-
-      rect.on("dblclick", function () {
-        drawCellsInAggregate(latStart, lngStart, latEnd - latStart, lngEnd - lngStart);
-        document.getElementById("backBtn").style.display = "block";
+        rect.on("dblclick", function () {
+          drawCellsInAggregate(agg.id, agg.latStart, agg.lonStart, agg.latEnd, agg.lonEnd);
+          document.getElementById("backBtn").style.display = "block";
+        });
       });
-    }
-  }
+    })
+    .catch(err => console.error("Failed to load aggregates.json:", err));
 }
 
-// ---------------- SUBCELL LAYER ----------------
-function drawCellsInAggregate(latStart, lngStart, latStep, lngStep){
+// ---------------- SUBCELL LAYER (ON-DEMAND) ----------------
+// subcells JSON: map/data/subcells/<agg_id>.json [{lat, lon, prob}]
+function drawCellsInAggregate(aggId, latStart, lonStart, latEnd, lonEnd){
   aggregateLayer.clearLayers();
   cellLayer.clearLayers();
 
-  // Filter points in this aggregate
-  const pts = jsonData.filter(pt =>
-    pt.lat >= latStart && pt.lat <= latStart + latStep &&
-    pt.lon >= lngStart && pt.lon <= lngStart + lngStep
-  );
-
-  // Compute lat/lon steps dynamically
-  const lats = Array.from(new Set(pts.map(p => p.lat))).sort((a,b)=>a-b);
-  const lons = Array.from(new Set(pts.map(p => p.lon))).sort((a,b)=>a-b);
-  const latStepCell = lats.length > 1 ? lats[1] - lats[0] : latStep;
-  const lonStepCell = lons.length > 1 ? lons[1] - lons[0] : lngStep;
-
-  pts.forEach(pt => {
-    const rect = L.rectangle(
-      [[pt.lat, pt.lon], [pt.lat + latStepCell, pt.lon + lonStepCell]],
-      {fillColor: getColor(pt.prob), fillOpacity: 0.6, color:'#000', weight:0.5}
-    ).addTo(cellLayer);
-
-    rect.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(4)}`);
-  });
-
-  cellLayer.addTo(map);
-  map.fitBounds([[latStart,lngStart],[latStart+latStep,lngStart+lngStep]]);
-}
-
-// ---------------- TOGGLE CELLS ----------------
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.2:0, weight: cellsVisible?1:0}); });
-  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
-};
-
-// ---------------- BACK BUTTON ----------------
-document.getElementById('backBtn').onclick = () => drawAggregates();
-
-</script>
-
-</body>
-</html>
+  fetch(`map/data/subc
