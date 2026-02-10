@@ -1,137 +1,147 @@
-<!-- FULL index.html - LOADS REAL tornado_prob.json -->
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Tornado Probability Map</title>
+  <title>Tornado Probability Map (Aggregates)</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet/dist/leaflet.css"
+  />
+
   <style>
-    body { margin:0; font-family:Arial, sans-serif; background:#f4f4f4; }
-    h1 { text-align:center; margin:10px 0; }
-    #map { height:650px; margin:10px; border-radius:8px; position:relative; }
-    .leaflet-control.custom-control {
-      background:white; padding:10px; border-radius:6px; box-shadow:0 0 6px rgba(0,0,0,0.3); font-size:14px;
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
     }
-    .leaflet-control.custom-control button { width:100%; margin:4px 0; cursor:pointer; height:30px; line-height:30px; text-align:center; }
-    #backBtn { display:none; }
+
+    h1 {
+      text-align: center;
+      margin: 10px 0;
+    }
+
+    #map {
+      height: 650px;
+      margin: 10px;
+      border-radius: 8px;
+    }
+
+    .leaflet-control.custom-control {
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.3);
+      font-size: 14px;
+    }
+
+    .leaflet-control.custom-control button {
+      width: 100%;
+      margin: 4px 0;
+      cursor: pointer;
+      height: 30px;
+    }
   </style>
 </head>
+
 <body>
 
-<h1>Tornado Probability Map</h1>
+<h1>Tornado Probability Map (Aggregates)</h1>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
 <script>
-var CONUS_bounds = [[22, -128], [51.5, -64]];
-var map = L.map('map', { maxBounds: CONUS_bounds, maxBoundsViscosity:0, minZoom:4, maxZoom:18, zoomSnap:0.25 })
-    .setView([39.5, -98.35], 4);
 
-// Base tiles
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
 
-// Layer groups
-var aggregateLayer = L.layerGroup().addTo(map);
-var cellLayer = L.layerGroup();
-var cellsVisible = true;
+const map = L.map('map', {
+  maxBounds: CONUS_BOUNDS,
+  maxBoundsViscosity: 0,
+  minZoom: 4,
+  maxZoom: 18
+}).setView([39.5, -98.35], 4);
 
-// Control panel
-var CustomControl = L.Control.extend({
-  options:{position:'topleft'},
-  onAdd:function(map){
-    var c = L.DomUtil.create('div','leaflet-control custom-control');
-    c.innerHTML = `
-      <button id="toggleCells">Toggle Cells</button>
-      <button id="backBtn">← Back to Aggregates</button>
-      <div id="info">Loading...</div>
-    `;
-    L.DomEvent.disableClickPropagation(c);
-    return c;
-  }
-});
-map.addControl(new CustomControl());
 
-// Color mapping
-function getColor(p){
-  if(p>0.8) return '#800026';
-  if(p>0.6) return '#BD0026';
-  if(p>0.4) return '#E31A1C';
-  if(p>0.2) return '#FC4E2A';
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap'
+}).addTo(map);
+
+
+const cellLayer = L.layerGroup().addTo(map);
+
+
+// ---------------- COLOR SCALE ----------------
+
+function getColor(p) {
+  if (p > 0.8) return '#800026';
+  if (p > 0.6) return '#BD0026';
+  if (p > 0.4) return '#E31A1C';
+  if (p > 0.2) return '#FC4E2A';
   return '#FFEDA0';
 }
 
-// ---------------- LOAD JSON ----------------
-var tornadoData = [];
+
+// ---------------- LOAD DATA ----------------
+
 fetch("map/data/tornado_prob.json")
-  .then(resp => resp.json())
+  .then(r => r.json())
   .then(data => {
-    tornadoData = data;
-    drawAggregates();
-    document.getElementById("info").innerText = "Data loaded!";
+    console.log("Loaded cells:", data.length);
+    drawCells(data);
   })
   .catch(err => {
-    console.error("Failed to load tornado_prob.json:", err);
-    document.getElementById("info").innerText = "Failed to load data.";
+    alert("Failed to load tornado_prob.json");
+    console.error(err);
   });
 
-// ---------------- DRAW AGGREGATES ----------------
-function drawAggregates(){
-  aggregateLayer.clearLayers();
+
+// ---------------- DRAW CELLS ----------------
+
+function drawCells(data) {
+
   cellLayer.clearLayers();
-  document.getElementById("backBtn").style.display="none";
 
-  // Aggregate size in degrees (adjust for your needs)
-  var latStepAgg = 3.0;
-  var lonStepAgg = 4.0;
+  data.forEach(pt => {
 
-  for(let lat=22; lat<52; lat+=latStepAgg){
-    for(let lon=-128; lon<-64; lon+=lonStepAgg){
-      // Average probability inside this aggregate
-      let cells = tornadoData.filter(pt => pt.lat>=lat && pt.lat<lat+latStepAgg && pt.lon>=lon && pt.lon<lon+lonStepAgg);
-      let avgProb = cells.length ? cells.reduce((sum, c)=>sum+c.prob,0)/cells.length : 0;
+    if (
+      !isFinite(pt.lat) ||
+      !isFinite(pt.lon) ||
+      !isFinite(pt.latStep) ||
+      !isFinite(pt.lonStep)
+    ) return;
 
-      let rect = L.rectangle([[lat,lon],[lat+latStepAgg,lon+lonStepAgg]], { fillColor:getColor(avgProb), fillOpacity:0.4, color:'#000', weight:1 }).addTo(aggregateLayer);
-      rect.bindPopup(`<b>Aggregate cell</b><br>Lat ${lat.toFixed(2)}–${(lat+latStepAgg).toFixed(2)}<br>Lon ${lon.toFixed(2)}–${(lon+lonStepAgg).toFixed(2)}<br>Avg Prob: ${avgProb.toFixed(2)}`);
 
-      rect.on('dblclick', ()=> drawCellsInAggregate(lat, lon, latStepAgg, lonStepAgg));
-    }
-  }
-}
+    const south = pt.lat;
+    const west  = pt.lon;
+    const north = pt.lat + pt.latStep;
+    const east  = pt.lon + pt.lonStep;
 
-// ---------------- DRAW CELLS IN AGGREGATE ----------------
-function drawCellsInAggregate(latStart, lonStart, latStepAgg, lonStepAgg){
-  aggregateLayer.clearLayers();
-  cellLayer.clearLayers();
-  document.getElementById("backBtn").style.display="block";
 
-  let cells = tornadoData.filter(pt => pt.lat>=latStart && pt.lat<latStart+latStepAgg && pt.lon>=lonStart && pt.lon<lonStart+lonStepAgg);
+    const bounds = [
+      [south, west],
+      [north, east]
+    ];
 
-  if(cells.length===0) return;
 
-  // Use latStep/lonStep from JSON if present
-  cells.forEach(pt=>{
-    let latStep = pt.latStep || 0.1;
-    let lonStep = pt.lonStep || 0.1;
-    let rect = L.rectangle([[pt.lat, pt.lon],[pt.lat+latStep, pt.lon+lonStep]], { fillColor:getColor(pt.prob), fillOpacity:0.6, color:'#000', weight:0.5 }).addTo(cellLayer);
-    rect.bindPopup(`<b>Tornado probability</b><br>${pt.prob.toFixed(2)}`);
+    L.rectangle(bounds, {
+      fillColor: getColor(pt.prob),
+      fillOpacity: 0.6,
+      color: '#000',
+      weight: 0.3
+    })
+    .bindPopup(
+      "Probability: " + (pt.prob * 100).toFixed(2) + "%"
+    )
+    .addTo(cellLayer);
+
   });
 
-  cellLayer.addTo(map);
-  map.fitBounds([[latStart, lonStart],[latStart+latStepAgg, lonStart+lonStepAgg]]);
+  console.log("Rendered cells:", cellLayer.getLayers().length);
 }
 
-// ---------------- TOGGLE CELLS ----------------
-document.getElementById('toggleCells').onclick = () => {
-  cellsVisible = !cellsVisible;
-  aggregateLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.4:0, weight: cellsVisible?1:0}); });
-  cellLayer.eachLayer(l=>{ l.setStyle({fillOpacity: cellsVisible?0.6:0, weight: cellsVisible?0.5:0}); });
-};
-
-// ---------------- BACK BUTTON ----------------
-document.getElementById('backBtn').onclick = () => drawAggregates();
 </script>
 
 </body>
 </html>
-
