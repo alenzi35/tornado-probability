@@ -14,7 +14,7 @@ FCST = "02"
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/tornado_prob.json"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 
 # Logistic regression coefficients
@@ -36,9 +36,7 @@ os.makedirs("map/data", exist_ok=True)
 # ---------------- DOWNLOAD ----------------
 
 print("Downloading RAP...")
-
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-
 print("Download complete.")
 
 
@@ -69,7 +67,6 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
                 continue
 
         print(f"Found {shortname}")
-
         return g
 
     raise RuntimeError(f"{shortname} not found")
@@ -97,15 +94,23 @@ cape = cape_msg.values
 cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
-lats, lons = cape_msg.latlons()
+
+# ---------------- GET LCC PROJECTION ----------------
+
+proj_params = cape_msg.projparams
+
+print("Projection parameters:")
+for k, v in proj_params.items():
+    print(f"  {k}: {v}")
 
 
-# ---------------- GRID SPACING ----------------
+# ---------------- GET NATIVE X/Y ----------------
 
-lat_step = float(np.mean(np.diff(lats[:, 0])))
-lon_step = float(np.mean(np.diff(lons[0, :])))
+x = cape_msg.xvalues   # meters
+y = cape_msg.yvalues   # meters
 
-print(f"Grid spacing: {lat_step:.4f}°, {lon_step:.4f}°")
+# Make full grid
+xx, yy = np.meshgrid(x, y)
 
 
 # ---------------- CLEAN NaNs ----------------
@@ -137,16 +142,24 @@ for i in range(rows):
     for j in range(cols):
 
         features.append({
-            "lat": float(lats[i, j]),
-            "lon": float(lons[i, j]),
-            "prob": float(prob[i, j]),
-            "latStep": lat_step,
-            "lonStep": lon_step
+
+            # LCC coordinates (meters)
+            "x": float(xx[i, j]),
+            "y": float(yy[i, j]),
+
+            # Value
+            "prob": float(prob[i, j])
         })
 
 
+output = {
+    "projection": proj_params,
+    "features": features
+}
+
+
 with open(OUTPUT_JSON, "w") as f:
-    json.dump(features, f)
+    json.dump(output, f)
 
 
 print("JSON written:", OUTPUT_JSON)
