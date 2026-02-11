@@ -10,7 +10,7 @@ DATE = "20260128"
 HOUR = "19"
 FCST = "02"
 
-# Use a new filename so no old JSON confusion
+# Output JSON — new filename to avoid confusion with old lat/lon JSON
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
@@ -29,7 +29,7 @@ os.makedirs("data", exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
 # ---------------- DOWNLOAD ----------------
-print("Downloading RAP...")
+print("Downloading RAP GRIB...")
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("Download complete.")
 
@@ -52,7 +52,7 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         return g
     raise RuntimeError(f"{shortname} not found")
 
-# ---------------- LOAD DATA ----------------
+# ---------------- LOAD VARIABLES ----------------
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", typeOfLevel="surface")
 grbs.seek(0)
@@ -60,6 +60,7 @@ cin_msg = pick_var(grbs, "cin", typeOfLevel="surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)
 
+# Clean NaNs
 cape = np.nan_to_num(cape_msg.values, nan=0.0)
 cin  = np.nan_to_num(cin_msg.values, nan=0.0)
 hlcy = np.nan_to_num(hlcy_msg.values, nan=0.0)
@@ -74,11 +75,11 @@ print("Projection parameters from GRIB:")
 for k, v in proj_params.items():
     print(f"  {k}: {v}")
 
-crs_lcc = CRS(proj_params)
-crs_wgs = CRS.from_epsg(4326)
+crs_lcc = CRS(proj_params)  # native LCC
+crs_wgs = CRS.from_epsg(4326)  # lat/lon
 transformer = Transformer.from_crs(crs_wgs, crs_lcc, always_xy=True)
 
-# Flatten arrays, transform, reshape
+# Flatten, transform, then reshape to match grid
 flat_lons = lons.flatten()
 flat_lats = lats.flatten()
 flat_x, flat_y = transformer.transform(flat_lons, flat_lats)
@@ -94,8 +95,8 @@ features = []
 for i in range(rows):
     for j in range(cols):
         features.append({
-            "x": float(xx[i,j]),       # LCC meters
-            "y": float(yy[i,j]),       # LCC meters
+            "x": float(xx[i,j]),  # LCC X in meters
+            "y": float(yy[i,j]),  # LCC Y in meters
             "prob": float(prob[i,j])
         })
 
