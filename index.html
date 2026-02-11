@@ -1,145 +1,111 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Tornado Probability Map (Aggregates)</title>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <title>LCC Projection Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- Leaflet -->
   <link
     rel="stylesheet"
-    href="https://unpkg.com/leaflet/dist/leaflet.css"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
   />
 
   <style>
     body {
       margin: 0;
       font-family: Arial, sans-serif;
-      background: #f4f4f4;
     }
 
-    h1 {
+    header {
+      background: #1e293b;
+      color: white;
+      padding: 10px;
       text-align: center;
-      margin: 10px 0;
     }
 
     #map {
-      height: 650px;
-      margin: 10px;
-      border-radius: 8px;
-    }
-
-    .leaflet-control.custom-control {
-      background: white;
-      padding: 10px;
-      border-radius: 6px;
-      box-shadow: 0 0 6px rgba(0,0,0,0.3);
-      font-size: 14px;
-    }
-
-    .leaflet-control.custom-control button {
       width: 100%;
-      margin: 4px 0;
-      cursor: pointer;
-      height: 30px;
+      height: calc(100vh - 50px);
     }
   </style>
 </head>
 
 <body>
 
-<h1>Tornado Probability Map (Aggregates)</h1>
+<header>
+  <h2>Lambert Conformal Conic Map</h2>
+</header>
+
 <div id="map"></div>
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<!-- Libraries -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
 
 <script>
+/* ======================================
+   DEFINE LAMBERT CONFORMAL CONIC
+   Example: North America (customizable)
+====================================== */
 
-const CONUS_BOUNDS = [[22, -128], [51.5, -64]];
+const lccProjection = new L.Proj.CRS(
+  "EPSG:102004",
+  "+proj=lcc +lat_1=33 +lat_2=45 +lat_0=39 " +
+  "+lon_0=-96 +x_0=0 +y_0=0 " +
+  "+datum=WGS84 +units=m +no_defs",
 
-const map = L.map('map', {
-  maxBounds: CONUS_BOUNDS,
-  maxBoundsViscosity: 0,
-  minZoom: 4,
-  maxZoom: 18
-}).setView([39.5, -98.35], 4);
-
-
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap'
-}).addTo(map);
-
-
-const cellLayer = L.layerGroup().addTo(map);
-
-
-// ---------------- COLOR SCALE ----------------
-
-function getColor(p) {
-  if (p > 0.8) return '#800026';
-  if (p > 0.6) return '#BD0026';
-  if (p > 0.4) return '#E31A1C';
-  if (p > 0.2) return '#FC4E2A';
-  return '#FFEDA0';
-}
+  {
+    resolutions: [
+      8192, 4096, 2048, 1024, 512, 256,
+      128, 64, 32, 16, 8, 4, 2, 1
+    ],
+    origin: [0, 0]
+  }
+);
 
 
-// ---------------- LOAD DATA ----------------
+/* ======================================
+   CREATE MAP
+====================================== */
 
-fetch("map/data/tornado_prob.json")
-  .then(r => r.json())
-  .then(data => {
-    console.log("Loaded cells:", data.length);
-    drawCells(data);
-  })
-  .catch(err => {
-    alert("Failed to load tornado_prob.json");
-    console.error(err);
-  });
+const map = L.map("map", {
+  crs: lccProjection,
+  center: [39, -96], // lat/lng still in WGS84
+  zoom: 4
+});
 
 
-// ---------------- DRAW CELLS ----------------
+/* ======================================
+   TILE LAYER (Must Match Projection)
+====================================== */
 
-function drawCells(data) {
+/*
+  IMPORTANT:
+  These tiles MUST be in LCC projection.
+  Normal OSM tiles will NOT work.
 
-  cellLayer.clearLayers();
+  Replace this with your own tile server.
+*/
 
-  data.forEach(pt => {
-
-    if (
-      !isFinite(pt.lat) ||
-      !isFinite(pt.lon) ||
-      !isFinite(pt.latStep) ||
-      !isFinite(pt.lonStep)
-    ) return;
-
-
-    const south = pt.lat;
-    const west  = pt.lon;
-    const north = pt.lat + pt.latStep;
-    const east  = pt.lon + pt.lonStep;
-
-
-    const bounds = [
-      [south, west],
-      [north, east]
-    ];
+L.tileLayer(
+  "https://your-tile-server/{z}/{x}/{y}.png",
+  {
+    attribution: "LCC Tiles",
+    maxZoom: 13
+  }
+).addTo(map);
 
 
-    L.rectangle(bounds, {
-      fillColor: getColor(pt.prob),
-      fillOpacity: 0.6,
-      color: '#000',
-      weight: 0.3
-    })
-    .bindPopup(
-      "Probability: " + (pt.prob * 100).toFixed(2) + "%"
-    )
-    .addTo(cellLayer);
+/* ======================================
+   SAMPLE MARKER
+====================================== */
 
-  });
+const marker = L.marker([40, -100]).addTo(map);
 
-  console.log("Rendered cells:", cellLayer.getLayers().length);
-}
+marker.bindPopup("Sample LCC Marker");
+
 
 </script>
 
