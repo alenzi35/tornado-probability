@@ -2,95 +2,134 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability LCC</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<title>RAP Tornado Probability (LCC)</title>
 <style>
-  body { margin:0; }
-  #map { width:100%; height:100vh; }
+  body { margin:0; overflow:hidden; }
+  canvas { display:block; background:#111; }
+  #tooltip {
+    position:absolute;
+    pointer-events:none;
+    background:rgba(0,0,0,0.7);
+    color:#fff;
+    padding:4px 6px;
+    border-radius:3px;
+    font-family:sans-serif;
+    font-size:12px;
+    display:none;
+  }
 </style>
 </head>
 <body>
-<div id="map"></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+<canvas id="mapCanvas"></canvas>
+<div id="tooltip"></div>
 
 <script>
-// -------------------- LCC CRS --------------------
-const lccProj = '+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs';
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
 
-const crs = new L.Proj.CRS('EPSG:9999', lccProj, {
-  resolutions: [100000,50000,25000,12500,6250,3125,1562.5], // zoom levels
-  origin: [0,0]
-});
+let width, height;
+function resize() {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+}
+window.addEventListener('resize', resize);
+resize();
 
-const map = L.map('map', {
-  crs: crs,
-  center: [0,0],
-  zoom: 0
-});
+let features = [];
+let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
-// Optional: basic empty tile layer just for reference
-// L.tileLayer('', { attribution: '' }).addTo(map);
+// Canvas transform state
+let scale = 0.00005; // initial zoom factor
+let offsetX = 0;
+let offsetY = 0;
+let isDragging = false;
+let dragStart = {x:0, y:0};
+let dragOffset = {x:0, y:0};
 
-// -------------------- Load RAP JSON --------------------
+// Load JSON
 fetch('map/data/tornado_prob_lcc.json')
-  .then(res => res.json())
-  .then(data => {
-    const features = data.features;
-    console.log("First 5 points:", features.slice(0,5));
+  .then(r=>r.json())
+  .then(data=>{
+    features = data.features;
 
-    // Compute bounds for initial map fit
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    features.forEach(f => {
-      if(f.x < minX) minX = f.x;
-      if(f.x > maxX) maxX = f.x;
-      if(f.y < minY) minY = f.y;
-      if(f.y > maxY) maxY = f.y;
+    // Compute bounds
+    features.forEach(f=>{
+      if(f.x<minX) minX=f.x; if(f.x>maxX) maxX=f.x;
+      if(f.y<minY) minY=f.y; if(f.y>maxY) maxY=f.y;
     });
 
-    const bounds = [
-      [minY, minX],
-      [maxY, maxX]
-    ];
-    map.fitBounds(bounds);
+    // Center view
+    offsetX = width/2 - (minX + maxX)/2 * scale;
+    offsetY = height/2 + (minY + maxY)/2 * scale; // y-axis flip
 
-    // LayerGroup for grid cells
-    const layerGroup = L.layerGroup().addTo(map);
+    draw();
+  });
 
-    // Grid cell size in meters (13 km)
-    const cellSize = 13000;
+// Draw function
+function draw() {
+  ctx.clearRect(0,0,width,height);
 
-    // Downsample if needed for performance
-    const step = Math.max(1, Math.floor(features.length / 50000));
+  features.forEach(f=>{
+    const px = f.x*scale + offsetX;
+    const py = -f.y*scale + offsetY;
 
-    features.forEach((f, idx) => {
-      if(idx % step !== 0) return; // skip for performance
+    // Draw 13km square
+    const cellSize = 13000*scale;
+    const red = Math.floor(255*f.prob);
+    const blue = Math.floor(255*(1-f.prob));
+    ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
+    ctx.fillRect(px-cellSize/2, py-cellSize/2, cellSize, cellSize);
+  });
+}
 
-      const color = `rgba(${Math.floor(255*f.prob)},0,${Math.floor(255*(1-f.prob))},0.7)`;
+// ---------------- Zoom ----------------
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const zoomFactor = Math.exp(-e.deltaY*0.001);
+  const mouseX = e.offsetX;
+  const mouseY = e.offsetY;
 
-      // Rectangle bounds: [[southWest], [northEast]]
-      const bounds = [
-        [f.y - cellSize/2, f.x - cellSize/2],
-        [f.y + cellSize/2, f.x + cellSize/2]
-      ];
+  // Zoom around mouse
+  offsetX = mouseX - (mouseX - offsetX)*zoomFactor;
+  offsetY = mouseY - (mouseY - offsetY)*zoomFactor;
+  scale *= zoomFactor;
+  draw();
+});
 
-      const rect = L.rectangle(bounds, {
-        color: color,
-        weight: 0,
-        fillOpacity: 0.7
-      }).addTo(layerGroup);
+// ---------------- Pan ----------------
+canvas.addEventListener('mousedown', e=>{
+  isDragging = true;
+  dragStart = {x:e.clientX, y:e.clientY};
+  dragOffset = {x: offsetX, y: offsetY};
+});
+window.addEventListener('mouseup', ()=>{isDragging=false;});
+window.addEventListener('mousemove', e=>{
+  if(isDragging){
+    offsetX = dragOffset.x + (e.clientX - dragStart.x);
+    offsetY = dragOffset.y + (e.clientY - dragStart.y);
+    draw();
+  }
 
-      rect.bindTooltip(
-        `X: ${f.x.toFixed(0)} m<br>Y: ${f.y.toFixed(0)} m<br>Prob: ${f.prob.toFixed(3)}`,
-        {sticky:true}
-      );
-    });
-
-  })
-  .catch(err => console.error("Error loading JSON:", err));
+  // Tooltip
+  let found = false;
+  for(let f of features){
+    const px = f.x*scale + offsetX;
+    const py = -f.y*scale + offsetY;
+    const cellSize = 13000*scale;
+    if(Math.abs(e.offsetX - px)<=cellSize/2 && Math.abs(e.offsetY - py)<=cellSize/2){
+      tooltip.style.display='block';
+      tooltip.style.left = e.pageX+10+'px';
+      tooltip.style.top = e.pageY+10+'px';
+      tooltip.innerHTML = `X: ${f.x.toFixed(0)} m<br>Y: ${f.y.toFixed(0)} m<br>Prob: ${f.prob.toFixed(3)}`;
+      found = true;
+      break;
+    }
+  }
+  if(!found) tooltip.style.display='none';
+});
 </script>
 </body>
 </html>
