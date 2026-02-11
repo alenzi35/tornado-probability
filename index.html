@@ -10,7 +10,6 @@
 </head>
 <body>
 <canvas id="mapCanvas"></canvas>
-
 <script>
 const canvas = document.getElementById('mapCanvas');
 const ctx = canvas.getContext('2d');
@@ -26,7 +25,7 @@ fetch('map/data/tornado_prob_lcc.json')
   .then(res => res.json())
   .then(data => {
     const features = data.features;
-    console.log("First 10 points:", features.slice(0,10));
+    console.log("First 5 points:", features.slice(0,5));
 
     // Compute bounds
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -37,18 +36,18 @@ fetch('map/data/tornado_prob_lcc.json')
       if(f.y > maxY) maxY = f.y;
     });
 
-    const rangeX = maxX - minX;
-    const rangeY = maxY - minY;
-
-    // Draw first 10 points
-    for(let i=0; i<10; i++) {
+    // Draw first 50 points for visibility
+    for(let i=0; i<50; i++) {
       const f = features[i];
-      const px = ((f.x - minX) / rangeX) * canvas.width;
-      const py = canvas.height - ((f.y - minY) / rangeY) * canvas.height;
+      const px = ((f.x - minX) / (maxX - minX)) * canvas.width;
+      const py = canvas.height - ((f.y - minY) / (maxY - minY)) * canvas.height;
 
-      ctx.fillStyle = `rgba(255,0,0,${f.prob})`;
+      const radius = 8; // increase to make points visible
+      const red = Math.floor(255 * f.prob);
+      const blue = Math.floor(255 * (1 - f.prob));
+      ctx.fillStyle = `rgba(${red},0,${blue},0.8)`;
       ctx.beginPath();
-      ctx.arc(px, py, 8, 0, Math.PI*2);
+      ctx.arc(px, py, radius, 0, Math.PI*2);
       ctx.fill();
     }
   })
