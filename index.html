@@ -3,77 +3,64 @@
 <head>
   <meta charset="utf-8" />
   <title>RAP Tornado Probability (LCC)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    body { margin:0; padding:0; }
-    #map { width: 100%; height: 100vh; }
-    .tooltip { background: rgba(0,0,0,0.7); color: #fff; padding: 2px 5px; border-radius: 3px; }
+    body { margin: 0; }
+    canvas { display: block; width: 100vw; height: 100vh; }
   </style>
 </head>
 <body>
-  <div id="map"></div>
+<canvas id="mapCanvas"></canvas>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+<script>
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
 
-  <script>
-    // ---------------- LCC CRS ----------------
-    // Replace with your GRIB's proj parameters if different
-    const lccProj = '+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs';
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
-    const crs = new L.Proj.CRS('EPSG:9999', lccProj, {
-      resolutions: [10000, 5000, 2500, 1250, 625, 312.5],
-      origin: [0, 0]
+// Load LCC JSON
+fetch('map/data/tornado_prob_lcc.json')
+  .then(res => res.json())
+  .then(data => {
+    const features = data.features;
+
+    // Compute bounds
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    features.forEach(f => {
+      if(f.x < minX) minX = f.x;
+      if(f.x > maxX) maxX = f.x;
+      if(f.y < minY) minY = f.y;
+      if(f.y > maxY) maxY = f.y;
     });
 
-    const map = L.map('map', {
-      crs: crs,
-      center: [0, 0], // will adjust to data bounds
-      zoom: 2
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
+
+    // Draw each point as a rectangle
+    const maxPoints = 50000; // limit for performance
+    const step = Math.ceil(features.length / maxPoints);
+
+    features.forEach((f, idx) => {
+      if(idx % step !== 0) return;
+
+      // Normalize coordinates to canvas
+      const px = ((f.x - minX) / rangeX) * canvas.width;
+      const py = canvas.height - ((f.y - minY) / rangeY) * canvas.height; // flip Y
+
+      // Color based on probability
+      const red = Math.floor(255 * f.prob);
+      const blue = Math.floor(255 * (1 - f.prob));
+      ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
+
+      // Draw a tiny rectangle for the grid point
+      ctx.fillRect(px, py, 3, 3);
     });
-
-    // ---------------- Load RAP LCC JSON ----------------
-    fetch('map/data/tornado_prob_lcc.json')
-      .then(res => res.json())
-      .then(data => {
-        const features = data.features;
-
-        // Compute bounds
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        features.forEach(f => {
-          if(f.x < minX) minX = f.x;
-          if(f.x > maxX) maxX = f.x;
-          if(f.y < minY) minY = f.y;
-          if(f.y > maxY) maxY = f.y;
-        });
-
-        map.fitBounds([
-          [minY, minX],
-          [maxY, maxX]
-        ]);
-
-        // ---------------- Draw grid as rectangles ----------------
-        // Optional: adjust size based on grid spacing
-        const sampleSize = Math.max(Math.floor(features.length / 20000), 1); // limit number for performance
-
-        features.forEach((f, idx) => {
-          if(idx % sampleSize !== 0) return; // skip some points for speed
-
-          const color = `rgba(${Math.floor(255*f.prob)},0,${Math.floor(255*(1-f.prob))},0.6)`;
-
-          const size = 4000; // meters; adjust to grid spacing
-          const bounds = [
-            [f.y - size/2, f.x - size/2],
-            [f.y + size/2, f.x + size/2]
-          ];
-
-          L.rectangle(bounds, { color: color, weight: 0, fillOpacity: 0.6 }).addTo(map);
-        });
-      })
-      .catch(err => console.error("Error loading LCC JSON:", err));
-  </script>
+  })
+  .catch(err => console.error("Error loading LCC JSON:", err));
+</script>
 </body>
 </html>
