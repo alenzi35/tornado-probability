@@ -1,113 +1,85 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>LCC Projection Map</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8" />
+  <title>RAP Tornado Probability (LCC)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Leaflet -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
-
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-    }
-
-    header {
-      background: #1e293b;
-      color: white;
-      padding: 10px;
-      text-align: center;
-    }
-
-    #map {
-      width: 100%;
-      height: calc(100vh - 50px);
-    }
+    body { margin:0; padding:0; }
+    #map { width: 100%; height: 100vh; }
+    canvas { pointer-events: none; } /* optional: prevent canvas from blocking map */
   </style>
 </head>
-
 <body>
+  <div id="map"></div>
 
-<header>
-  <h2>Lambert Conformal Conic Map</h2>
-</header>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
 
-<div id="map"></div>
+  <script>
+    // ---------------- Define LCC CRS ----------------
+    const lccProj = '+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs';
 
-<!-- Libraries -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+    const crs = new L.Proj.CRS('EPSG:9999', lccProj, {
+      resolutions: [10000, 5000, 2500, 1250, 625, 312.5], // adjust for zoom
+      origin: [0, 0]
+    });
 
-<script>
-/* ======================================
-   DEFINE LAMBERT CONFORMAL CONIC
-   Example: North America (customizable)
-====================================== */
+    // ---------------- Initialize Map ----------------
+    const map = L.map('map', {
+      crs: crs,
+      center: [0, 0],  // will be reset to bounds
+      zoom: 2
+    });
 
-const lccProjection = new L.Proj.CRS(
-  "EPSG:102004",
-  "+proj=lcc +lat_1=33 +lat_2=45 +lat_0=39 " +
-  "+lon_0=-96 +x_0=0 +y_0=0 " +
-  "+datum=WGS84 +units=m +no_defs",
+    // ---------------- Optional background ----------------
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'OSM'
+    }).addTo(map);
 
-  {
-    resolutions: [
-      8192, 4096, 2048, 1024, 512, 256,
-      128, 64, 32, 16, 8, 4, 2, 1
-    ],
-    origin: [0, 0]
-  }
-);
+    // ---------------- Load LCC JSON ----------------
+    fetch('map/data/tornado_prob_lcc.json')
+      .then(res => res.json())
+      .then(data => {
+        const features = data.features;
 
+        // Compute bounds
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        features.forEach(f => {
+          if(f.x < minX) minX = f.x;
+          if(f.x > maxX) maxX = f.x;
+          if(f.y < minY) minY = f.y;
+          if(f.y > maxY) maxY = f.y;
+        });
 
-/* ======================================
-   CREATE MAP
-====================================== */
+        map.fitBounds([
+          [minY, minX],
+          [maxY, maxX]
+        ]);
 
-const map = L.map("map", {
-  crs: lccProjection,
-  center: [39, -96], // lat/lng still in WGS84
-  zoom: 4
-});
+        // ---------------- Canvas overlay ----------------
+        const canvasLayer = L.canvasLayer().delegate({
+          onDrawLayer: function(info) {
+            const ctx = info.canvas.getContext('2d');
+            ctx.clearRect(0, 0, info.canvas.width, info.canvas.height);
 
+            features.forEach(f => {
+              const point = info.layer._map.latLngToContainerPoint([f.y, f.x]);
+              const alpha = Math.min(Math.max(f.prob, 0), 1);
+              ctx.fillStyle = `rgba(255,0,0,${alpha})`;  // red = prob
+              ctx.fillRect(point.x, point.y, 2, 2);
+            });
+          }
+        });
+        canvasLayer.addTo(map);
+      })
+      .catch(err => console.error("Error loading LCC JSON:", err));
+  </script>
 
-/* ======================================
-   TILE LAYER (Must Match Projection)
-====================================== */
-
-/*
-  IMPORTANT:
-  These tiles MUST be in LCC projection.
-  Normal OSM tiles will NOT work.
-
-  Replace this with your own tile server.
-*/
-
-L.tileLayer(
-  "https://your-tile-server/{z}/{x}/{y}.png",
-  {
-    attribution: "LCC Tiles",
-    maxZoom: 13
-  }
-).addTo(map);
-
-
-/* ======================================
-   SAMPLE MARKER
-====================================== */
-
-const marker = L.marker([40, -100]).addTo(map);
-
-marker.bindPopup("Sample LCC Marker");
-
-
-</script>
-
+  <!-- Leaflet canvasLayer plugin -->
+  <script src="https://unpkg.com/leaflet-canvaslayer-field/leaflet.canvaslayer.field.js"></script>
 </body>
 </html>
