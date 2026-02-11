@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP LCC Test Render</title>
+<title>RAP Tornado Probability (LCC)</title>
 <style>
   body { margin:0; }
   canvas { display:block; width:100vw; height:100vh; background:#111; }
@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="mapCanvas"></canvas>
+
 <script>
 const canvas = document.getElementById('mapCanvas');
 const ctx = canvas.getContext('2d');
@@ -21,6 +22,7 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
+// Load LCC JSON
 fetch('map/data/tornado_prob_lcc.json')
   .then(res => res.json())
   .then(data => {
@@ -36,22 +38,41 @@ fetch('map/data/tornado_prob_lcc.json')
       if(f.y > maxY) maxY = f.y;
     });
 
-    // Draw first 50 points for visibility
-    for(let i=0; i<50; i++) {
-      const f = features[i];
-      const px = ((f.x - minX) / (maxX - minX)) * canvas.width;
-      const py = canvas.height - ((f.y - minY) / (maxY - minY)) * canvas.height;
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
 
-      const radius = 8; // increase to make points visible
+    console.log("Bounds:", {minX, maxX, minY, maxY});
+
+    // Shift coordinates to local origin
+    const shiftX = -minX;
+    const shiftY = -minY;
+
+    // Downsample for performance if needed
+    const step = Math.max(1, Math.floor(features.length / 50000));
+
+    // Determine rectangle size based on grid spacing
+    const sizeX = canvas.width / features.length * 2; // approximate
+    const sizeY = canvas.height / features.length * 2;
+
+    features.forEach((f, idx) => {
+      if(idx % step !== 0) return;
+
+      const px = ((f.x + shiftX) / rangeX) * canvas.width;
+      const py = canvas.height - ((f.y + shiftY) / rangeY) * canvas.height;
+
+      // Color based on probability
       const red = Math.floor(255 * f.prob);
       const blue = Math.floor(255 * (1 - f.prob));
-      ctx.fillStyle = `rgba(${red},0,${blue},0.8)`;
-      ctx.beginPath();
-      ctx.arc(px, py, radius, 0, Math.PI*2);
-      ctx.fill();
-    }
+      ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
+
+      // Draw small rectangle
+      const rectSize = 3; // adjust for visibility
+      ctx.fillRect(px - rectSize/2, py - rectSize/2, rectSize, rectSize);
+    });
+
+    console.log("Rendering complete.");
   })
-  .catch(err => console.error(err));
+  .catch(err => console.error("Error loading LCC JSON:", err));
 </script>
 </body>
 </html>
