@@ -58,6 +58,7 @@ cin_msg = pick_var(grbs, "cin", typeOfLevel="surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)
 
+# Clean NaNs
 cape = np.nan_to_num(cape_msg.values, nan=0.0)
 cin  = np.nan_to_num(cin_msg.values, nan=0.0)
 hlcy = np.nan_to_num(hlcy_msg.values, nan=0.0)
@@ -77,7 +78,7 @@ crs_wgs = CRS.from_epsg(4326)    # lat/lon
 
 transformer = Transformer.from_crs(crs_wgs, crs_lcc, always_xy=True)
 
-# Flatten lat/lon arrays, transform, then reshape
+# Flatten arrays for pyproj, transform, then reshape
 flat_lons = lons.flatten()
 flat_lats = lats.flatten()
 flat_x, flat_y = transformer.transform(flat_lons, flat_lats)
@@ -96,6 +97,7 @@ lon_step = float(np.mean(np.diff(lons[0, :])))
 features = []
 for i in range(rows):
     for j in range(cols):
+        # ONLY x/y, no lat/lon anywhere
         features.append({
             "x": float(xx[i,j]),       # LCC meters
             "y": float(yy[i,j]),       # LCC meters
