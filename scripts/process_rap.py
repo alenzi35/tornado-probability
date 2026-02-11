@@ -11,7 +11,6 @@ HOUR = "19"
 FCST = "02"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
@@ -59,28 +58,26 @@ cin_msg = pick_var(grbs, "cin", typeOfLevel="surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)
 
-# Clean NaNs
 cape = np.nan_to_num(cape_msg.values, nan=0.0)
 cin  = np.nan_to_num(cin_msg.values, nan=0.0)
 hlcy = np.nan_to_num(hlcy_msg.values, nan=0.0)
 
-# ---------------- GET LAT/LON ----------------
-lats, lons = cape_msg.latlons()  # shape: (rows, cols)
+# ---------------- LAT/LON GRID ----------------
+lats, lons = cape_msg.latlons()  # shape (rows, cols)
 rows, cols = lats.shape
 
-# ---------------- LCC TRANSFORM ----------------
+# ---------------- PROJECTION TO LCC ----------------
 proj_params = cape_msg.projparams
 print("Projection parameters from GRIB:")
 for k, v in proj_params.items():
     print(f"  {k}: {v}")
 
-# Define CRS objects
 crs_lcc = CRS(proj_params)       # native LCC
 crs_wgs = CRS.from_epsg(4326)    # lat/lon
 
 transformer = Transformer.from_crs(crs_wgs, crs_lcc, always_xy=True)
 
-# Flatten arrays for pyproj, transform, then reshape
+# Flatten lat/lon arrays, transform, then reshape
 flat_lons = lons.flatten()
 flat_lats = lats.flatten()
 flat_x, flat_y = transformer.transform(flat_lons, flat_lats)
@@ -91,14 +88,20 @@ yy = np.array(flat_y).reshape(rows, cols)
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1 / (1 + np.exp(-linear))
 
+# ---------------- GRID SPACING ----------------
+lat_step = float(np.mean(np.diff(lats[:, 0])))
+lon_step = float(np.mean(np.diff(lons[0, :])))
+
 # ---------------- WRITE JSON ----------------
 features = []
 for i in range(rows):
     for j in range(cols):
         features.append({
-            "x": float(xx[i,j]),   # LCC meters
-            "y": float(yy[i,j]),   # LCC meters
-            "prob": float(prob[i,j])
+            "x": float(xx[i,j]),       # LCC meters
+            "y": float(yy[i,j]),       # LCC meters
+            "prob": float(prob[i,j]),
+            "latStep": lat_step,
+            "lonStep": lon_step
         })
 
 output = {
