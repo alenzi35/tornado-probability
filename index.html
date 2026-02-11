@@ -2,34 +2,47 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability (LCC)</title>
+<title>RAP Tornado Probability LCC</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   body { margin:0; }
-  canvas { display:block; width:100vw; height:100vh; background:#111; }
+  #map { width:100%; height:100vh; }
 </style>
 </head>
 <body>
-<canvas id="mapCanvas"></canvas>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.1/proj4.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
 
 <script>
-const canvas = document.getElementById('mapCanvas');
-const ctx = canvas.getContext('2d');
+// -------------------- LCC CRS --------------------
+const lccProj = '+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs';
 
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+const crs = new L.Proj.CRS('EPSG:9999', lccProj, {
+  resolutions: [100000,50000,25000,12500,6250,3125,1562.5], // zoom levels
+  origin: [0,0]
+});
 
-// Load LCC JSON
+const map = L.map('map', {
+  crs: crs,
+  center: [0,0],
+  zoom: 0
+});
+
+// Optional: basic empty tile layer just for reference
+// L.tileLayer('', { attribution: '' }).addTo(map);
+
+// -------------------- Load RAP JSON --------------------
 fetch('map/data/tornado_prob_lcc.json')
   .then(res => res.json())
   .then(data => {
     const features = data.features;
     console.log("First 5 points:", features.slice(0,5));
 
-    // Compute bounds
+    // Compute bounds for initial map fit
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     features.forEach(f => {
       if(f.x < minX) minX = f.x;
@@ -38,41 +51,46 @@ fetch('map/data/tornado_prob_lcc.json')
       if(f.y > maxY) maxY = f.y;
     });
 
-    const rangeX = maxX - minX;
-    const rangeY = maxY - minY;
+    const bounds = [
+      [minY, minX],
+      [maxY, maxX]
+    ];
+    map.fitBounds(bounds);
 
-    console.log("Bounds:", {minX, maxX, minY, maxY});
+    // LayerGroup for grid cells
+    const layerGroup = L.layerGroup().addTo(map);
 
-    // Shift coordinates to local origin
-    const shiftX = -minX;
-    const shiftY = -minY;
+    // Grid cell size in meters (13 km)
+    const cellSize = 13000;
 
-    // Downsample for performance if needed
+    // Downsample if needed for performance
     const step = Math.max(1, Math.floor(features.length / 50000));
 
-    // Determine rectangle size based on grid spacing
-    const sizeX = canvas.width / features.length * 2; // approximate
-    const sizeY = canvas.height / features.length * 2;
-
     features.forEach((f, idx) => {
-      if(idx % step !== 0) return;
+      if(idx % step !== 0) return; // skip for performance
 
-      const px = ((f.x + shiftX) / rangeX) * canvas.width;
-      const py = canvas.height - ((f.y + shiftY) / rangeY) * canvas.height;
+      const color = `rgba(${Math.floor(255*f.prob)},0,${Math.floor(255*(1-f.prob))},0.7)`;
 
-      // Color based on probability
-      const red = Math.floor(255 * f.prob);
-      const blue = Math.floor(255 * (1 - f.prob));
-      ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
+      // Rectangle bounds: [[southWest], [northEast]]
+      const bounds = [
+        [f.y - cellSize/2, f.x - cellSize/2],
+        [f.y + cellSize/2, f.x + cellSize/2]
+      ];
 
-      // Draw small rectangle
-      const rectSize = 3; // adjust for visibility
-      ctx.fillRect(px - rectSize/2, py - rectSize/2, rectSize, rectSize);
+      const rect = L.rectangle(bounds, {
+        color: color,
+        weight: 0,
+        fillOpacity: 0.7
+      }).addTo(layerGroup);
+
+      rect.bindTooltip(
+        `X: ${f.x.toFixed(0)} m<br>Y: ${f.y.toFixed(0)} m<br>Prob: ${f.prob.toFixed(3)}`,
+        {sticky:true}
+      );
     });
 
-    console.log("Rendering complete.");
   })
-  .catch(err => console.error("Error loading LCC JSON:", err));
+  .catch(err => console.error("Error loading JSON:", err));
 </script>
 </body>
 </html>
