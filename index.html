@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>RAP Tornado Probability (LCC)</title>
-  <style>
-    body { margin: 0; }
-    canvas { display: block; width: 100vw; height: 100vh; }
-  </style>
+<meta charset="utf-8" />
+<title>RAP LCC Test Render</title>
+<style>
+  body { margin:0; }
+  canvas { display:block; width:100vw; height:100vh; background:#111; }
+</style>
 </head>
 <body>
 <canvas id="mapCanvas"></canvas>
@@ -22,11 +22,11 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Load LCC JSON
 fetch('map/data/tornado_prob_lcc.json')
   .then(res => res.json())
   .then(data => {
     const features = data.features;
+    console.log("First 10 points:", features.slice(0,10));
 
     // Compute bounds
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -40,27 +40,19 @@ fetch('map/data/tornado_prob_lcc.json')
     const rangeX = maxX - minX;
     const rangeY = maxY - minY;
 
-    // Draw each point as a rectangle
-    const maxPoints = 50000; // limit for performance
-    const step = Math.ceil(features.length / maxPoints);
-
-    features.forEach((f, idx) => {
-      if(idx % step !== 0) return;
-
-      // Normalize coordinates to canvas
+    // Draw first 10 points
+    for(let i=0; i<10; i++) {
+      const f = features[i];
       const px = ((f.x - minX) / rangeX) * canvas.width;
-      const py = canvas.height - ((f.y - minY) / rangeY) * canvas.height; // flip Y
+      const py = canvas.height - ((f.y - minY) / rangeY) * canvas.height;
 
-      // Color based on probability
-      const red = Math.floor(255 * f.prob);
-      const blue = Math.floor(255 * (1 - f.prob));
-      ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
-
-      // Draw a tiny rectangle for the grid point
-      ctx.fillRect(px, py, 3, 3);
-    });
+      ctx.fillStyle = `rgba(255,0,0,${f.prob})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 8, 0, Math.PI*2);
+      ctx.fill();
+    }
   })
-  .catch(err => console.error("Error loading LCC JSON:", err));
+  .catch(err => console.error(err));
 </script>
 </body>
 </html>
