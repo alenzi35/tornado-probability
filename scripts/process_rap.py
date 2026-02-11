@@ -45,8 +45,7 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (abs(g.bottomLevel - bottom) < 1 and
-                    abs(g.topLevel - top) < 1):
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
         print(f"Found {shortname}")
         return g
@@ -60,10 +59,12 @@ cin_msg = pick_var(grbs, "cin", typeOfLevel="surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", typeOfLevel="heightAboveGroundLayer", bottom=0, top=1000)
 
+# ---------------- CLEAN NaNs ----------------
 cape = np.nan_to_num(cape_msg.values, nan=0.0)
 cin  = np.nan_to_num(cin_msg.values, nan=0.0)
 hlcy = np.nan_to_num(hlcy_msg.values, nan=0.0)
 
+# ---------------- GET LAT/LON ----------------
 lats, lons = cape_msg.latlons()  # lat/lon in degrees
 
 # ---------------- LCC TRANSFORM ----------------
@@ -72,15 +73,13 @@ print("Projection parameters from GRIB:")
 for k, v in proj_params.items():
     print(f"  {k}: {v}")
 
-# Define CRS objects
-crs_lcc = CRS(proj_params)      # native LCC
-crs_wgs = CRS.from_epsg(4326)   # lat/lon
+crs_lcc = CRS(proj_params)       # native LCC
+crs_wgs = CRS.from_epsg(4326)    # lat/lon
 
-# Create transformer
 transformer = Transformer.from_crs(crs_wgs, crs_lcc, always_xy=True)
 
-# Convert lat/lon to LCC meters
-xx, yy = transformer.transform(lons, lats)  # both arrays
+# Project lat/lon -> LCC meters
+xx, yy = transformer.transform(lons, lats)
 
 # ---------------- PROBABILITY ----------------
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
@@ -93,9 +92,9 @@ rows, cols = prob.shape
 for i in range(rows):
     for j in range(cols):
         features.append({
-            "x": float(xx[i, j]),
-            "y": float(yy[i, j]),
-            "prob": float(prob[i, j])
+            "x": float(xx[i,j]),
+            "y": float(yy[i,j]),
+            "prob": float(prob[i,j])
         })
 
 output = {
