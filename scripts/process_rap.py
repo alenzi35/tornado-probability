@@ -3,6 +3,7 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
+from pyproj import Proj
 
 
 # ================= CONFIG =================
@@ -98,12 +99,35 @@ cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
 
-# ================= GET LCC X/Y =================
+# ================= GET LAT/LON =================
 
-# Native projection coordinates (meters)
-x_vals, y_vals = cape_msg.projcoords()
+lats, lons = cape_msg.latlons()
 
-print("Loaded LCC coordinates")
+print("Loaded lat/lon grid")
+
+
+# ================= BUILD LCC PROJECTION =================
+
+params = cape_msg.projparams
+
+proj_lcc = Proj(
+    proj="lcc",
+    lat_1=params["lat_1"],
+    lat_2=params["lat_2"],
+    lat_0=params["lat_0"],
+    lon_0=params["lon_0"],
+    a=params.get("a", 6371229),
+    b=params.get("b", 6371229)
+)
+
+print("Initialized LCC projection")
+
+
+# ================= CONVERT TO X/Y =================
+
+x_vals, y_vals = proj_lcc(lons, lats)
+
+print("Converted to LCC meters")
 
 
 # ================= CLEAN NaNs =================
@@ -140,8 +164,6 @@ for i in range(rows):
         x = x_vals[i, j]
         y = y_vals[i, j]
 
-        # --- Compute true cell size from neighbors ---
-
         # dx
         if j < cols - 1:
             dx = x_vals[i, j+1] - x_vals[i, j]
@@ -166,15 +188,7 @@ for i in range(rows):
 # ================= WRITE JSON =================
 
 output = {
-    "projection": {
-        "proj": "lcc",
-        "lon_0": float(cape_msg.projparams.get("lon_0", 0)),
-        "lat_0": float(cape_msg.projparams.get("lat_0", 0)),
-        "lat_1": float(cape_msg.projparams.get("lat_1", 0)),
-        "lat_2": float(cape_msg.projparams.get("lat_2", 0)),
-        "a": float(cape_msg.projparams.get("a", 0)),
-        "b": float(cape_msg.projparams.get("b", 0))
-    },
+    "projection": params,
     "features": features
 }
 
