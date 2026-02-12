@@ -1,251 +1,83 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>RAP Tornado Probability (LCC)</title>
-
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #111;
-    overflow: hidden;
-  }
-
-  #mapCanvas {
-    display: block;
-    cursor: grab;
-  }
-
-  #mapCanvas:active {
-    cursor: grabbing;
-  }
-
-  #tooltip {
-    position: fixed;
-    background: rgba(0,0,0,0.8);
-    color: #fff;
-    font-family: monospace;
-    font-size: 12px;
-    padding: 6px 8px;
-    border-radius: 4px;
-    pointer-events: none;
-    display: none;
-    z-index: 10;
-  }
-</style>
-</head>
-
-<body>
-
 <canvas id="mapCanvas"></canvas>
-<div id="tooltip"></div>
-
 <script>
-
 const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
-const tooltip = document.getElementById("tooltip");
 
 let features = [];
-
-let minX, maxX, minY, maxY;
-let rangeX, rangeY;
-let shiftX, shiftY;
-
-
-/* -----------------------------
-   Camera
------------------------------ */
-
+let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
-let scale = 1;
-
 let dragging = false;
-let lastX = 0;
-let lastY = 0;
+let lastX, lastY;
 
-
-/* -----------------------------
-   Resize
------------------------------ */
-
-function resizeCanvas() {
-
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-
-  render();
-}
-
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
-
-
-/* -----------------------------
-   Load Data
------------------------------ */
-
+// Load JSON
 fetch("map/data/tornado_prob_lcc.json")
   .then(r => r.json())
   .then(data => {
-
     features = data.features;
-
-    computeBounds();
-
-    // Center view
-    offsetX = canvas.width / 2;
-    offsetY = canvas.height / 2;
-
+    // Compute bounds to center
+    const xs = features.map(f => f.x);
+    const ys = features.map(f => f.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    offsetX = canvas.width/2 - (minX+maxX)/2;
+    offsetY = canvas.height/2 - (minY+maxY)/2;
     render();
-
   });
 
-
-/* -----------------------------
-   Bounds
------------------------------ */
-
-function computeBounds() {
-
-  minX = Infinity;
-  maxX = -Infinity;
-  minY = Infinity;
-  maxY = -Infinity;
-
-  features.forEach(f => {
-
-    if (f.x < minX) minX = f.x;
-    if (f.x > maxX) maxX = f.x;
-
-    if (f.y < minY) minY = f.y;
-    if (f.y > maxY) maxY = f.y;
-
-  });
-
-  rangeX = maxX - minX;
-  rangeY = maxY - minY;
-
-  shiftX = -minX;
-  shiftY = -minY;
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  render();
 }
-
-
-/* -----------------------------
-   Render
------------------------------ */
-
-function render() {
-
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  ctx.translate(offsetX, offsetY);
-  ctx.scale(scale, scale);
-
-  const baseScale =
-    Math.min(
-      canvas.width / rangeX,
-      canvas.height / rangeY
-    );
-
-  ctx.scale(baseScale, baseScale);
-
-  ctx.translate(
-    -rangeX/2,
-    -rangeY/2
-  );
-
-
-  features.forEach(f => {
-
-    const x = f.x + shiftX;
-    const y = rangeY - (f.y + shiftY);
-
-    const w = f.dx;
-    const h = f.dy;
-
-    const r = Math.floor(255 * f.prob);
-    const b = Math.floor(255 * (1 - f.prob));
-
-    ctx.fillStyle = `rgb(${r},0,${b})`;
-
-    ctx.fillRect(
-      x - w/2,
-      y - h/2,
-      w,
-      h
-    );
-
-  });
-
-}
-
-
-/* -----------------------------
-   Mouse Pan
------------------------------ */
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
 canvas.addEventListener("mousedown", e => {
-
   dragging = true;
   lastX = e.clientX;
   lastY = e.clientY;
-
 });
-
-
-window.addEventListener("mouseup", () => {
-  dragging = false;
-});
-
-
+window.addEventListener("mouseup", () => dragging = false);
 window.addEventListener("mousemove", e => {
-
-  if (!dragging) return;
-
+  if(!dragging) return;
   const dx = e.clientX - lastX;
   const dy = e.clientY - lastY;
-
   offsetX += dx;
   offsetY += dy;
-
   lastX = e.clientX;
   lastY = e.clientY;
-
   render();
-
 });
 
-
-/* -----------------------------
-   Zoom
------------------------------ */
-
+// Zoom
 canvas.addEventListener("wheel", e => {
-
   e.preventDefault();
-
+  const mouseX = e.clientX;
+  const mouseY = e.clientY;
   const zoom = e.deltaY < 0 ? 1.1 : 0.9;
-
-  const mx = e.clientX;
-  const my = e.clientY;
-
-  offsetX = mx - (mx - offsetX) * zoom;
-  offsetY = my - (my - offsetY) * zoom;
-
+  offsetX = mouseX - (mouseX - offsetX) * zoom;
+  offsetY = mouseY - (mouseY - offsetY) * zoom;
   scale *= zoom;
-
-  scale = Math.min(Math.max(scale, 0.2), 20);
-
+  scale = Math.min(Math.max(scale, 0.1), 20);
   render();
+},{passive:false});
 
-},{ passive:false });
-
-
+function render() {
+  if(!features.length) return;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.translate(offsetX, offsetY);
+  ctx.scale(scale, scale);
+  for(const f of features){
+    const w = f.dx;
+    const h = f.dy;
+    const r = Math.floor(255*f.prob);
+    const b = Math.floor(255*(1-f.prob));
+    ctx.fillStyle = `rgb(${r},0,${b})`;
+    ctx.fillRect(f.x - w/2, f.y - h/2, w, h);
+  }
+}
 </script>
-
-</body>
-</html>
