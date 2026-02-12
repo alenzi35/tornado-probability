@@ -1,135 +1,214 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8" />
+<meta charset="UTF-8">
 <title>RAP Tornado Probability (LCC)</title>
+
 <style>
-  body { margin:0; overflow:hidden; }
-  canvas { display:block; background:#111; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    overflow: hidden;
+  }
+
+  #mapCanvas {
+    display: block;
+  }
+
   #tooltip {
-    position:absolute;
-    pointer-events:none;
-    background:rgba(0,0,0,0.7);
-    color:#fff;
-    padding:4px 6px;
-    border-radius:3px;
-    font-family:sans-serif;
-    font-size:12px;
-    display:none;
+    position: fixed;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    display: none;
+    z-index: 10;
   }
 </style>
 </head>
+
 <body>
+
 <canvas id="mapCanvas"></canvas>
 <div id="tooltip"></div>
 
 <script>
-const canvas = document.getElementById('mapCanvas');
-const ctx = canvas.getContext('2d');
-const tooltip = document.getElementById('tooltip');
 
-let width, height;
-function resize() {
-  width = window.innerWidth;
-  height = window.innerHeight;
-  canvas.width = width;
-  canvas.height = height;
-}
-window.addEventListener('resize', resize);
-resize();
+const canvas = document.getElementById("mapCanvas");
+const ctx = canvas.getContext("2d");
+const tooltip = document.getElementById("tooltip");
 
 let features = [];
-let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
-// Canvas transform state
-let scale = 0.00005; // initial zoom factor
-let offsetX = 0;
-let offsetY = 0;
-let isDragging = false;
-let dragStart = {x:0, y:0};
-let dragOffset = {x:0, y:0};
+let minX, maxX, minY, maxY;
+let rangeX, rangeY;
+let shiftX, shiftY;
 
-// Load JSON
-fetch('map/data/tornado_prob_lcc.json')
-  .then(r=>r.json())
-  .then(data=>{
-    features = data.features;
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 
-    // Compute bounds
-    features.forEach(f=>{
-      if(f.x<minX) minX=f.x; if(f.x>maxX) maxX=f.x;
-      if(f.y<minY) minY=f.y; if(f.y>maxY) maxY=f.y;
-    });
-
-    // Center view
-    offsetX = width/2 - (minX + maxX)/2 * scale;
-    offsetY = height/2 + (minY + maxY)/2 * scale; // y-axis flip
-
-    draw();
-  });
-
-// Draw function
-function draw() {
-  ctx.clearRect(0,0,width,height);
-
-  features.forEach(f=>{
-    const px = f.x*scale + offsetX;
-    const py = -f.y*scale + offsetY;
-
-    // Draw 13km square
-    const cellSize = 13000*scale;
-    const red = Math.floor(255*f.prob);
-    const blue = Math.floor(255*(1-f.prob));
-    ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
-    ctx.fillRect(px-cellSize/2, py-cellSize/2, cellSize, cellSize);
-  });
+  if (features.length) {
+    render();
+  }
 }
 
-// ---------------- Zoom ----------------
-canvas.addEventListener('wheel', e=>{
-  e.preventDefault();
-  const zoomFactor = Math.exp(-e.deltaY*0.001);
-  const mouseX = e.offsetX;
-  const mouseY = e.offsetY;
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
-  // Zoom around mouse
-  offsetX = mouseX - (mouseX - offsetX)*zoomFactor;
-  offsetY = mouseY - (mouseY - offsetY)*zoomFactor;
-  scale *= zoomFactor;
-  draw();
-});
 
-// ---------------- Pan ----------------
-canvas.addEventListener('mousedown', e=>{
-  isDragging = true;
-  dragStart = {x:e.clientX, y:e.clientY};
-  dragOffset = {x: offsetX, y: offsetY};
-});
-window.addEventListener('mouseup', ()=>{isDragging=false;});
-window.addEventListener('mousemove', e=>{
-  if(isDragging){
-    offsetX = dragOffset.x + (e.clientX - dragStart.x);
-    offsetY = dragOffset.y + (e.clientY - dragStart.y);
-    draw();
-  }
+/* ----------------------------
+   Load Data
+----------------------------- */
 
-  // Tooltip
-  let found = false;
-  for(let f of features){
-    const px = f.x*scale + offsetX;
-    const py = -f.y*scale + offsetY;
-    const cellSize = 13000*scale;
-    if(Math.abs(e.offsetX - px)<=cellSize/2 && Math.abs(e.offsetY - py)<=cellSize/2){
-      tooltip.style.display='block';
-      tooltip.style.left = e.pageX+10+'px';
-      tooltip.style.top = e.pageY+10+'px';
-      tooltip.innerHTML = `X: ${f.x.toFixed(0)} m<br>Y: ${f.y.toFixed(0)} m<br>Prob: ${f.prob.toFixed(3)}`;
-      found = true;
-      break;
+fetch("map/data/tornado_prob_lcc.json")
+  .then(r => r.json())
+  .then(data => {
+
+    features = data.features;
+
+    console.log("Loaded points:", features.length);
+    console.log("Sample:", features[0]);
+
+    computeBounds();
+    render();
+
+  })
+  .catch(err => {
+    console.error("JSON load failed:", err);
+  });
+
+
+/* ----------------------------
+   Compute Bounds
+----------------------------- */
+
+function computeBounds() {
+
+  minX = Infinity;
+  maxX = -Infinity;
+  minY = Infinity;
+  maxY = -Infinity;
+
+  features.forEach(f => {
+
+    if (f.x < minX) minX = f.x;
+    if (f.x > maxX) maxX = f.x;
+
+    if (f.y < minY) minY = f.y;
+    if (f.y > maxY) maxY = f.y;
+
+  });
+
+  rangeX = maxX - minX;
+  rangeY = maxY - minY;
+
+  shiftX = -minX;
+  shiftY = -minY;
+
+  console.log("Bounds:", { minX, maxX, minY, maxY });
+}
+
+
+/* ----------------------------
+   Render
+----------------------------- */
+
+function render() {
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  features.forEach(f => {
+
+    // Project to screen
+    const px = ((f.x + shiftX) / rangeX) * canvas.width;
+    const py = canvas.height -
+               ((f.y + shiftY) / rangeY) * canvas.height;
+
+    // True grid size
+    const w = (f.dx / rangeX) * canvas.width;
+    const h = (f.dy / rangeY) * canvas.height;
+
+    // Color
+    const red = Math.floor(255 * f.prob);
+    const blue = Math.floor(255 * (1 - f.prob));
+
+    ctx.fillStyle = `rgb(${red},0,${blue})`;
+
+    // Draw cell
+    ctx.fillRect(
+      px - w / 2,
+      py - h / 2,
+      w,
+      h
+    );
+
+  });
+
+  console.log("Rendered.");
+}
+
+
+/* ----------------------------
+   Hover Tooltip
+----------------------------- */
+
+canvas.addEventListener("mousemove", e => {
+
+  if (!features.length) return;
+
+  const rect = canvas.getBoundingClientRect();
+
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Convert mouse to LCC
+  const x =
+    (mx / canvas.width) * rangeX - shiftX;
+
+  const y =
+    ((canvas.height - my) / canvas.height) * rangeY - shiftY;
+
+  let best = null;
+  let bestDist = Infinity;
+
+  // Nearest neighbour search
+  for (let f of features) {
+
+    const dx = f.x - x;
+    const dy = f.y - y;
+
+    const d = dx*dx + dy*dy;
+
+    if (d < bestDist) {
+      bestDist = d;
+      best = f;
     }
   }
-  if(!found) tooltip.style.display='none';
+
+  if (!best) return;
+
+  tooltip.style.display = "block";
+  tooltip.style.left = (e.clientX + 12) + "px";
+  tooltip.style.top = (e.clientY + 12) + "px";
+
+  tooltip.innerHTML =
+    `Prob: ${(best.prob * 100).toFixed(1)}%<br>` +
+    `X: ${best.x.toFixed(0)} m<br>` +
+    `Y: ${best.y.toFixed(0)} m`;
+
 });
+
+
+canvas.addEventListener("mouseleave", () => {
+  tooltip.style.display = "none";
+});
+
 </script>
+
 </body>
 </html>
