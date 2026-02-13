@@ -1,82 +1,156 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>RAP Tornado Probability Map</title>
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+<meta charset="UTF-8">
+<title>RAP Tornado Probability (LCC)</title>
 <style>
-  body { margin:0; padding:0; }
-  #map { width:100vw; height:100vh; }
+  html, body { margin:0; padding:0; overflow:hidden; background:#111; }
+  canvas { display:block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #tooltip {
+    position: fixed;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    display: none;
+    z-index: 10;
+  }
 </style>
 </head>
 <body>
-<div id="map"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/proj4/dist/proj4.js"></script>
+<canvas id="mapCanvas"></canvas>
+<div id="tooltip"></div>
 
 <script>
-// ---------------- SETUP ----------------
-const map = L.map('map').setView([39, -98], 4); // center on CONUS
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
 
-// Add base tiles
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap contributors',
-  maxZoom: 19
-}).addTo(map);
+let features = [];
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
 
-// LCC → Mercator projection
-const lcc = proj4(
-  "+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +a=6371229 +b=6371229 +units=m +no_defs"
-);
-const mercator = proj4('EPSG:3857');
+let minX, maxX, minY, maxY, rangeX, rangeY;
 
-// ---------------- LOAD RAP JSON ----------------
-fetch('map/data/tornado_prob_lcc.json')
-  .then(res => res.json())
-  .then(json => {
-    const features = json.features;
-
-    features.forEach(f => {
-      // Compute four corners in LCC
-      const cornersLCC = [
-        [f.x - f.dx/2, f.y - f.dy/2],
-        [f.x + f.dx/2, f.y - f.dy/2],
-        [f.x + f.dx/2, f.y + f.dy/2],
-        [f.x - f.dx/2, f.y + f.dy/2]
-      ];
-
-      // Project corners to lat/lon for Leaflet
-      const cornersLatLon = cornersLCC.map(c => {
-        const [mx, my] = proj4(lcc, mercator, c);
-        // Leaflet uses lat/lon; proj4 EPSG:3857 → lat/lon
-        return mercatorToLatLon(mx, my);
-      });
-
-      // Color based on probability
-      const red = Math.floor(255 * f.prob);
-      const blue = Math.floor(255 * (1 - f.prob));
-      const color = `rgba(${red},0,${blue},0.6)`;
-
-      // Add polygon to map
-      const poly = L.polygon(cornersLatLon, {color: color, fillColor: color, weight: 0});
-      poly.addTo(map);
-
-      // Popup on hover
-      poly.bindTooltip(`Prob: ${(f.prob*100).toFixed(1)}%`, {sticky:true});
-    });
-  });
-
-// Convert Mercator (EPSG:3857) meters → lat/lon
-function mercatorToLatLon(x, y){
-  const lon = (x / 20037508.34) * 180;
-  let lat = (y / 20037508.34) * 180;
-  lat = 180/Math.PI*(2*Math.atan(Math.exp(lat*Math.PI/180))-Math.PI/2);
-  return [lat, lon];
+function resizeCanvas(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    render();
 }
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// Load JSON
+fetch('map/data/tornado_prob_lcc.json')
+.then(r=>r.json())
+.then(data=>{
+    features = data.features;
+    // compute bounds
+    minX = Math.min(...features.map(f=>f.x));
+    maxX = Math.max(...features.map(f=>f.x));
+    minY = Math.min(...features.map(f=>f.y));
+    maxY = Math.max(...features.map(f=>f.y));
+    rangeX = maxX - minX;
+    rangeY = maxY - minY;
+
+    // center
+    offsetX = canvas.width/2;
+    offsetY = canvas.height/2;
+
+    render();
+});
+
+// Render function
+function render(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(!features.length) return;
+
+    features.forEach(f=>{
+        // map LCC x/y to canvas pixels
+        const px = ((f.x - minX)/rangeX)*canvas.width*scale + offsetX - canvas.width/2;
+        const py = canvas.height - ((f.y - minY)/rangeY)*canvas.height*scale + offsetY - canvas.height/2;
+
+        const w = (f.dx / rangeX) * canvas.width * scale;
+        const h = (f.dy / rangeY) * canvas.height * scale;
+
+        const r = Math.floor(255 * f.prob);
+        const b = Math.floor(255 * (1 - f.prob));
+        ctx.fillStyle = `rgb(${r},0,${b})`;
+
+        ctx.fillRect(px - w/2, py - h/2, w, h);
+    });
+}
+
+// Pan
+canvas.addEventListener('mousedown', e=>{
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+});
+window.addEventListener('mouseup', ()=>dragging=false);
+window.addEventListener('mousemove', e=>{
+    if(!dragging) return;
+    offsetX += e.clientX - lastX;
+    offsetY += e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    render();
+});
+
+// Zoom
+canvas.addEventListener('wheel', e=>{
+    e.preventDefault();
+    const zoom = e.deltaY < 0 ? 1.1 : 0.9;
+    const mx = e.clientX;
+    const my = e.clientY;
+    offsetX = mx - (mx - offsetX) * zoom;
+    offsetY = my - (my - offsetY) * zoom;
+    scale *= zoom;
+    scale = Math.min(Math.max(scale,0.05),50);
+    render();
+},{passive:false});
+
+// Tooltip
+canvas.addEventListener('mousemove', e=>{
+    if(!features.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const invScale = 1/scale;
+
+    // Map mouse to LCC
+    const cx = ((mx - offsetX + canvas.width/2) * invScale / canvas.width) * rangeX + minX;
+    const cy = ((canvas.height - (my - offsetY + canvas.height/2) * invScale) / canvas.height) * rangeY + minY;
+
+    let nearest = null;
+    let nearestDist = Infinity;
+    for(const f of features){
+        const dx = f.x - cx;
+        const dy = f.y - cy;
+        const d = dx*dx + dy*dy;
+        if(d < nearestDist){
+            nearestDist = d;
+            nearest = f;
+        }
+    }
+
+    if(!nearest) return;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY + 12) + 'px';
+    tooltip.innerHTML = `Prob: ${(nearest.prob*100).toFixed(1)}%<br>X: ${nearest.x.toFixed(0)}<br>Y: ${nearest.y.toFixed(0)}`;
+});
+canvas.addEventListener('mouseleave', ()=>tooltip.style.display='none');
 </script>
+
 </body>
 </html>
