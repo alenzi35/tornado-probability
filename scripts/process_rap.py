@@ -104,9 +104,23 @@ hlcy = hlcy_msg.values
 
 # ---------------- GRID GEOMETRY (LCC) ----------------
 
-# Get projection info from GRIB
 proj_params = cape_msg.projparams
-lcc_crs = CRS.from_cf(proj_params)
+
+# Build LCC CRS manually (RAP format)
+lcc_crs = CRS.from_proj4(
+    f"""
+    +proj=lcc
+    +lat_1={proj_params['lat_1']}
+    +lat_2={proj_params['lat_2']}
+    +lat_0={proj_params['lat_0']}
+    +lon_0={proj_params['lon_0']}
+    +a={proj_params['a']}
+    +b={proj_params['b']}
+    +units=m
+    +no_defs
+    """
+)
+
 wgs84 = CRS.from_epsg(4326)
 
 # Transformer LCC → lat/lon
@@ -116,12 +130,14 @@ to_latlon = Transformer.from_crs(
     always_xy=True
 )
 
-# Get native x/y grid
+
+# Get native x/y grid (meters)
 xs, ys = cape_msg.xy()
 
+
 # Grid spacing (meters)
-dx = np.mean(np.diff(xs[0, :]))
-dy = np.mean(np.diff(ys[:, 0]))
+dx = float(np.mean(np.diff(xs[0, :])))
+dy = float(np.mean(np.diff(ys[:, 0])))
 
 print("Grid spacing (m):", dx, dy)
 
@@ -169,17 +185,17 @@ for i in range(rows):
         lcc_features.append({
             "x": x,
             "y": y,
-            "dx": float(dx),
-            "dy": float(dy),
+            "dx": dx,
+            "dy": dy,
             "prob": p
         })
 
         # Lat/Lon (derived from same grid)
         latlon_features.append({
-            "lat": float(lat),
-            "lon": float(lon),
-            "dLat": float(abs(dy / 111320)),  # approx meters→deg
-            "dLon": float(abs(dx / (111320 * np.cos(np.radians(lat))))),
+            "lat": lat,
+            "lon": lon,
+            "dLat": abs(dy / 111320),
+            "dLon": abs(dx / (111320 * np.cos(np.radians(lat)))),
             "prob": p
         })
 
