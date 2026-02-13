@@ -33,6 +33,7 @@ let data = null;
 let scale = 1, offsetX = 0, offsetY = 0;
 let isDragging = false, startDrag = {};
 
+// Resize canvas
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -40,26 +41,32 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Mercator projection helper
-function mercatorXY(lat, lon) {
-  const x = lon * 20037508.34 / 180;
-  let y = Math.log(Math.tan((90 + lat) * Math.PI/360)) / (Math.PI/180);
-  y = y * 20037508.34 / 180;
-  return [x, y];
-}
+// Define projections
+const lcc = proj4(
+  "+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +a=6371229 +b=6371229 +units=m +no_defs"
+);
+const mercator = proj4('EPSG:3857'); // Web Mercator
 
-// Load JSON
-fetch('map/data/tornado_prob.json')
+// Load JSON (LCC coordinates)
+fetch('map/data/tornado_prob_lcc.json')
   .then(res => res.json())
   .then(json => {
-    data = json;
+    data = json.features;
 
-    // Compute bounds for initial scaling
-    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+    // Project all corners to Mercator to compute bounds
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     data.forEach(f => {
-      const [x, y] = mercatorXY(f.lat, f.lon);
-      if(x<minX) minX=x; if(x>maxX) maxX=x;
-      if(y<minY) minY=y; if(y>maxY) maxY=y;
+      const corners = [
+        [f.x - f.dx/2, f.y - f.dy/2],
+        [f.x + f.dx/2, f.y - f.dy/2],
+        [f.x + f.dx/2, f.y + f.dy/2],
+        [f.x - f.dx/2, f.y + f.dy/2]
+      ];
+      corners.forEach(([cx, cy]) => {
+        const [mx, my] = proj4(lcc, mercator, [cx, cy]);
+        if(mx < minX) minX = mx; if(mx > maxX) maxX = mx;
+        if(my < minY) minY = my; if(my > maxY) maxY = my;
+      });
     });
 
     // Initial scale to fit canvas
@@ -94,11 +101,20 @@ canvas.addEventListener('mousemove', e => {
   const mouseX = e.clientX, mouseY = e.clientY;
   let found = null;
   for(let f of data){
-    const [cx, cy] = mercatorXY(f.lat, f.lon);
-    const size = 13*1000; // approx cell size in meters
-    const px = cx*scale + offsetX;
-    const py = canvas.height - (cy*scale + offsetY);
-    if(mouseX>=px-size/2 && mouseX<=px+size/2 && mouseY>=py-size/2 && mouseY<=py+size/2){
+    const corners = [
+      [f.x - f.dx/2, f.y - f.dy/2],
+      [f.x + f.dx/2, f.y - f.dy/2],
+      [f.x + f.dx/2, f.y + f.dy/2],
+      [f.x - f.dx/2, f.y + f.dy/2]
+    ].map(c => proj4(lcc, mercator, c));
+    
+    const pxs = corners.map(c => c[0]*scale + offsetX);
+    const pys = corners.map(c => canvas.height - (c[1]*scale + offsetY));
+
+    // Simple bounding box hover
+    const minPX = Math.min(...pxs), maxPX = Math.max(...pxs);
+    const minPY = Math.min(...pys), maxPY = Math.max(...pys);
+    if(mouseX>=minPX && mouseX<=maxPX && mouseY>=minPY && mouseY<=maxPY){
       found = f; break;
     }
   }
@@ -117,28 +133,29 @@ function draw(){
   if(!data) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  for(let f of data){
-    const [cx, cy] = mercatorXY(f.lat, f.lon);
-    const px = cx*scale + offsetX;
-    const py = canvas.height - (cy*scale + offsetY);
+  data.forEach(f=>{
+    const corners = [
+      [f.x - f.dx/2, f.y - f.dy/2],
+      [f.x + f.dx/2, f.y - f.dy/2],
+      [f.x + f.dx/2, f.y + f.dy/2],
+      [f.x - f.dx/2, f.y + f.dy/2]
+    ].map(c => proj4(lcc, mercator, c));
 
-    // Approximate Mercator cell size in pixels
-    const size = 13*1000*scale;
+    const pxs = corners.map(c => c[0]*scale + offsetX);
+    const pys = corners.map(c => canvas.height - (c[1]*scale + offsetY));
 
-    // Color
+    // Color by probability
     const red = Math.floor(255*f.prob);
     const blue = Math.floor(255*(1-f.prob));
     ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
 
-    // Draw polygon (square here, can replace with 4-corner polygon for more accuracy)
+    // Draw polygon
     ctx.beginPath();
-    ctx.moveTo(px-size/2, py-size/2);
-    ctx.lineTo(px+size/2, py-size/2);
-    ctx.lineTo(px+size/2, py+size/2);
-    ctx.lineTo(px-size/2, py+size/2);
+    ctx.moveTo(pxs[0], pys[0]);
+    for(let i=1;i<4;i++) ctx.lineTo(pxs[i], pys[i]);
     ctx.closePath();
     ctx.fill();
-  }
+  });
 }
 </script>
 </body>
