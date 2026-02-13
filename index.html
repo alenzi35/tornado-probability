@@ -2,87 +2,144 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Tornado Probability Map</title>
-
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
+<title>RAP Tornado Probability (Mercator)</title>
 <style>
-html, body {
-  margin: 0;
-  height: 100%;
-}
-
-#map {
-  width: 100%;
-  height: 100%;
-}
+  body { margin:0; overflow:hidden; }
+  canvas { display:block; background:#111; }
+  #tooltip {
+    position:absolute;
+    pointer-events:none;
+    padding:4px 8px;
+    background:rgba(0,0,0,0.8);
+    color:#fff;
+    font-family:sans-serif;
+    font-size:12px;
+    border-radius:4px;
+    display:none;
+  }
 </style>
 </head>
-
 <body>
+<canvas id="mapCanvas"></canvas>
+<div id="tooltip"></div>
 
-<div id="map"></div>
-
+<script src="https://unpkg.com/proj4/dist/proj4.js"></script>
 <script>
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
 
-// Create map centered on US
-const map = L.map('map').setView([39, -98], 4);
+let data = null;
+let scale = 1, offsetX = 0, offsetY = 0;
+let isDragging = false, startDrag = {};
 
-// OpenStreetMap tiles
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 12,
-  attribution: '&copy; OpenStreetMap'
-}).addTo(map);
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
+// Mercator projection helper
+function mercatorXY(lat, lon) {
+  const x = lon * 20037508.34 / 180;
+  let y = Math.log(Math.tan((90 + lat) * Math.PI/360)) / (Math.PI/180);
+  y = y * 20037508.34 / 180;
+  return [x, y];
+}
 
-// Load lat/lon data
+// Load JSON
 fetch('map/data/tornado_prob.json')
-.then(r => r.json())
-.then(data => {
+  .then(res => res.json())
+  .then(json => {
+    data = json;
 
-  data.forEach(f => {
-
-    const lat = f.lat;
-    const lon = f.lon;
-    const prob = f.prob;
-
-    // Estimate cell size from steps
-    const dLat = f.latStep / 2;
-    const dLon = f.lonStep / 2;
-
-    // Color scale
-    const r = Math.floor(255 * prob);
-    const b = Math.floor(255 * (1 - prob));
-
-    const color = `rgb(${r},0,${b})`;
-
-    // Rectangle bounds
-    const bounds = [
-      [lat - dLat, lon - dLon],
-      [lat + dLat, lon + dLon]
-    ];
-
-    const rect = L.rectangle(bounds, {
-      color: color,
-      weight: 0,
-      fillOpacity: 0.7
+    // Compute bounds for initial scaling
+    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+    data.forEach(f => {
+      const [x, y] = mercatorXY(f.lat, f.lon);
+      if(x<minX) minX=x; if(x>maxX) maxX=x;
+      if(y<minY) minY=y; if(y>maxY) maxY=y;
     });
 
-    rect.bindTooltip(
-      `Probability: ${(prob*100).toFixed(1)}%`,
-      {sticky:true}
-    );
+    // Initial scale to fit canvas
+    scale = Math.min(canvas.width/(maxX-minX), canvas.height/(maxY-minY));
+    offsetX = -minX*scale;
+    offsetY = -minY*scale;
 
-    rect.addTo(map);
-
+    draw();
   });
 
+// ---------------- ZOOM & PAN ----------------
+canvas.addEventListener('wheel', e => {
+  const delta = -e.deltaY/500;
+  scale *= 1 + delta;
+  draw();
 });
-</script>
 
+canvas.addEventListener('mousedown', e => {
+  isDragging = true;
+  startDrag = {x:e.clientX, y:e.clientY, offsetX, offsetY};
+});
+canvas.addEventListener('mouseup', ()=> isDragging=false);
+canvas.addEventListener('mouseout', ()=> isDragging=false);
+canvas.addEventListener('mousemove', e => {
+  if(isDragging){
+    offsetX = startDrag.offsetX + e.clientX - startDrag.x;
+    offsetY = startDrag.offsetY + e.clientY - startDrag.y;
+    draw();
+  }
+
+  if(!data) return;
+  const mouseX = e.clientX, mouseY = e.clientY;
+  let found = null;
+  for(let f of data){
+    const [cx, cy] = mercatorXY(f.lat, f.lon);
+    const size = 13*1000; // approx cell size in meters
+    const px = cx*scale + offsetX;
+    const py = canvas.height - (cy*scale + offsetY);
+    if(mouseX>=px-size/2 && mouseX<=px+size/2 && mouseY>=py-size/2 && mouseY<=py+size/2){
+      found = f; break;
+    }
+  }
+  if(found){
+    tooltip.style.display='block';
+    tooltip.style.left = (e.clientX+10)+'px';
+    tooltip.style.top = (e.clientY+10)+'px';
+    tooltip.innerHTML = `Prob: ${(found.prob*100).toFixed(1)}%`;
+  } else {
+    tooltip.style.display='none';
+  }
+});
+
+// ---------------- DRAW ----------------
+function draw(){
+  if(!data) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  for(let f of data){
+    const [cx, cy] = mercatorXY(f.lat, f.lon);
+    const px = cx*scale + offsetX;
+    const py = canvas.height - (cy*scale + offsetY);
+
+    // Approximate Mercator cell size in pixels
+    const size = 13*1000*scale;
+
+    // Color
+    const red = Math.floor(255*f.prob);
+    const blue = Math.floor(255*(1-f.prob));
+    ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
+
+    // Draw polygon (square here, can replace with 4-corner polygon for more accuracy)
+    ctx.beginPath();
+    ctx.moveTo(px-size/2, py-size/2);
+    ctx.lineTo(px+size/2, py-size/2);
+    ctx.lineTo(px+size/2, py+size/2);
+    ctx.lineTo(px-size/2, py+size/2);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+</script>
 </body>
 </html>
