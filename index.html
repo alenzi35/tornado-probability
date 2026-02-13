@@ -2,160 +2,80 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability (Mercator)</title>
+<title>RAP Tornado Probability Map</title>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
 <style>
-  body { margin:0; overflow:hidden; }
-  canvas { display:block; background:#111; }
-  #tooltip {
-    position:absolute;
-    pointer-events:none;
-    padding:4px 8px;
-    background:rgba(0,0,0,0.8);
-    color:#fff;
-    font-family:sans-serif;
-    font-size:12px;
-    border-radius:4px;
-    display:none;
-  }
+  body { margin:0; padding:0; }
+  #map { width:100vw; height:100vh; }
 </style>
 </head>
 <body>
-<canvas id="mapCanvas"></canvas>
-<div id="tooltip"></div>
+<div id="map"></div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/proj4/dist/proj4.js"></script>
+
 <script>
-const canvas = document.getElementById('mapCanvas');
-const ctx = canvas.getContext('2d');
-const tooltip = document.getElementById('tooltip');
+// ---------------- SETUP ----------------
+const map = L.map('map').setView([39, -98], 4); // center on CONUS
 
-let data = null;
-let scale = 1, offsetX = 0, offsetY = 0;
-let isDragging = false, startDrag = {};
+// Add base tiles
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
 
-// Resize canvas
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
-
-// Define projections
+// LCC → Mercator projection
 const lcc = proj4(
   "+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +a=6371229 +b=6371229 +units=m +no_defs"
 );
-const mercator = proj4('EPSG:3857'); // Web Mercator
+const mercator = proj4('EPSG:3857');
 
-// Load JSON (LCC coordinates)
+// ---------------- LOAD RAP JSON ----------------
 fetch('map/data/tornado_prob_lcc.json')
   .then(res => res.json())
   .then(json => {
-    data = json.features;
+    const features = json.features;
 
-    // Project all corners to Mercator to compute bounds
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    data.forEach(f => {
-      const corners = [
+    features.forEach(f => {
+      // Compute four corners in LCC
+      const cornersLCC = [
         [f.x - f.dx/2, f.y - f.dy/2],
         [f.x + f.dx/2, f.y - f.dy/2],
         [f.x + f.dx/2, f.y + f.dy/2],
         [f.x - f.dx/2, f.y + f.dy/2]
       ];
-      corners.forEach(([cx, cy]) => {
-        const [mx, my] = proj4(lcc, mercator, [cx, cy]);
-        if(mx < minX) minX = mx; if(mx > maxX) maxX = mx;
-        if(my < minY) minY = my; if(my > maxY) maxY = my;
+
+      // Project corners to lat/lon for Leaflet
+      const cornersLatLon = cornersLCC.map(c => {
+        const [mx, my] = proj4(lcc, mercator, c);
+        // Leaflet uses lat/lon; proj4 EPSG:3857 → lat/lon
+        return mercatorToLatLon(mx, my);
       });
+
+      // Color based on probability
+      const red = Math.floor(255 * f.prob);
+      const blue = Math.floor(255 * (1 - f.prob));
+      const color = `rgba(${red},0,${blue},0.6)`;
+
+      // Add polygon to map
+      const poly = L.polygon(cornersLatLon, {color: color, fillColor: color, weight: 0});
+      poly.addTo(map);
+
+      // Popup on hover
+      poly.bindTooltip(`Prob: ${(f.prob*100).toFixed(1)}%`, {sticky:true});
     });
-
-    // Initial scale to fit canvas
-    scale = Math.min(canvas.width/(maxX-minX), canvas.height/(maxY-minY));
-    offsetX = -minX*scale;
-    offsetY = -minY*scale;
-
-    draw();
   });
 
-// ---------------- ZOOM & PAN ----------------
-canvas.addEventListener('wheel', e => {
-  const delta = -e.deltaY/500;
-  scale *= 1 + delta;
-  draw();
-});
-
-canvas.addEventListener('mousedown', e => {
-  isDragging = true;
-  startDrag = {x:e.clientX, y:e.clientY, offsetX, offsetY};
-});
-canvas.addEventListener('mouseup', ()=> isDragging=false);
-canvas.addEventListener('mouseout', ()=> isDragging=false);
-canvas.addEventListener('mousemove', e => {
-  if(isDragging){
-    offsetX = startDrag.offsetX + e.clientX - startDrag.x;
-    offsetY = startDrag.offsetY + e.clientY - startDrag.y;
-    draw();
-  }
-
-  if(!data) return;
-  const mouseX = e.clientX, mouseY = e.clientY;
-  let found = null;
-  for(let f of data){
-    const corners = [
-      [f.x - f.dx/2, f.y - f.dy/2],
-      [f.x + f.dx/2, f.y - f.dy/2],
-      [f.x + f.dx/2, f.y + f.dy/2],
-      [f.x - f.dx/2, f.y + f.dy/2]
-    ].map(c => proj4(lcc, mercator, c));
-    
-    const pxs = corners.map(c => c[0]*scale + offsetX);
-    const pys = corners.map(c => canvas.height - (c[1]*scale + offsetY));
-
-    // Simple bounding box hover
-    const minPX = Math.min(...pxs), maxPX = Math.max(...pxs);
-    const minPY = Math.min(...pys), maxPY = Math.max(...pys);
-    if(mouseX>=minPX && mouseX<=maxPX && mouseY>=minPY && mouseY<=maxPY){
-      found = f; break;
-    }
-  }
-  if(found){
-    tooltip.style.display='block';
-    tooltip.style.left = (e.clientX+10)+'px';
-    tooltip.style.top = (e.clientY+10)+'px';
-    tooltip.innerHTML = `Prob: ${(found.prob*100).toFixed(1)}%`;
-  } else {
-    tooltip.style.display='none';
-  }
-});
-
-// ---------------- DRAW ----------------
-function draw(){
-  if(!data) return;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  data.forEach(f=>{
-    const corners = [
-      [f.x - f.dx/2, f.y - f.dy/2],
-      [f.x + f.dx/2, f.y - f.dy/2],
-      [f.x + f.dx/2, f.y + f.dy/2],
-      [f.x - f.dx/2, f.y + f.dy/2]
-    ].map(c => proj4(lcc, mercator, c));
-
-    const pxs = corners.map(c => c[0]*scale + offsetX);
-    const pys = corners.map(c => canvas.height - (c[1]*scale + offsetY));
-
-    // Color by probability
-    const red = Math.floor(255*f.prob);
-    const blue = Math.floor(255*(1-f.prob));
-    ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
-
-    // Draw polygon
-    ctx.beginPath();
-    ctx.moveTo(pxs[0], pys[0]);
-    for(let i=1;i<4;i++) ctx.lineTo(pxs[i], pys[i]);
-    ctx.closePath();
-    ctx.fill();
-  });
+// Convert Mercator (EPSG:3857) meters → lat/lon
+function mercatorToLatLon(x, y){
+  const lon = (x / 20037508.34) * 180;
+  let lat = (y / 20037508.34) * 180;
+  lat = 180/Math.PI*(2*Math.atan(Math.exp(lat*Math.PI/180))-Math.PI/2);
+  return [lat, lon];
 }
 </script>
 </body>
