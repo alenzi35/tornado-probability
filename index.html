@@ -2,8 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability Map (LCC)</title>
-
+<title>RAP Tornado Probability Map (LCC) — Verified Dallas</title>
 <style>
 body { margin:0; overflow:hidden; background:#000; }
 canvas { display:block; }
@@ -20,10 +19,8 @@ const ctx = canvas.getContext("2d");
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
-
 let dragging = false;
 let lastX, lastY;
-
 let cells = [];
 
 // Resize
@@ -45,6 +42,27 @@ fetch("map/data/tornado_prob_lcc.json")
   .then(r => r.json())
   .then(data => {
     cells = data.features;
+
+    // Find the cell closest to Dallas lat/lon using RAP LCC coords
+    const dallasLatLon = [-96.8, 32.8]; // WGS84
+    const dallasLCC = proj4("EPSG:4326", lcc, dallasLatLon);
+
+    // Find nearest cell in RAP grid to this point
+    let nearest = null;
+    let minDist = Infinity;
+    for (let c of cells) {
+      const dx = c.x + c.dx/2 - dallasLCC[0];
+      const dy = c.y + c.dy/2 - dallasLCC[1];
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if(dist < minDist) {
+        minDist = dist;
+        nearest = c;
+      }
+    }
+
+    // Store verified Dallas cell
+    window.dallasCell = nearest;
+
     fitView();
     draw();
   });
@@ -63,22 +81,19 @@ function fitView() {
 
   const w = maxX - minX;
   const h = maxY - minY;
-
   const sx = canvas.width / w;
   const sy = canvas.height / h;
 
   scale = Math.min(sx, sy) * 0.95;
-
   offsetX = canvas.width/2 - (minX + w/2)*scale;
   offsetY = canvas.height/2 + (minY + h/2)*scale;
 }
 
-// Draw all cells and CONUS bounding box
+// Draw cells and verified Dallas
 function draw() {
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // Transform LCC -> Canvas
   ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
 
   // Draw RAP cells
@@ -89,26 +104,15 @@ function draw() {
     ctx.fillRect(c.x, c.y, c.dx, c.dy);
   }
 
-  // Draw CONUS reference box
-  drawCONUSBox();
-}
-
-// Draw a simple rectangle covering the expected CONUS domain
-function drawCONUSBox() {
-  ctx.save();
-  ctx.strokeStyle = "lime";
-  ctx.lineWidth = 10000; // large in LCC units to be visible
-  ctx.beginPath();
-
-  // Approximate LCC bounds of CONUS (from RAP grid corners)
-  const minX = -2600000;
-  const maxX = 2500000;
-  const minY = -1100000;
-  const maxY = 2200000;
-
-  ctx.rect(minX, minY, maxX - minX, maxY - minY);
-  ctx.stroke();
-  ctx.restore();
+  // Draw verified Dallas cell
+  if(window.dallasCell){
+    ctx.save();
+    ctx.strokeStyle = "yellow";
+    ctx.lineWidth = 5000; // large enough to see
+    const c = window.dallasCell;
+    ctx.strokeRect(c.x, c.y, c.dx, c.dy);
+    ctx.restore();
+  }
 }
 
 // Zoom
