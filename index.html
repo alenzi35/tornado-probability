@@ -2,277 +2,115 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>LCC Tornado Map</title>
+  <title>Tornado Probability (LCC)</title>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
 
   <style>
     body {
       margin: 0;
-      overflow: hidden;
+      background: #0b0b0b;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    svg {
+      display: block;
+      margin: auto;
       background: #111;
     }
 
-    canvas {
-      display: block;
+    .border {
+      fill: none;
+      stroke: white;
+      stroke-width: 1;
+      opacity: 0.8;
     }
 
-    #info {
-      position: fixed;
-      top: 10px;
-      left: 10px;
-      color: white;
-      font-family: monospace;
-      background: rgba(0,0,0,0.6);
-      padding: 6px 10px;
-      border-radius: 4px;
+    .cell {
+      stroke: none;
     }
   </style>
 </head>
 
 <body>
 
-<canvas id="map"></canvas>
-<div id="info">Loading…</div>
+<svg id="map" width="1200" height="900"></svg>
 
 <script>
 
-const canvas = document.getElementById("map");
-const ctx = canvas.getContext("2d");
-const info = document.getElementById("info");
+const width = 1200;
+const height = 900;
 
-let W, H;
-
-// View state
-let scale = 1;
-let offsetX = 0;
-let offsetY = 0;
-
-let borders = [];
-let testCell = null;
+const svg = d3.select("#map");
 
 
-// -------------------------
-// Resize
-// -------------------------
+// ================================
+// Projection (Matches RAP LCC)
+// ================================
 
-function resize() {
-  W = canvas.width = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-  draw();
-}
+const projection = d3.geoConicConformal()
+  .parallels([50, 50])
+  .rotate([-253, 0])
+  .center([0, 50])
+  .scale(900)
+  .translate([width / 2, height / 2]);
 
-window.addEventListener("resize", resize);
-resize();
-
-
-// -------------------------
-// Pan + Zoom
-// -------------------------
-
-let dragging = false;
-let lastX = 0;
-let lastY = 0;
-
-canvas.addEventListener("mousedown", e => {
-  dragging = true;
-  lastX = e.clientX;
-  lastY = e.clientY;
-});
-
-window.addEventListener("mouseup", () => {
-  dragging = false;
-});
-
-window.addEventListener("mousemove", e => {
-  if (!dragging) return;
-
-  offsetX += e.clientX - lastX;
-  offsetY += e.clientY - lastY;
-
-  lastX = e.clientX;
-  lastY = e.clientY;
-
-  draw();
-});
-
-canvas.addEventListener("wheel", e => {
-  e.preventDefault();
-
-  const zoom = e.deltaY < 0 ? 1.15 : 0.85;
-
-  const mx = e.clientX;
-  const my = e.clientY;
-
-  offsetX = mx - (mx - offsetX) * zoom;
-  offsetY = my - (my - offsetY) * zoom;
-
-  scale *= zoom;
-
-  draw();
-}, { passive: false });
+const path = d3.geoPath().projection(projection);
 
 
-// -------------------------
+// ================================
 // Load Borders
-// -------------------------
+// ================================
 
-fetch("/map/data/borders_lcc.json")
+fetch("map/data/borders.lcc.json")
   .then(r => r.json())
-  .then(data => {
+  .then(borders => {
 
-    borders = data.features;
+    console.log("Borders loaded");
 
-    console.log("Loaded borders:", borders.length);
-
-    fitView();
-    createTestCell();
-    draw();
-
-    info.textContent = "Borders loaded";
+    svg.append("g")
+      .selectAll("path")
+      .data(borders.features)
+      .enter()
+      .append("path")
+      .attr("class", "border")
+      .attr("d", path);
 
   })
   .catch(err => {
-
-    console.error("Failed to load borders:", err);
-    info.textContent = "Failed to load borders";
-
+    console.error("Border load error:", err);
   });
 
 
-// -------------------------
-// Create Test Cell (Chicago-ish LCC point)
-// -------------------------
+// ================================
+// Example: Test Chicago Cell
+// ================================
+// (For debugging alignment)
 
-function createTestCell() {
+const chicago = {
+  lat: 41.8781,
+  lon: -87.6298
+};
 
-  // Example LCC coords (replace later with real conversion)
-  testCell = {
-    x: -920000,
-    y: 190000,
-    size: 30000
-  };
+const projected = projection([chicago.lon, chicago.lat]);
 
-}
+if (projected) {
 
+  svg.append("circle")
+    .attr("cx", projected[0])
+    .attr("cy", projected[1])
+    .attr("r", 6)
+    .attr("fill", "red");
 
-// -------------------------
-// Fit View
-// -------------------------
+  console.log("Chicago projected:", projected);
 
-function fitView() {
-
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-
-  for (const f of borders) {
-
-    for (const ring of f.geometry.coordinates) {
-      for (const [x,y] of ring) {
-
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-
-      }
-    }
-  }
-
-  const mapW = maxX - minX;
-  const mapH = maxY - minY;
-
-  scale = Math.min(W / mapW, H / mapH) * 0.9;
-
-  offsetX = W/2 - (minX + mapW/2) * scale;
-  offsetY = H/2 - (minY + mapH/2) * scale;
-}
-
-
-// -------------------------
-// Draw
-// -------------------------
-
-function draw() {
-
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,W,H);
-
-  ctx.setTransform(
-    scale,
-    0,
-    0,
-    -scale,
-    offsetX,
-    H + offsetY
-  );
-
-  drawBorders();
-  drawTestCell();
-
-}
-
-
-// -------------------------
-// Borders
-// -------------------------
-
-function drawBorders() {
-
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 1 / scale;
-
-  for (const f of borders) {
-
-    ctx.beginPath();
-
-    for (const ring of f.geometry.coordinates) {
-
-      ring.forEach(([x,y], i) => {
-
-        if (i === 0) ctx.moveTo(x,y);
-        else ctx.lineTo(x,y);
-
-      });
-
-      ctx.closePath();
-    }
-
-    ctx.stroke();
-  }
-
-}
-
-
-// -------------------------
-// Test Cell
-// -------------------------
-
-function drawTestCell() {
-
-  if (!testCell) return;
-
-  const s = testCell.size;
-
-  ctx.fillStyle = "red";
-  ctx.strokeStyle = "yellow";
-  ctx.lineWidth = 2 / scale;
-
-  ctx.beginPath();
-
-  ctx.rect(
-    testCell.x - s/2,
-    testCell.y - s/2,
-    s,
-    s
-  );
-
-  ctx.fill();
-  ctx.stroke();
-
+} else {
+  console.error("Projection failed for Chicago");
 }
 
 
 </script>
+
 </body>
 </html>
