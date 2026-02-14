@@ -20,7 +20,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-
       # ----------------------------
       # 2. Setup Python
       # ----------------------------
@@ -28,7 +27,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
 
       # ----------------------------
       # 3. Install system + Python deps
@@ -53,14 +51,12 @@ jobs:
             fiona \
             requests
 
-      
       # ----------------------------
       # 4. Run RAP processor
       # ----------------------------
       - name: Process RAP data
         run: |
           python scripts/process_rap.py
-
 
       # ----------------------------
       # 5. Convert borders to LCC
@@ -69,9 +65,16 @@ jobs:
         run: |
           python scripts/convert_borders_to_lcc.py
 
+      # ----------------------------
+      # 6. Compute Chicago LCC coordinates
+      # ----------------------------
+      - name: Compute Chicago LCC
+        run: |
+          echo "### Chicago LCC coordinates ###"
+          python scripts/chicago_lcc.py
 
       # ----------------------------
-      # 6. Commit + push outputs
+      # 7. Commit + push outputs
       # ----------------------------
       - name: Commit and push data
         run: |
