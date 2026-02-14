@@ -1,148 +1,278 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>RAP Tornado Probability Map (LCC) — Verified Dallas</title>
-<style>
-body { margin:0; overflow:hidden; background:#000; }
-canvas { display:block; }
-</style>
+  <meta charset="UTF-8" />
+  <title>LCC Tornado Map</title>
+
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #info {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: monospace;
+      background: rgba(0,0,0,0.6);
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+  </style>
 </head>
+
 <body>
-<canvas id="mapCanvas"></canvas>
 
-<script src="https://unpkg.com/proj4/dist/proj4.js"></script>
+<canvas id="map"></canvas>
+<div id="info">Loading…</div>
+
 <script>
-const canvas = document.getElementById("mapCanvas");
-const ctx = canvas.getContext("2d");
 
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
+
+let W, H;
+
+// View state
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
-let dragging = false;
-let lastX, lastY;
-let cells = [];
 
+let borders = [];
+let testCell = null;
+
+
+// -------------------------
 // Resize
+// -------------------------
+
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
   draw();
 }
+
 window.addEventListener("resize", resize);
 resize();
 
-// LCC projection (matches RAP native)
-const lcc = proj4(
-  "+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +a=6371229 +b=6371229 +units=m +no_defs"
-);
 
-// Load RAP JSON
-fetch("map/data/tornado_prob_lcc.json")
-  .then(r => r.json())
-  .then(data => {
-    cells = data.features;
+// -------------------------
+// Pan + Zoom
+// -------------------------
 
-    // Find the cell closest to Dallas lat/lon using RAP LCC coords
-    const dallasLatLon = [-96.8, 32.8]; // WGS84
-    const dallasLCC = proj4("EPSG:4326", lcc, dallasLatLon);
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
 
-    // Find nearest cell in RAP grid to this point
-    let nearest = null;
-    let minDist = Infinity;
-    for (let c of cells) {
-      const dx = c.x + c.dx/2 - dallasLCC[0];
-      const dy = c.y + c.dy/2 - dallasLCC[1];
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if(dist < minDist) {
-        minDist = dist;
-        nearest = c;
-      }
-    }
-
-    // Store verified Dallas cell
-    window.dallasCell = nearest;
-
-    fitView();
-    draw();
-  });
-
-// Auto-fit view to all cells
-function fitView() {
-  let minX = Infinity, maxX = -Infinity;
-  let minY = Infinity, maxY = -Infinity;
-
-  for (let c of cells) {
-    minX = Math.min(minX, c.x);
-    maxX = Math.max(maxX, c.x);
-    minY = Math.min(minY, c.y);
-    maxY = Math.max(maxY, c.y);
-  }
-
-  const w = maxX - minX;
-  const h = maxY - minY;
-  const sx = canvas.width / w;
-  const sy = canvas.height / h;
-
-  scale = Math.min(sx, sy) * 0.95;
-  offsetX = canvas.width/2 - (minX + w/2)*scale;
-  offsetY = canvas.height/2 + (minY + h/2)*scale;
-}
-
-// Draw cells and verified Dallas
-function draw() {
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
-
-  // Draw RAP cells
-  for (let c of cells) {
-    const r = Math.floor(255 * c.prob);
-    const b = 255 - r;
-    ctx.fillStyle = `rgba(${r},0,${b},0.6)`;
-    ctx.fillRect(c.x, c.y, c.dx, c.dy);
-  }
-
-  // Draw verified Dallas cell
-  if(window.dallasCell){
-    ctx.save();
-    ctx.strokeStyle = "yellow";
-    ctx.lineWidth = 5000; // large enough to see
-    const c = window.dallasCell;
-    ctx.strokeRect(c.x, c.y, c.dx, c.dy);
-    ctx.restore();
-  }
-}
-
-// Zoom
-canvas.addEventListener("wheel", e => {
-  e.preventDefault();
-  const zoom = e.deltaY < 0 ? 1.15 : 0.87;
-  const mx = e.offsetX;
-  const my = e.offsetY;
-
-  offsetX = mx - zoom*(mx - offsetX);
-  offsetY = my - zoom*(my - offsetY);
-  scale *= zoom;
-  draw();
-});
-
-// Pan
 canvas.addEventListener("mousedown", e => {
   dragging = true;
   lastX = e.clientX;
   lastY = e.clientY;
 });
-window.addEventListener("mouseup", () => dragging = false);
+
+window.addEventListener("mouseup", () => {
+  dragging = false;
+});
+
 window.addEventListener("mousemove", e => {
   if (!dragging) return;
+
   offsetX += e.clientX - lastX;
   offsetY += e.clientY - lastY;
+
   lastX = e.clientX;
   lastY = e.clientY;
+
   draw();
 });
+
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+
+  const zoom = e.deltaY < 0 ? 1.15 : 0.85;
+
+  const mx = e.clientX;
+  const my = e.clientY;
+
+  offsetX = mx - (mx - offsetX) * zoom;
+  offsetY = my - (my - offsetY) * zoom;
+
+  scale *= zoom;
+
+  draw();
+}, { passive: false });
+
+
+// -------------------------
+// Load Borders
+// -------------------------
+
+fetch("/map/data/borders_lcc.json")
+  .then(r => r.json())
+  .then(data => {
+
+    borders = data.features;
+
+    console.log("Loaded borders:", borders.length);
+
+    fitView();
+    createTestCell();
+    draw();
+
+    info.textContent = "Borders loaded";
+
+  })
+  .catch(err => {
+
+    console.error("Failed to load borders:", err);
+    info.textContent = "Failed to load borders";
+
+  });
+
+
+// -------------------------
+// Create Test Cell (Chicago-ish LCC point)
+// -------------------------
+
+function createTestCell() {
+
+  // Example LCC coords (replace later with real conversion)
+  testCell = {
+    x: -920000,
+    y: 190000,
+    size: 30000
+  };
+
+}
+
+
+// -------------------------
+// Fit View
+// -------------------------
+
+function fitView() {
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (const f of borders) {
+
+    for (const ring of f.geometry.coordinates) {
+      for (const [x,y] of ring) {
+
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+
+      }
+    }
+  }
+
+  const mapW = maxX - minX;
+  const mapH = maxY - minY;
+
+  scale = Math.min(W / mapW, H / mapH) * 0.9;
+
+  offsetX = W/2 - (minX + mapW/2) * scale;
+  offsetY = H/2 - (minY + mapH/2) * scale;
+}
+
+
+// -------------------------
+// Draw
+// -------------------------
+
+function draw() {
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  ctx.setTransform(
+    scale,
+    0,
+    0,
+    -scale,
+    offsetX,
+    H + offsetY
+  );
+
+  drawBorders();
+  drawTestCell();
+
+}
+
+
+// -------------------------
+// Borders
+// -------------------------
+
+function drawBorders() {
+
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 1 / scale;
+
+  for (const f of borders) {
+
+    ctx.beginPath();
+
+    for (const ring of f.geometry.coordinates) {
+
+      ring.forEach(([x,y], i) => {
+
+        if (i === 0) ctx.moveTo(x,y);
+        else ctx.lineTo(x,y);
+
+      });
+
+      ctx.closePath();
+    }
+
+    ctx.stroke();
+  }
+
+}
+
+
+// -------------------------
+// Test Cell
+// -------------------------
+
+function drawTestCell() {
+
+  if (!testCell) return;
+
+  const s = testCell.size;
+
+  ctx.fillStyle = "red";
+  ctx.strokeStyle = "yellow";
+  ctx.lineWidth = 2 / scale;
+
+  ctx.beginPath();
+
+  ctx.rect(
+    testCell.x - s/2,
+    testCell.y - s/2,
+    s,
+    s
+  );
+
+  ctx.fill();
+  ctx.stroke();
+
+}
+
+
 </script>
 </body>
 </html>
