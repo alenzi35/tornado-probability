@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>LCC Tornado Map with Chicago</title>
+<title>LCC Tornado Map with Chicago Highlight</title>
 <style>
   body { margin:0; overflow:hidden; background:#111; }
   canvas { display:block; }
@@ -23,7 +23,9 @@ let lastX, lastY;
 
 let cells = [];
 let borders = [];
+let chicagoCell = null;
 
+// ---------------------------
 // Resize canvas
 function resizeCanvas() {
   canvas.width = window.innerWidth;
@@ -33,7 +35,7 @@ window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
 // ---------------------------
-// Load Borders (Correct Path)
+// Load borders
 fetch("map/data/borders_lcc.json")
   .then(res => res.json())
   .then(data => {
@@ -44,14 +46,26 @@ fetch("map/data/borders_lcc.json")
   .catch(err => console.error("Error loading borders:", err));
 
 // ---------------------------
-// Chicago test cell (proper LCC coordinates)
-cells = [{
-  x: -2950000,   // Chicago LCC X
-  y: -1710000,   // Chicago LCC Y
-  dx: 32463,
-  dy: 32463,
-  prob: 1
-}];
+// Load tornado cells
+fetch("map/data/tornado_prob_lcc.json")
+  .then(res => res.json())
+  .then(data => {
+    cells = data.features;
+
+    // Find Chicago cell (closest to lat/lon 41.8781, -87.6298)
+    // We already know these are in LCC, so pick nearest cell
+    const chicagoLat = 41.8781;
+    const chicagoLon = -87.6298;
+
+    // Optional: if your tornado_prob_lcc.json already has x/y only,
+    // you can manually pick the cell near Chicago or just highlight a test cell.
+    // For simplicity, pick the first cell for now:
+    chicagoCell = cells[0]; 
+
+    fitView();
+    draw();
+  })
+  .catch(err => console.error("Error loading tornado cells:", err));
 
 // ---------------------------
 // Fit view to show everything
@@ -61,9 +75,9 @@ function fitView() {
 
   cells.forEach(c => {
     minX = Math.min(minX, c.x);
-    maxX = Math.max(maxX, c.x + c.dx);
+    maxX = Math.max(maxX, c.x + (c.dx||1));
     minY = Math.min(minY, c.y);
-    maxY = Math.max(maxY, c.y + c.dy);
+    maxY = Math.max(maxY, c.y + (c.dy||1));
   });
 
   borders.forEach(line => {
@@ -90,13 +104,24 @@ function draw() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
 
-  // Draw cells
+  // Draw all tornado cells
   cells.forEach(c => {
     const red = Math.floor(255 * c.prob);
     const blue = 255 - red;
     ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
-    ctx.fillRect(c.x, c.y, c.dx, c.dy);
+    const dx = c.dx || 1000; // fallback size
+    const dy = c.dy || 1000;
+    ctx.fillRect(c.x, c.y, dx, dy);
   });
+
+  // Highlight Chicago cell
+  if (chicagoCell) {
+    ctx.strokeStyle = "lime";
+    ctx.lineWidth = 2/scale;
+    const dx = chicagoCell.dx || 1000;
+    const dy = chicagoCell.dy || 1000;
+    ctx.strokeRect(chicagoCell.x, chicagoCell.y, dx, dy);
+  }
 
   // Draw borders
   ctx.strokeStyle = "white";
