@@ -2,21 +2,12 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Prob (LCC)</title>
-
+<title>RAP Tornado Probability (LCC + Borders)</title>
 <style>
-body {
-  margin: 0;
-  overflow: hidden;
-  background: #000;
-}
-
-canvas {
-  display: block;
-}
+  body { margin:0; overflow:hidden; background:#000; }
+  canvas { display:block; }
 </style>
 </head>
-
 <body>
 <canvas id="map"></canvas>
 
@@ -27,11 +18,11 @@ const ctx = canvas.getContext("2d");
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
-
 let dragging = false;
 let lastX, lastY;
 
 let cells = [];
+let borders = [];
 
 // Resize
 function resize() {
@@ -39,99 +30,93 @@ function resize() {
   canvas.height = window.innerHeight;
   draw();
 }
-
 window.addEventListener("resize", resize);
 resize();
 
-
 // Load data
-fetch("map/data/tornado_prob_lcc.json")
-  .then(r => r.json())
-  .then(data => {
+Promise.all([
+  fetch("map/data/tornado_prob_lcc.json").then(r => r.json()),
+  fetch("map/data/borders_lcc.json").then(r => r.json())
+])
+.then(([cellData, borderData]) => {
+  cells = cellData.features;
+  borders = borderData.features;
+  fitView();
+  draw();
+});
 
-    cells = data.features;
-
-    // Auto-fit
-    fitView();
-
-    draw();
-  });
-
-
-// Auto-fit to screen
+// Auto-fit view
 function fitView() {
-
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
 
-  for (let c of cells) {
+  cells.forEach(c => {
     minX = Math.min(minX, c.x);
-    maxX = Math.max(maxX, c.x);
+    maxX = Math.max(maxX, c.x + c.dx);
     minY = Math.min(minY, c.y);
-    maxY = Math.max(maxY, c.y);
-  }
+    maxY = Math.max(maxY, c.y + c.dy);
+  });
+
+  borders.forEach(line => {
+    line.forEach(([x,y]) => {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+  });
 
   const w = maxX - minX;
   const h = maxY - minY;
-
   const sx = canvas.width / w;
   const sy = canvas.height / h;
 
   scale = Math.min(sx, sy) * 0.95;
-
-  offsetX = canvas.width/2 - (minX + w/2)*scale;
-  offsetY = canvas.height/2 + (minY + h/2)*scale;
+  offsetX = canvas.width/2 - (minX + w/2) * scale;
+  offsetY = canvas.height/2 + (minY + h/2) * scale;
 }
 
-
-// Draw
+// Draw function
 function draw() {
-
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  ctx.setTransform(
-    scale, 0,
-    0, -scale,
-    offsetX,
-    offsetY
-  );
+  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
 
-  for (let c of cells) {
-
+  // Draw RAP cells
+  cells.forEach(c => {
     const r = Math.floor(255 * c.prob);
     const b = 255 - r;
-
     ctx.fillStyle = `rgb(${r},0,${b})`;
+    ctx.fillRect(c.x, c.y, c.dx, c.dy);
+  });
 
-    ctx.fillRect(
-      c.x,
-      c.y,
-      c.dx,
-      c.dy
-    );
-  }
+  // Draw borders
+  ctx.lineWidth = 1/scale;
+  ctx.strokeStyle = "white";
+  ctx.beginPath();
+
+  borders.forEach(line => {
+    line.forEach(([x,y], i) => {
+      if (i===0) ctx.moveTo(x,y);
+      else ctx.lineTo(x,y);
+    });
+  });
+
+  ctx.stroke();
 }
-
 
 // Zoom
 canvas.addEventListener("wheel", e => {
-
   e.preventDefault();
-
   const zoom = e.deltaY < 0 ? 1.15 : 0.87;
-
   const mx = e.offsetX;
   const my = e.offsetY;
-
-  offsetX = mx - zoom*(mx-offsetX);
-  offsetY = my - zoom*(my-offsetY);
-
+  offsetX = mx - zoom*(mx - offsetX);
+  offsetY = my - zoom*(my - offsetY);
   scale *= zoom;
-
   draw();
 });
-
 
 // Pan
 canvas.addEventListener("mousedown", e => {
@@ -139,19 +124,13 @@ canvas.addEventListener("mousedown", e => {
   lastX = e.clientX;
   lastY = e.clientY;
 });
-
 window.addEventListener("mouseup", () => dragging = false);
-
 window.addEventListener("mousemove", e => {
-
   if (!dragging) return;
-
   offsetX += e.clientX - lastX;
   offsetY += e.clientY - lastY;
-
   lastX = e.clientX;
   lastY = e.clientY;
-
   draw();
 });
 </script>
