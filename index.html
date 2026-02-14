@@ -25,9 +25,10 @@ let cells = [];
 let borders = [];
 let chicagoCell = null;
 
-// Chicago lat/lon
-const chicagoLat = 41.8781;
-const chicagoLon = -87.6298;
+// ---------------------------
+// Chicago in LCC (from Python projection)
+const chicagoX = -5541456.0;
+const chicagoY = -1048227.0;
 
 // ---------------------------
 // Resize canvas
@@ -56,18 +57,15 @@ fetch("map/data/tornado_prob_lcc.json")
   .then(data => {
     cells = data.features;
 
-    // Find the cell closest to Chicago lat/lon
-    // Assuming each cell has properties: {x, y, dx, dy, prob, lat, lon}
+    // Find the cell closest to Chicago
     let minDist = Infinity;
     cells.forEach(c => {
-      if(c.lat !== undefined && c.lon !== undefined){
-        const dLat = c.lat - chicagoLat;
-        const dLon = c.lon - chicagoLon;
-        const dist = dLat*dLat + dLon*dLon;
-        if(dist < minDist){
-          minDist = dist;
-          chicagoCell = c;
-        }
+      const dx = c.x - chicagoX;
+      const dy = c.y - chicagoY;
+      const dist = dx*dx + dy*dy;
+      if(dist < minDist){
+        minDist = dist;
+        chicagoCell = c;
       }
     });
 
@@ -107,7 +105,7 @@ function fitView() {
 }
 
 // ---------------------------
-// Draw
+// Draw everything
 function draw() {
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
