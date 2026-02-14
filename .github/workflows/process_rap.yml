@@ -50,9 +50,10 @@ jobs:
             geopandas \
             pyproj \
             shapely \
-            fiona
+            fiona \
+            requests
 
-
+      
       # ----------------------------
       # 4. Run RAP processor
       # ----------------------------
