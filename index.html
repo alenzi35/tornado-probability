@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>LCC Tornado Map</title>
+<title>LCC Tornado Map with Chicago</title>
 <style>
   body { margin:0; overflow:hidden; background:#111; }
   canvas { display:block; }
@@ -44,10 +44,10 @@ fetch("map/data/borders_lcc.json")
   .catch(err => console.error("Error loading borders:", err));
 
 // ---------------------------
-// Chicago test cell (LCC coords)
+// Chicago test cell (proper LCC coordinates)
 cells = [{
-  x: -496300,   // Chicago LCC X
-  y: -4610200,  // Chicago LCC Y
+  x: -2950000,   // Chicago LCC X
+  y: -1710000,   // Chicago LCC Y
   dx: 32463,
   dy: 32463,
   prob: 1
