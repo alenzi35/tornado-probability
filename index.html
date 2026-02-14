@@ -2,27 +2,29 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability (LCC + Borders)</title>
+<title>RAP Tornado Probability Map (LCC)</title>
+
 <style>
-  body { margin:0; overflow:hidden; background:#000; }
-  canvas { display:block; }
+body { margin:0; overflow:hidden; background:#000; }
+canvas { display:block; }
 </style>
 </head>
 <body>
-<canvas id="map"></canvas>
+<canvas id="mapCanvas"></canvas>
 
+<script src="https://unpkg.com/proj4/dist/proj4.js"></script>
 <script>
-const canvas = document.getElementById("map");
+const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
+
 let dragging = false;
 let lastX, lastY;
 
 let cells = [];
-let borders = [];
 
 // Resize
 function resize() {
@@ -33,77 +35,83 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-// Load data
-Promise.all([
-  fetch("map/data/tornado_prob_lcc.json").then(r => r.json()),
-  fetch("map/data/borders_lcc.json").then(r => r.json())
-])
-.then(([cellData, borderData]) => {
-  cells = cellData.features;
-  borders = borderData.features;
-  fitView();
-  draw();
-});
+// LCC projection (matches RAP native)
+const lcc = proj4(
+  "+proj=lcc +lat_1=50 +lat_2=50 +lat_0=50 +lon_0=253 +a=6371229 +b=6371229 +units=m +no_defs"
+);
 
-// Auto-fit view
+// Dallas, TX marker
+const dallasLatLon = [-96.8, 32.8];
+const dallasLCC = proj4("EPSG:4326", lcc, dallasLatLon);
+
+// Load RAP JSON
+fetch("map/data/tornado_prob_lcc.json")
+  .then(r => r.json())
+  .then(data => {
+    cells = data.features;
+    fitView();
+    draw();
+  });
+
+// Auto-fit view to all cells
 function fitView() {
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
 
-  cells.forEach(c => {
+  for (let c of cells) {
     minX = Math.min(minX, c.x);
-    maxX = Math.max(maxX, c.x + c.dx);
+    maxX = Math.max(maxX, c.x);
     minY = Math.min(minY, c.y);
-    maxY = Math.max(maxY, c.y + c.dy);
-  });
-
-  borders.forEach(line => {
-    line.forEach(([x,y]) => {
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-    });
-  });
+    maxY = Math.max(maxY, c.y);
+  }
 
   const w = maxX - minX;
   const h = maxY - minY;
+
   const sx = canvas.width / w;
   const sy = canvas.height / h;
 
   scale = Math.min(sx, sy) * 0.95;
-  offsetX = canvas.width/2 - (minX + w/2) * scale;
-  offsetY = canvas.height/2 + (minY + h/2) * scale;
+
+  offsetX = canvas.width/2 - (minX + w/2)*scale;
+  offsetY = canvas.height/2 + (minY + h/2)*scale;
 }
 
-// Draw function
+// Draw all cells and city
 function draw() {
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
+  // Transform LCC -> Canvas
+  ctx.setTransform(
+    scale, 0,
+    0, -scale,
+    offsetX,
+    offsetY
+  );
 
   // Draw RAP cells
-  cells.forEach(c => {
+  for (let c of cells) {
     const r = Math.floor(255 * c.prob);
     const b = 255 - r;
-    ctx.fillStyle = `rgb(${r},0,${b})`;
+    ctx.fillStyle = `rgba(${r},0,${b},0.6)`;
     ctx.fillRect(c.x, c.y, c.dx, c.dy);
-  });
+  }
 
-  // Draw borders
-  ctx.lineWidth = 1/scale;
-  ctx.strokeStyle = "white";
+  // Draw Dallas marker
+  drawCityMarker();
+}
+
+// Draw yellow dot for Dallas
+function drawCityMarker() {
+  ctx.save();
+  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
+  ctx.fillStyle = "yellow";
+  const size = 3 / scale; // keep visible at any zoom
   ctx.beginPath();
-
-  borders.forEach(line => {
-    line.forEach(([x,y], i) => {
-      if (i===0) ctx.moveTo(x,y);
-      else ctx.lineTo(x,y);
-    });
-  });
-
-  ctx.stroke();
+  ctx.arc(dallasLCC[0], dallasLCC[1], size, 0, 2*Math.PI);
+  ctx.fill();
+  ctx.restore();
 }
 
 // Zoom
@@ -112,6 +120,7 @@ canvas.addEventListener("wheel", e => {
   const zoom = e.deltaY < 0 ? 1.15 : 0.87;
   const mx = e.offsetX;
   const my = e.offsetY;
+
   offsetX = mx - zoom*(mx - offsetX);
   offsetY = my - zoom*(my - offsetY);
   scale *= zoom;
