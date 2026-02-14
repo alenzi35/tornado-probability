@@ -1,116 +1,145 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Tornado Probability (LCC)</title>
-
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-
-  <style>
-    body {
-      margin: 0;
-      background: #0b0b0b;
-      color: white;
-      font-family: Arial, sans-serif;
-    }
-
-    svg {
-      display: block;
-      margin: auto;
-      background: #111;
-    }
-
-    .border {
-      fill: none;
-      stroke: white;
-      stroke-width: 1;
-      opacity: 0.8;
-    }
-
-    .cell {
-      stroke: none;
-    }
-  </style>
+<meta charset="UTF-8" />
+<title>LCC Tornado Map</title>
+<style>
+  body { margin:0; overflow:hidden; background:#111; }
+  canvas { display:block; }
+</style>
 </head>
-
 <body>
-
-<svg id="map" width="1200" height="900"></svg>
+<canvas id="mapCanvas"></canvas>
 
 <script>
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
 
-const width = 1200;
-const height = 900;
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+let dragging = false;
+let lastX, lastY;
 
-const svg = d3.select("#map");
+let cells = [];
+let borders = [];
 
+// Resize canvas
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
-// ================================
-// Projection (Matches RAP LCC)
-// ================================
-
-const projection = d3.geoConicConformal()
-  .parallels([50, 50])
-  .rotate([-253, 0])
-  .center([0, 50])
-  .scale(900)
-  .translate([width / 2, height / 2]);
-
-const path = d3.geoPath().projection(projection);
-
-
-// ================================
-// Load Borders
-// ================================
-
+// ---------------------------
+// Load Borders (Correct Path)
 fetch("map/data/borders_lcc.json")
-  .then(r => r.json())
-  .then(borders => {
-
-    console.log("Borders loaded");
-
-    svg.append("g")
-      .selectAll("path")
-      .data(borders.features)
-      .enter()
-      .append("path")
-      .attr("class", "border")
-      .attr("d", path);
-
+  .then(res => res.json())
+  .then(data => {
+    borders = data.features;
+    fitView();
+    draw();
   })
-  .catch(err => {
-    console.error("Border load error:", err);
+  .catch(err => console.error("Error loading borders:", err));
+
+// ---------------------------
+// Chicago test cell (LCC coords)
+cells = [{
+  x: -496300,   // Chicago LCC X
+  y: -4610200,  // Chicago LCC Y
+  dx: 32463,
+  dy: 32463,
+  prob: 1
+}];
+
+// ---------------------------
+// Fit view to show everything
+function fitView() {
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+
+  cells.forEach(c => {
+    minX = Math.min(minX, c.x);
+    maxX = Math.max(maxX, c.x + c.dx);
+    minY = Math.min(minY, c.y);
+    maxY = Math.max(maxY, c.y + c.dy);
   });
 
+  borders.forEach(line => {
+    line.forEach(([x,y]) => {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+  });
 
-// ================================
-// Example: Test Chicago Cell
-// ================================
-// (For debugging alignment)
+  const rangeX = maxX - minX;
+  const rangeY = maxY - minY;
 
-const chicago = {
-  lat: 41.8781,
-  lon: -87.6298
-};
-
-const projected = projection([chicago.lon, chicago.lat]);
-
-if (projected) {
-
-  svg.append("circle")
-    .attr("cx", projected[0])
-    .attr("cy", projected[1])
-    .attr("r", 6)
-    .attr("fill", "red");
-
-  console.log("Chicago projected:", projected);
-
-} else {
-  console.error("Projection failed for Chicago");
+  scale = Math.min(canvas.width / rangeX, canvas.height / rangeY) * 0.9;
+  offsetX = canvas.width/2 - (minX + rangeX/2) * scale;
+  offsetY = canvas.height/2 + (minY + rangeY/2) * scale;
 }
 
+// ---------------------------
+// Draw
+function draw() {
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
 
+  // Draw cells
+  cells.forEach(c => {
+    const red = Math.floor(255 * c.prob);
+    const blue = 255 - red;
+    ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
+    ctx.fillRect(c.x, c.y, c.dx, c.dy);
+  });
+
+  // Draw borders
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 1/scale;
+  ctx.beginPath();
+  borders.forEach(line => {
+    line.forEach(([x,y], i) => {
+      if(i===0) ctx.moveTo(x,y);
+      else ctx.lineTo(x,y);
+    });
+  });
+  ctx.stroke();
+}
+
+// ---------------------------
+// Zoom
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const zoom = e.deltaY < 0 ? 1.15 : 0.87;
+  const mx = e.offsetX;
+  const my = e.offsetY;
+  offsetX = mx - zoom*(mx - offsetX);
+  offsetY = my - zoom*(my - offsetY);
+  scale *= zoom;
+  draw();
+});
+
+// ---------------------------
+// Pan
+canvas.addEventListener("mousedown", e => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+window.addEventListener("mouseup", () => dragging = false);
+window.addEventListener("mousemove", e => {
+  if (!dragging) return;
+  offsetX += e.clientX - lastX;
+  offsetY += e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  draw();
+});
 </script>
-
 </body>
 </html>
