@@ -1,70 +1,54 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
-<title>RAP Tornado Probability</title>
+<meta charset="utf-8" />
+<title>RAP Tornado Probability (LCC)</title>
 
 <style>
 html, body {
     margin: 0;
     padding: 0;
-    background: #000;
     overflow: hidden;
+    background: #111;
+    font-family: Arial, sans-serif;
+}
+
+#forecast-info {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    z-index: 10;
+}
+
+#tooltip {
+    position: absolute;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    padding: 6px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+    pointer-events: none;
+    display: none;
+    z-index: 20;
 }
 
 canvas {
     display: block;
 }
-
-/* Forecast info box */
-#forecast-info {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-
-    background: rgba(0, 0, 0, 0.75);
-    color: #ffffff;
-
-    padding: 10px 14px;
-    border-radius: 6px;
-
-    font-family: Arial, sans-serif;
-    font-size: 13px;
-    line-height: 1.4;
-
-    z-index: 1000;
-    pointer-events: none;
-}
-
-/* Tooltip */
-#tooltip {
-    position: absolute;
-
-    background: rgba(0,0,0,0.8);
-    color: #fff;
-
-    padding: 6px 8px;
-    border-radius: 4px;
-
-    font-family: Arial, sans-serif;
-    font-size: 12px;
-
-    pointer-events: none;
-    display: none;
-
-    z-index: 1001;
-}
 </style>
 </head>
 
-
 <body>
 
-<div id="forecast-info">Loading forecast...</div>
+<div id="forecast-info">Loading forecast…</div>
 <div id="tooltip"></div>
 
 <canvas id="map"></canvas>
-
 
 <script>
 
@@ -72,6 +56,7 @@ const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
 
 const tooltip = document.getElementById("tooltip");
+const infoBox = document.getElementById("forecast-info");
 
 let cells = [];
 let borders = [];
@@ -81,168 +66,129 @@ let offsetX = 0;
 let offsetY = 0;
 
 
-/* =============================
-   Resize
-============================= */
+// ================= CANVAS =================
 
 function resize() {
-
-    canvas.width  = window.innerWidth;
+    canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-
     draw();
 }
 
 window.addEventListener("resize", resize);
 
 
-/* =============================
-   Color Scale
-============================= */
+// ================= COLOR SCALE =================
 
-function probToColor(p) {
+function getColor(p) {
 
     // Clamp
     p = Math.max(0, Math.min(1, p));
 
-    // Blue -> Red
-    const r = Math.floor(255 * p);
-    const g = 0;
-    const b = Math.floor(255 * (1 - p));
+    // Log stretch for small values
+    let v = Math.log10(p * 1000 + 1) / Math.log10(1001);
 
-    return `rgb(${r},${g},${b})`;
+    let r = Math.floor(255 * v);
+    let b = Math.floor(255 * (1 - v));
+
+    return `rgb(${r},0,${b})`;
 }
 
 
-/* =============================
-   Projection Helpers
-============================= */
+// ================= FORECAST LABEL =================
 
-function worldToScreen(x, y) {
+function updateForecastLabel(grid) {
 
-    return {
-        x: x * scale + offsetX,
-        y: -y * scale + offsetY
-    };
-}
+    let date = grid.run_date || "??????";
+    let hour = grid.run_hour || "??";
+    let fcst = grid.forecast || "F01";
 
+    let h = parseInt(hour);
 
-/* =============================
-   Forecast Label
-============================= */
+    let validStart = (h + 1) % 24;
+    let validEnd = (h + 2) % 24;
 
-function updateForecastLabel(data) {
+    function pad(x) {
+        return x.toString().padStart(2,"0");
+    }
 
-    const runDate = data.run_date;
-    const runHour = parseInt(data.run_hour);
-    const fcst = data.forecast;
-
-    const fcstHour = parseInt(fcst.replace("F",""));
-
-    const year  = runDate.slice(0,4);
-    const month = runDate.slice(4,6);
-    const day   = runDate.slice(6,8);
-
-    let validStart = runHour + fcstHour;
-    let validEnd   = validStart + 1;
-
-    if (validStart >= 24) validStart -= 24;
-    if (validEnd   >= 24) validEnd   -= 24;
-
-    const pad = n => String(n).padStart(2,"0");
-
-    const initStr  = `${pad(runHour)}:00 UTC`;
-    const validStr = `${pad(validStart)}:00–${pad(validEnd)}:00 UTC`;
-
-    const now = new Date().toUTCString().slice(17,22);
-
-    const label = `
-<strong>RAP Tornado Probability</strong><br>
-Init: ${initStr}<br>
-Valid: ${validStr}<br>
-Updated: ${now} UTC
+    infoBox.innerHTML = `
+<b>RAP Tornado Probability</b><br>
+Run: ${date} ${pad(h)}Z (${fcst})<br>
+Valid: ${pad(validStart)}:00–${pad(validEnd)}:00 UTC
 `;
-
-    document.getElementById("forecast-info").innerHTML = label;
 }
 
 
-/* =============================
-   Fit View
-============================= */
+// ================= FIT VIEW =================
 
 function fitToData() {
 
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
 
-    for (const c of cells) {
-
+    for (let c of cells) {
         minX = Math.min(minX, c.x);
         maxX = Math.max(maxX, c.x);
-
         minY = Math.min(minY, c.y);
         maxY = Math.max(maxY, c.y);
     }
 
-    const w = maxX - minX;
-    const h = maxY - minY;
+    let w = maxX - minX;
+    let h = maxY - minY;
 
-    const sx = canvas.width  / w;
-    const sy = canvas.height / h;
+    scale = Math.min(
+        canvas.width / w,
+        canvas.height / h
+    ) * 0.95;
 
-    scale = Math.min(sx, sy) * 0.95;
-
-    offsetX = canvas.width  / 2 - (minX + w/2) * scale;
-    offsetY = canvas.height / 2 + (minY + h/2) * scale;
+    offsetX = -minX * scale + canvas.width / 2 - w * scale / 2;
+    offsetY = maxY * scale + canvas.height / 2 - h * scale / 2;
 }
 
 
-/* =============================
-   Draw
-============================= */
+// ================= DRAW =================
 
 function draw() {
 
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    /* Borders */
-
-    ctx.strokeStyle = "white";
+    // Borders
+    ctx.strokeStyle = "#aaa";
     ctx.lineWidth = 1;
 
-    for (const poly of borders) {
+    for (let poly of borders) {
 
         ctx.beginPath();
 
-        poly.forEach((p, i) => {
+        for (let i=0;i<poly.length;i++) {
 
-            const s = worldToScreen(p[0], p[1]);
+            let [x,y] = poly[i];
 
-            if (i === 0) ctx.moveTo(s.x, s.y);
-            else ctx.lineTo(s.x, s.y);
-        });
+            let sx = x * scale + offsetX;
+            let sy = -y * scale + offsetY;
+
+            if (i===0) ctx.moveTo(sx,sy);
+            else ctx.lineTo(sx,sy);
+        }
 
         ctx.stroke();
     }
 
 
-    /* Cells */
+    // Cells
+    for (let c of cells) {
 
-    for (const c of cells) {
+        let x = c.x * scale + offsetX;
+        let y = -c.y * scale + offsetY;
 
-        const s = worldToScreen(c.x, c.y);
+        let w = c.dx * scale;
+        let h = c.dy * scale;
 
-        const w = c.dx * scale;
-        const h = c.dy * scale;
-
-        ctx.fillStyle = probToColor(c.prob);
+        ctx.fillStyle = getColor(c.prob);
 
         ctx.fillRect(
-            s.x - w/2,
-            s.y - h/2,
+            x - w/2,
+            y - h/2,
             w,
             h
         );
@@ -250,29 +196,28 @@ function draw() {
 }
 
 
-/* =============================
-   Tooltip
-============================= */
+// ================= TOOLTIP =================
 
 canvas.addEventListener("mousemove", e => {
 
-    const mx = e.clientX;
-    const my = e.clientY;
+    let mx = e.clientX;
+    let my = e.clientY;
 
     let found = null;
 
-    for (const c of cells) {
+    for (let c of cells) {
 
-        const s = worldToScreen(c.x, c.y);
+        let x = c.x * scale + offsetX;
+        let y = -c.y * scale + offsetY;
 
-        const w = c.dx * scale;
-        const h = c.dy * scale;
+        let w = c.dx * scale;
+        let h = c.dy * scale;
 
         if (
-            mx >= s.x - w/2 &&
-            mx <= s.x + w/2 &&
-            my >= s.y - h/2 &&
-            my <= s.y + h/2
+            mx >= x-w/2 &&
+            mx <= x+w/2 &&
+            my >= y-h/2 &&
+            my <= y+h/2
         ) {
             found = c;
             break;
@@ -281,38 +226,29 @@ canvas.addEventListener("mousemove", e => {
 
     if (found) {
 
-        const pct = (found.prob * 100).toFixed(4);
+        tooltip.style.display = "block";
+        tooltip.style.left = (mx+12)+"px";
+        tooltip.style.top  = (my+12)+"px";
 
         tooltip.innerHTML =
-            `Probability: <b>${pct}%</b>`;
-
-        tooltip.style.left = (mx + 12) + "px";
-        tooltip.style.top  = (my + 12) + "px";
-
-        tooltip.style.display = "block";
+            `Probability: ${(found.prob*100).toFixed(4)}%`;
 
     } else {
-
         tooltip.style.display = "none";
     }
+
 });
 
 
-canvas.addEventListener("mouseleave", () => {
-    tooltip.style.display = "none";
-});
-
-
-/* =============================
-   Load Data
-============================= */
+// ================= LOAD DATA =================
 
 Promise.all([
 
     fetch("map/data/tornado_prob_lcc.json").then(r=>r.json()),
     fetch("map/data/borders_lcc.json").then(r=>r.json())
 
-]).then(([grid, borderData]) => {
+])
+.then(([grid, borderData]) => {
 
     cells = grid.features;
 
@@ -325,12 +261,14 @@ Promise.all([
     fitToData();
     resize();
 
-}).catch(err => {
-    console.error(err);
+})
+.catch(() => {
+
+    infoBox.innerHTML =
+        "❌ Failed to load data";
+
 });
 
-
 </script>
-
 </body>
 </html>
