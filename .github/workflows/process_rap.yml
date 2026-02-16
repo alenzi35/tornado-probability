@@ -3,7 +3,7 @@ name: Process RAP Tornado Data
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"   # Every 6 hours (optional)
+    - cron: "55 * * * *"   # Every hour at :55 UTC
 
 permissions:
   contents: write
@@ -66,7 +66,7 @@ jobs:
           python scripts/convert_borders_to_lcc.py
 
       # ----------------------------
-      # 7. Commit + push outputs
+      # 6. Commit + push outputs
       # ----------------------------
       - name: Commit and push data
         run: |
