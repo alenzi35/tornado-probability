@@ -2,337 +2,334 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>LCC Tornado Probability Map</title>
+<title>RAP Tornado Probability</title>
 
 <style>
-  body {
+html, body {
     margin: 0;
+    padding: 0;
+    background: #000;
     overflow: hidden;
-    background: #111;
-  }
+}
 
-  canvas {
+canvas {
     display: block;
-  }
+}
 
-  #tooltip {
+/* Forecast info box */
+#forecast-info {
     position: absolute;
-    padding: 6px 10px;
-    background: rgba(0,0,0,0.85);
-    color: white;
-    border-radius: 5px;
+    top: 12px;
+    left: 12px;
+
+    background: rgba(0, 0, 0, 0.75);
+    color: #ffffff;
+
+    padding: 10px 14px;
+    border-radius: 6px;
+
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+
+    z-index: 1000;
+    pointer-events: none;
+}
+
+/* Tooltip */
+#tooltip {
+    position: absolute;
+
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+
+    padding: 6px 8px;
+    border-radius: 4px;
+
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+
     pointer-events: none;
     display: none;
-    font-family: sans-serif;
-    font-size: 13px;
-    white-space: nowrap;
-  }
+
+    z-index: 1001;
+}
 </style>
 </head>
 
+
 <body>
 
-<canvas id="mapCanvas"></canvas>
+<div id="forecast-info">Loading forecast...</div>
 <div id="tooltip"></div>
 
+<canvas id="map"></canvas>
+
+
 <script>
-const canvas = document.getElementById("mapCanvas");
+
+const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
+
 const tooltip = document.getElementById("tooltip");
+
+let cells = [];
+let borders = [];
 
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
 
-let dragging = false;
-let lastX, lastY;
 
-let cells = [];
-let borders = [];
+/* =============================
+   Resize
+============================= */
 
-let minProb = Infinity;
-let maxProb = -Infinity;
+function resize() {
 
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-// --------------------------------
-// Resize
-// --------------------------------
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
-
-
-// --------------------------------
-// Load borders
-// --------------------------------
-fetch("map/data/borders_lcc.json")
-  .then(r => r.json())
-  .then(data => {
-    borders = data.features;
-    fitView();
     draw();
-  });
-
-
-// --------------------------------
-// Load cells
-// --------------------------------
-fetch("map/data/tornado_prob_lcc.json")
-  .then(r => r.json())
-  .then(data => {
-
-    cells = data.features;
-
-    // Compute probability range
-    cells.forEach(c => {
-      minProb = Math.min(minProb, c.prob);
-      maxProb = Math.max(maxProb, c.prob);
-    });
-
-    console.log("Probability range:", minProb, maxProb);
-
-    fitView();
-    draw();
-  });
-
-
-// --------------------------------
-// Normalize probability → 0..1
-// --------------------------------
-function normProb(p) {
-
-  if (maxProb === minProb) return 0;
-
-  return (p - minProb) / (maxProb - minProb);
 }
 
+window.addEventListener("resize", resize);
 
-// --------------------------------
-// Probability → Color
-// Blue → Purple → Red
-// --------------------------------
+
+/* =============================
+   Color Scale
+============================= */
+
 function probToColor(p) {
 
-  const t = normProb(p);
+    // Clamp
+    p = Math.max(0, Math.min(1, p));
 
-  // Blue → Purple → Red gradient
-  let r, g, b;
+    // Blue -> Red
+    const r = Math.floor(255 * p);
+    const g = 0;
+    const b = Math.floor(255 * (1 - p));
 
-  if (t < 0.5) {
-
-    // Blue → Purple
-    const k = t * 2;
-
-    r = Math.floor(128 * k);
-    g = 0;
-    b = Math.floor(255 - 127 * k);
-
-  } else {
-
-    // Purple → Red
-    const k = (t - 0.5) * 2;
-
-    r = Math.floor(128 + 127 * k);
-    g = 0;
-    b = Math.floor(128 - 128 * k);
-  }
-
-  return `rgba(${r},${g},${b},0.8)`;
+    return `rgb(${r},${g},${b})`;
 }
 
 
-// --------------------------------
-// Fit view
-// --------------------------------
-function fitView() {
+/* =============================
+   Projection Helpers
+============================= */
 
-  let minX = Infinity, maxX = -Infinity;
-  let minY = Infinity, maxY = -Infinity;
+function worldToScreen(x, y) {
 
-  cells.forEach(c => {
-
-    minX = Math.min(minX, c.x);
-    maxX = Math.max(maxX, c.x + (c.dx||1));
-
-    minY = Math.min(minY, c.y);
-    maxY = Math.max(maxY, c.y + (c.dy||1));
-  });
-
-  borders.forEach(line => {
-
-    line.forEach(([x,y]) => {
-
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-    });
-  });
-
-  const rx = maxX - minX;
-  const ry = maxY - minY;
-
-  scale = Math.min(
-    canvas.width / rx,
-    canvas.height / ry
-  ) * 0.9;
-
-  offsetX = canvas.width/2 - (minX + rx/2) * scale;
-  offsetY = canvas.height/2 + (minY + ry/2) * scale;
+    return {
+        x: x * scale + offsetX,
+        y: -y * scale + offsetY
+    };
 }
 
 
-// --------------------------------
-// Draw
-// --------------------------------
+/* =============================
+   Forecast Label
+============================= */
+
+function updateForecastLabel(data) {
+
+    const runDate = data.run_date;
+    const runHour = parseInt(data.run_hour);
+    const fcst = data.forecast;
+
+    const fcstHour = parseInt(fcst.replace("F",""));
+
+    const year  = runDate.slice(0,4);
+    const month = runDate.slice(4,6);
+    const day   = runDate.slice(6,8);
+
+    let validStart = runHour + fcstHour;
+    let validEnd   = validStart + 1;
+
+    if (validStart >= 24) validStart -= 24;
+    if (validEnd   >= 24) validEnd   -= 24;
+
+    const pad = n => String(n).padStart(2,"0");
+
+    const initStr  = `${pad(runHour)}:00 UTC`;
+    const validStr = `${pad(validStart)}:00–${pad(validEnd)}:00 UTC`;
+
+    const now = new Date().toUTCString().slice(17,22);
+
+    const label = `
+<strong>RAP Tornado Probability</strong><br>
+Init: ${initStr}<br>
+Valid: ${validStr}<br>
+Updated: ${now} UTC
+`;
+
+    document.getElementById("forecast-info").innerHTML = label;
+}
+
+
+/* =============================
+   Fit View
+============================= */
+
+function fitToData() {
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const c of cells) {
+
+        minX = Math.min(minX, c.x);
+        maxX = Math.max(maxX, c.x);
+
+        minY = Math.min(minY, c.y);
+        maxY = Math.max(maxY, c.y);
+    }
+
+    const w = maxX - minX;
+    const h = maxY - minY;
+
+    const sx = canvas.width  / w;
+    const sy = canvas.height / h;
+
+    scale = Math.min(sx, sy) * 0.95;
+
+    offsetX = canvas.width  / 2 - (minX + w/2) * scale;
+    offsetY = canvas.height / 2 + (minY + h/2) * scale;
+}
+
+
+/* =============================
+   Draw
+============================= */
+
 function draw() {
 
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  ctx.setTransform(
-    scale, 0,
-    0, -scale,
-    offsetX, offsetY
-  );
+    /* Borders */
+
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 1;
+
+    for (const poly of borders) {
+
+        ctx.beginPath();
+
+        poly.forEach((p, i) => {
+
+            const s = worldToScreen(p[0], p[1]);
+
+            if (i === 0) ctx.moveTo(s.x, s.y);
+            else ctx.lineTo(s.x, s.y);
+        });
+
+        ctx.stroke();
+    }
 
 
-  // ----- Cells -----
-  cells.forEach(c => {
+    /* Cells */
 
-    ctx.fillStyle = probToColor(c.prob);
+    for (const c of cells) {
 
-    const dx = c.dx || 1000;
-    const dy = c.dy || 1000;
+        const s = worldToScreen(c.x, c.y);
 
-    ctx.fillRect(c.x, c.y, dx, dy);
-  });
+        const w = c.dx * scale;
+        const h = c.dy * scale;
 
+        ctx.fillStyle = probToColor(c.prob);
 
-  // ----- Borders -----
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 1/scale;
-
-  ctx.beginPath();
-
-  borders.forEach(line => {
-
-    line.forEach(([x,y], i) => {
-
-      if (i === 0) ctx.moveTo(x,y);
-      else ctx.lineTo(x,y);
-    });
-  });
-
-  ctx.stroke();
+        ctx.fillRect(
+            s.x - w/2,
+            s.y - h/2,
+            w,
+            h
+        );
+    }
 }
 
 
-// --------------------------------
-// Screen → LCC
-// --------------------------------
-function screenToLCC(px, py) {
+/* =============================
+   Tooltip
+============================= */
 
-  return {
-    x: (px - offsetX) / scale,
-    y: -(py - offsetY) / scale
-  };
-}
-
-
-// --------------------------------
-// Hover tooltip
-// --------------------------------
 canvas.addEventListener("mousemove", e => {
 
-  const { x, y } = screenToLCC(e.offsetX, e.offsetY);
+    const mx = e.clientX;
+    const my = e.clientY;
 
-  let hit = null;
+    let found = null;
 
-  for (const c of cells) {
+    for (const c of cells) {
 
-    const dx = c.dx || 1000;
-    const dy = c.dy || 1000;
+        const s = worldToScreen(c.x, c.y);
 
-    if (
-      x >= c.x &&
-      x <= c.x + dx &&
-      y >= c.y &&
-      y <= c.y + dy
-    ) {
-      hit = c;
-      break;
+        const w = c.dx * scale;
+        const h = c.dy * scale;
+
+        if (
+            mx >= s.x - w/2 &&
+            mx <= s.x + w/2 &&
+            my >= s.y - h/2 &&
+            my <= s.y + h/2
+        ) {
+            found = c;
+            break;
+        }
     }
-  }
 
-  if (hit) {
+    if (found) {
 
-    tooltip.style.display = "block";
+        const pct = (found.prob * 100).toFixed(4);
 
-    tooltip.style.left = (e.pageX + 12) + "px";
-    tooltip.style.top = (e.pageY + 12) + "px";
+        tooltip.innerHTML =
+            `Probability: <b>${pct}%</b>`;
 
-    tooltip.innerHTML =
-      `Probability: ${(hit.prob * 100).toFixed(4)}%`;
+        tooltip.style.left = (mx + 12) + "px";
+        tooltip.style.top  = (my + 12) + "px";
 
-  } else {
+        tooltip.style.display = "block";
+
+    } else {
+
+        tooltip.style.display = "none";
+    }
+});
+
+
+canvas.addEventListener("mouseleave", () => {
     tooltip.style.display = "none";
-  }
 });
 
 
-// --------------------------------
-// Zoom
-// --------------------------------
-canvas.addEventListener("wheel", e => {
+/* =============================
+   Load Data
+============================= */
 
-  e.preventDefault();
+Promise.all([
 
-  const z = e.deltaY < 0 ? 1.15 : 0.87;
+    fetch("map/data/tornado_prob_lcc.json").then(r=>r.json()),
+    fetch("map/data/borders_lcc.json").then(r=>r.json())
 
-  const mx = e.offsetX;
-  const my = e.offsetY;
+]).then(([grid, borderData]) => {
 
-  offsetX = mx - z*(mx - offsetX);
-  offsetY = my - z*(my - offsetY);
+    cells = grid.features;
 
-  scale *= z;
+    borders = borderData.features.map(f =>
+        f.geometry.coordinates[0]
+    );
 
-  draw();
+    updateForecastLabel(grid);
+
+    fitToData();
+    resize();
+
+}).catch(err => {
+    console.error(err);
 });
 
 
-// --------------------------------
-// Pan
-// --------------------------------
-canvas.addEventListener("mousedown", e => {
-
-  dragging = true;
-
-  lastX = e.clientX;
-  lastY = e.clientY;
-});
-
-window.addEventListener("mouseup", () => {
-  dragging = false;
-});
-
-window.addEventListener("mousemove", e => {
-
-  if (!dragging) return;
-
-  offsetX += e.clientX - lastX;
-  offsetY += e.clientY - lastY;
-
-  lastX = e.clientX;
-  lastY = e.clientY;
-
-  draw();
-});
 </script>
 
 </body>
