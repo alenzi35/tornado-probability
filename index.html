@@ -260,14 +260,16 @@ Promise.all([
 
     cells = grid.features;
 
-    // === FIXED BORDER PARSING ===
-    // Works with GeoJSON-style coordinates: f.coordinates[0] = exterior ring
+    // === PARSE BORDERS FOR YOUR x/y JSON ===
     borders = borderData.features
+        .filter(f => f.x && f.y && f.x.length === f.y.length)
         .map(f => {
-            if(!f.coordinates) return null;
-            return f.coordinates[0].map(pt => [pt[0], pt[1]]);
-        })
-        .filter(f => f !== null);
+            let poly = [];
+            for (let i = 0; i < f.x.length; i++) {
+                poly.push([f.x[i], f.y[i]]);
+            }
+            return poly;
+        });
 
     updateForecastLabel(grid);
     fitToData();
