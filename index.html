@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability (LCC)</title>
+<title>RAP Tornado Probability (LCC) - Zoom & Pan</title>
 
 <style>
 html, body {
@@ -25,6 +25,15 @@ html, body {
     z-index: 10;
 }
 
+#error-msg {
+    position: absolute;
+    top: 50px;
+    left: 10px;
+    color: red;
+    font-size: 14px;
+    z-index: 10;
+}
+
 #tooltip {
     position: absolute;
     background: rgba(0,0,0,0.8);
@@ -39,6 +48,10 @@ html, body {
 
 canvas {
     display: block;
+    cursor: grab;
+}
+canvas:active {
+    cursor: grabbing;
 }
 </style>
 </head>
@@ -46,8 +59,8 @@ canvas {
 <body>
 
 <div id="forecast-info">Loading forecast…</div>
+<div id="error-msg"></div>
 <div id="tooltip"></div>
-
 <canvas id="map"></canvas>
 
 <script>
@@ -57,59 +70,42 @@ const ctx = canvas.getContext("2d");
 
 const tooltip = document.getElementById("tooltip");
 const infoBox = document.getElementById("forecast-info");
+const errorBox = document.getElementById("error-msg");
 
 let cells = [];
 let borders = [];
-
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
 
-
-// ================= CANVAS =================
-
+// ================= CANVAS RESIZE =================
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     draw();
 }
-
 window.addEventListener("resize", resize);
 
-
 // ================= COLOR SCALE =================
-
 function getColor(p) {
-
-    // Clamp
     p = Math.max(0, Math.min(1, p));
-
-    // Log stretch for small values
     let v = Math.log10(p * 1000 + 1) / Math.log10(1001);
-
     let r = Math.floor(255 * v);
     let b = Math.floor(255 * (1 - v));
-
     return `rgb(${r},0,${b})`;
 }
 
-
 // ================= FORECAST LABEL =================
-
 function updateForecastLabel(grid) {
-
     let date = grid.run_date || "??????";
     let hour = grid.run_hour || "??";
     let fcst = grid.forecast || "F01";
 
     let h = parseInt(hour);
-
     let validStart = (h + 1) % 24;
-    let validEnd = (h + 2) % 24;
+    let validEnd   = (h + 2) % 24;
 
-    function pad(x) {
-        return x.toString().padStart(2,"0");
-    }
+    function pad(x) { return x.toString().padStart(2,"0"); }
 
     infoBox.innerHTML = `
 <b>RAP Tornado Probability</b><br>
@@ -118,10 +114,9 @@ Valid: ${pad(validStart)}:00–${pad(validEnd)}:00 UTC
 `;
 }
 
-
 // ================= FIT VIEW =================
-
 function fitToData() {
+    if(cells.length===0) return;
 
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
@@ -135,138 +130,136 @@ function fitToData() {
 
     let w = maxX - minX;
     let h = maxY - minY;
-
-    scale = Math.min(
-        canvas.width / w,
-        canvas.height / h
-    ) * 0.95;
-
+    scale = Math.min(canvas.width / w, canvas.height / h) * 0.95;
     offsetX = -minX * scale + canvas.width / 2 - w * scale / 2;
     offsetY = maxY * scale + canvas.height / 2 - h * scale / 2;
 }
 
-
 // ================= DRAW =================
-
 function draw() {
-
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
     // Borders
     ctx.strokeStyle = "#aaa";
     ctx.lineWidth = 1;
-
     for (let poly of borders) {
-
         ctx.beginPath();
-
         for (let i=0;i<poly.length;i++) {
-
             let [x,y] = poly[i];
-
             let sx = x * scale + offsetX;
             let sy = -y * scale + offsetY;
-
-            if (i===0) ctx.moveTo(sx,sy);
-            else ctx.lineTo(sx,sy);
+            if (i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
         }
-
         ctx.stroke();
     }
 
-
     // Cells
     for (let c of cells) {
-
         let x = c.x * scale + offsetX;
         let y = -c.y * scale + offsetY;
-
         let w = c.dx * scale;
         let h = c.dy * scale;
-
         ctx.fillStyle = getColor(c.prob);
-
-        ctx.fillRect(
-            x - w/2,
-            y - h/2,
-            w,
-            h
-        );
+        ctx.fillRect(x - w/2, y - h/2, w, h);
     }
 }
 
-
 // ================= TOOLTIP =================
-
 canvas.addEventListener("mousemove", e => {
-
     let mx = e.clientX;
     let my = e.clientY;
-
     let found = null;
 
     for (let c of cells) {
-
         let x = c.x * scale + offsetX;
         let y = -c.y * scale + offsetY;
-
         let w = c.dx * scale;
         let h = c.dy * scale;
-
-        if (
-            mx >= x-w/2 &&
-            mx <= x+w/2 &&
-            my >= y-h/2 &&
-            my <= y+h/2
-        ) {
+        if(mx>=x-w/2 && mx<=x+w/2 && my>=y-h/2 && my<=y+h/2){
             found = c;
             break;
         }
     }
 
-    if (found) {
-
+    if(found){
         tooltip.style.display = "block";
         tooltip.style.left = (mx+12)+"px";
         tooltip.style.top  = (my+12)+"px";
-
-        tooltip.innerHTML =
-            `Probability: ${(found.prob*100).toFixed(4)}%`;
-
+        tooltip.innerHTML = `Probability: ${(found.prob*100).toFixed(4)}%`;
     } else {
         tooltip.style.display = "none";
     }
-
 });
 
+// ================= ZOOM =================
+canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    let zoomFactor = 1.1;
+    if(e.deltaY < 0) scale *= zoomFactor;
+    else scale /= zoomFactor;
+    draw();
+});
+
+// ================= PAN =================
+let isDragging = false;
+let dragStart = {x:0, y:0};
+
+canvas.addEventListener("mousedown", e => {
+    isDragging = true;
+    dragStart.x = e.clientX;
+    dragStart.y = e.clientY;
+});
+canvas.addEventListener("mouseup", e => { isDragging = false; });
+canvas.addEventListener("mouseleave", e => { isDragging = false; });
+canvas.addEventListener("mousemove", e => {
+    if(isDragging){
+        let dx = e.clientX - dragStart.x;
+        let dy = e.clientY - dragStart.y;
+        offsetX += dx;
+        offsetY += dy;
+        dragStart.x = e.clientX;
+        dragStart.y = e.clientY;
+        draw();
+    }
+});
 
 // ================= LOAD DATA =================
-
 Promise.all([
 
-    fetch("map/data/tornado_prob_lcc.json").then(r=>r.json()),
-    fetch("map/data/borders_lcc.json").then(r=>r.json())
+    fetch("map/data/tornado_prob_lcc.json").then(r=>{
+        if(!r.ok) throw new Error("tornado_prob_lcc.json load failed");
+        return r.json();
+    }),
+
+    fetch("map/data/borders_lcc.json").then(r=>{
+        if(!r.ok) throw new Error("borders_lcc.json load failed");
+        return r.json();
+    })
 
 ])
 .then(([grid, borderData]) => {
 
     cells = grid.features;
 
-    borders = borderData.features.map(f =>
-        f.geometry.coordinates[0]
-    );
+    // === SAFE BORDER READING ===
+    borders = borderData.features
+        .filter(f => f.x && f.y && f.x.length === f.y.length)
+        .map(f => {
+            let poly = [];
+            for (let i = 0; i < f.x.length; i++) {
+                poly.push([f.x[i], f.y[i]]);
+            }
+            return poly;
+        });
 
     updateForecastLabel(grid);
-
     fitToData();
     resize();
 
 })
-.catch(() => {
-
-    infoBox.innerHTML =
-        "❌ Failed to load data";
-
+.catch(err => {
+    infoBox.innerHTML = "❌ Failed to load data";
+    errorBox.innerHTML = "Error: " + err.message;
 });
 
 </script>
