@@ -66,14 +66,6 @@ jobs:
           python scripts/convert_borders_to_lcc.py
 
       # ----------------------------
-      # 6. Compute Chicago LCC coordinates
-      # ----------------------------
-      - name: Compute Chicago LCC
-        run: |
-          echo "### Chicago LCC coordinates ###"
-          python scripts/chicago_lcc.py
-
-      # ----------------------------
       # 7. Commit + push outputs
       # ----------------------------
       - name: Commit and push data
