@@ -204,7 +204,16 @@ Promise.all([
 .then(([grid, borderData]) => {
 
     cells = grid.features;
-    borders = borderData.features.map(f => f.geometry.coordinates[0]);
+
+    // === CORRECT BORDER READING ===
+    borders = borderData.features.map(f => {
+        let poly = [];
+        for (let i=0;i<f.x.length;i++){
+            poly.push([f.x[i], f.y[i]]);
+        }
+        return poly;
+    });
+
     updateForecastLabel(grid);
     fitToData();
     resize();
