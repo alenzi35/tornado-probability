@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability (LCC) - Zoom & Pan</title>
+<title>RAP Tornado Probability (LCC) - Zoom & Pan Fixed</title>
 
 <style>
 html, body {
@@ -64,7 +64,6 @@ canvas:active {
 <canvas id="map"></canvas>
 
 <script>
-
 const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
 
@@ -114,25 +113,36 @@ Valid: ${pad(validStart)}:00–${pad(validEnd)}:00 UTC
 `;
 }
 
-// ================= FIT VIEW =================
+// ================= FIT VIEW (Include Borders) =================
 function fitToData() {
-    if(cells.length===0) return;
+    if(cells.length===0 && borders.length===0) return;
 
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
 
+    // Cells
     for (let c of cells) {
-        minX = Math.min(minX, c.x);
-        maxX = Math.max(maxX, c.x);
-        minY = Math.min(minY, c.y);
-        maxY = Math.max(maxY, c.y);
+        minX = Math.min(minX, c.x - c.dx/2);
+        maxX = Math.max(maxX, c.x + c.dx/2);
+        minY = Math.min(minY, c.y - c.dy/2);
+        maxY = Math.max(maxY, c.y + c.dy/2);
+    }
+
+    // Borders
+    for (let poly of borders) {
+        for (let [x,y] of poly) {
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y);
+        }
     }
 
     let w = maxX - minX;
     let h = maxY - minY;
     scale = Math.min(canvas.width / w, canvas.height / h) * 0.95;
-    offsetX = -minX * scale + canvas.width / 2 - w * scale / 2;
-    offsetY = maxY * scale + canvas.height / 2 - h * scale / 2;
+    offsetX = -minX * scale + canvas.width/2 - w*scale/2;
+    offsetY = maxY * scale + canvas.height/2 - h*scale/2;
 }
 
 // ================= DRAW =================
@@ -191,12 +201,21 @@ canvas.addEventListener("mousemove", e => {
     }
 });
 
-// ================= ZOOM =================
+// ================= ZOOM AROUND MOUSE =================
 canvas.addEventListener("wheel", e => {
     e.preventDefault();
     let zoomFactor = 1.1;
+    let mx = e.clientX;
+    let my = e.clientY;
+
+    let worldX = (mx - offsetX)/scale;
+    let worldY = -(my - offsetY)/scale;
+
     if(e.deltaY < 0) scale *= zoomFactor;
     else scale /= zoomFactor;
+
+    offsetX = mx - worldX*scale;
+    offsetY = my + worldY*scale;
     draw();
 });
 
