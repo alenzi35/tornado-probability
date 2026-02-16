@@ -2,89 +2,100 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>LCC Tornado Map with Chicago Highlight</title>
+<title>LCC Tornado Probability Map</title>
+
 <style>
-  body { margin:0; overflow:hidden; background:#111; }
-  canvas { display:block; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+  }
+
+  canvas {
+    display: block;
+  }
+
+  #tooltip {
+    position: absolute;
+    padding: 6px 10px;
+    background: rgba(0,0,0,0.8);
+    color: white;
+    border-radius: 5px;
+    pointer-events: none;
+    display: none;
+    font-family: sans-serif;
+    font-size: 13px;
+    white-space: nowrap;
+  }
 </style>
 </head>
+
 <body>
+
 <canvas id="mapCanvas"></canvas>
+<div id="tooltip"></div>
 
 <script>
-const canvas = document.getElementById('mapCanvas');
-const ctx = canvas.getContext('2d');
+const canvas = document.getElementById("mapCanvas");
+const ctx = canvas.getContext("2d");
+const tooltip = document.getElementById("tooltip");
 
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
+
 let dragging = false;
 let lastX, lastY;
 
 let cells = [];
 let borders = [];
-let chicagoCell = null;
 
-// ---------------------------
-// Chicago LCC coordinates from GitHub Actions
-const chicagoX = 1601143.4112371397;
-const chicagoY = -697570.4785903781;
-
-// ---------------------------
-// Resize canvas
+// --------------------------------
+// Resize
+// --------------------------------
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-// ---------------------------
+// --------------------------------
 // Load borders
+// --------------------------------
 fetch("map/data/borders_lcc.json")
   .then(res => res.json())
   .then(data => {
     borders = data.features;
     fitView();
     draw();
-  })
-  .catch(err => console.error("Error loading borders:", err));
+  });
 
-// ---------------------------
-// Load tornado cells
+// --------------------------------
+// Load cells
+// --------------------------------
 fetch("map/data/tornado_prob_lcc.json")
   .then(res => res.json())
   .then(data => {
     cells = data.features;
-
-    // Find the cell closest to Chicago
-    let minDist = Infinity;
-    cells.forEach(c => {
-      const dx = c.x - chicagoX;
-      const dy = c.y - chicagoY;
-      const dist = dx*dx + dy*dy;
-      if(dist < minDist){
-        minDist = dist;
-        chicagoCell = c;
-      }
-    });
-
     fitView();
     draw();
-  })
-  .catch(err => console.error("Error loading tornado cells:", err));
+  });
 
-// ---------------------------
-// Fit view to show everything
+
+// --------------------------------
+// Fit map to screen
+// --------------------------------
 function fitView() {
+
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
 
   cells.forEach(c => {
     minX = Math.min(minX, c.x);
-    maxX = Math.max(maxX, c.x + (c.dx||1));
+    maxX = Math.max(maxX, c.x + (c.dx || 1));
     minY = Math.min(minY, c.y);
-    maxY = Math.max(maxY, c.y + (c.dy||1));
+    maxY = Math.max(maxY, c.y + (c.dy || 1));
   });
 
   borders.forEach(line => {
@@ -99,79 +110,163 @@ function fitView() {
   const rangeX = maxX - minX;
   const rangeY = maxY - minY;
 
-  scale = Math.min(canvas.width / rangeX, canvas.height / rangeY) * 0.9;
+  scale = Math.min(
+    canvas.width / rangeX,
+    canvas.height / rangeY
+  ) * 0.9;
+
   offsetX = canvas.width/2 - (minX + rangeX/2) * scale;
   offsetY = canvas.height/2 + (minY + rangeY/2) * scale;
 }
 
-// ---------------------------
+
+// --------------------------------
 // Draw everything
+// --------------------------------
 function draw() {
+
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.setTransform(scale, 0, 0, -scale, offsetX, offsetY);
 
-  // Draw all tornado cells
+  // LCC transform
+  ctx.setTransform(
+    scale, 0,
+    0, -scale,
+    offsetX, offsetY
+  );
+
+  // ----- Draw cells -----
   cells.forEach(c => {
+
     const red = Math.floor(255 * c.prob);
     const blue = 255 - red;
+
     ctx.fillStyle = `rgba(${red},0,${blue},0.7)`;
-    const dx = c.dx || 1000; 
+
+    const dx = c.dx || 1000;
     const dy = c.dy || 1000;
+
     ctx.fillRect(c.x, c.y, dx, dy);
   });
 
-  // Highlight Chicago cell
-  if (chicagoCell) {
-    ctx.strokeStyle = "lime";
-    ctx.lineWidth = 2/scale;
-    const dx = chicagoCell.dx || 1000;
-    const dy = chicagoCell.dy || 1000;
-    ctx.strokeRect(chicagoCell.x, chicagoCell.y, dx, dy);
-  }
 
-  // Draw borders
+  // ----- Draw borders -----
   ctx.strokeStyle = "white";
   ctx.lineWidth = 1/scale;
+
   ctx.beginPath();
+
   borders.forEach(line => {
     line.forEach(([x,y], i) => {
-      if(i===0) ctx.moveTo(x,y);
+      if (i === 0) ctx.moveTo(x,y);
       else ctx.lineTo(x,y);
     });
   });
+
   ctx.stroke();
 }
 
-// ---------------------------
+
+// --------------------------------
+// Mouse → LCC coordinates
+// --------------------------------
+function screenToLCC(px, py) {
+
+  const x = (px - offsetX) / scale;
+  const y = -(py - offsetY) / scale;
+
+  return { x, y };
+}
+
+
+// --------------------------------
+// Hover detection
+// --------------------------------
+canvas.addEventListener("mousemove", e => {
+
+  const { x, y } = screenToLCC(e.offsetX, e.offsetY);
+
+  let found = null;
+
+  for (const c of cells) {
+
+    const dx = c.dx || 1000;
+    const dy = c.dy || 1000;
+
+    if (
+      x >= c.x &&
+      x <= c.x + dx &&
+      y >= c.y &&
+      y <= c.y + dy
+    ) {
+      found = c;
+      break;
+    }
+  }
+
+  if (found) {
+
+    tooltip.style.display = "block";
+
+    tooltip.style.left = (e.pageX + 12) + "px";
+    tooltip.style.top = (e.pageY + 12) + "px";
+
+    tooltip.innerHTML =
+      `Probability: ${(found.prob * 100).toFixed(2)}%`;
+
+  } else {
+    tooltip.style.display = "none";
+  }
+});
+
+
+// --------------------------------
 // Zoom
+// --------------------------------
 canvas.addEventListener("wheel", e => {
+
   e.preventDefault();
+
   const zoom = e.deltaY < 0 ? 1.15 : 0.87;
+
   const mx = e.offsetX;
   const my = e.offsetY;
+
   offsetX = mx - zoom*(mx - offsetX);
   offsetY = my - zoom*(my - offsetY);
+
   scale *= zoom;
+
   draw();
 });
 
-// ---------------------------
+
+// --------------------------------
 // Pan
+// --------------------------------
 canvas.addEventListener("mousedown", e => {
   dragging = true;
   lastX = e.clientX;
   lastY = e.clientY;
 });
-window.addEventListener("mouseup", () => dragging = false);
+
+window.addEventListener("mouseup", () => {
+  dragging = false;
+});
+
 window.addEventListener("mousemove", e => {
+
   if (!dragging) return;
+
   offsetX += e.clientX - lastX;
   offsetY += e.clientY - lastY;
+
   lastX = e.clientX;
   lastY = e.clientY;
+
   draw();
 });
 </script>
+
 </body>
 </html>
