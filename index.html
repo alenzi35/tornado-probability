@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>RAP Tornado Probability (LCC) - Zoom & Pan Fixed</title>
+<title>RAP Tornado Probability (LCC) - Borders Fixed</title>
 
 <style>
 html, body {
@@ -260,16 +260,14 @@ Promise.all([
 
     cells = grid.features;
 
-    // === SAFE BORDER READING ===
+    // === FIXED BORDER PARSING ===
+    // Works with GeoJSON-style coordinates: f.coordinates[0] = exterior ring
     borders = borderData.features
-        .filter(f => f.x && f.y && f.x.length === f.y.length)
         .map(f => {
-            let poly = [];
-            for (let i = 0; i < f.x.length; i++) {
-                poly.push([f.x[i], f.y[i]]);
-            }
-            return poly;
-        });
+            if(!f.coordinates) return null;
+            return f.coordinates[0].map(pt => [pt[0], pt[1]]);
+        })
+        .filter(f => f !== null);
 
     updateForecastLabel(grid);
     fitToData();
