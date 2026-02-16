@@ -3,17 +3,13 @@ import urllib.request
 import pygrib
 import numpy as np
 import json
+import datetime
 from pyproj import Proj
 
 
 # ================= CONFIG =================
 
-DATE = "20260128"
-HOUR = "19"
-FCST = "02"
-
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-
+DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
@@ -30,15 +26,53 @@ COEFFS = {
 
 # ================= SETUP =================
 
-os.makedirs("data", exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
+
+
+# ================= TIME LOGIC =================
+
+def get_latest_rap_time():
+    """
+    Returns (YYYYMMDD, HH) for latest completed RAP run
+    """
+
+    now = datetime.datetime.utcnow()
+
+    # We assume RAP run from previous hour is ready
+    run_time = now - datetime.timedelta(hours=1)
+
+    date = run_time.strftime("%Y%m%d")
+    hour = run_time.strftime("%H")
+
+    return date, hour
+
+
+DATE, HOUR = get_latest_rap_time()
+FCST = "01"   # Always 1-hour forecast
+
+print("Using RAP run:", DATE, HOUR, "F01")
+
+
+# ================= BUILD URL =================
+
+RAP_URL = (
+    f"https://noaa-rap-pds.s3.amazonaws.com/"
+    f"rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+)
+
+print("URL:", RAP_URL)
 
 
 # ================= DOWNLOAD =================
 
 print("Downloading RAP...")
 
-urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+try:
+    urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+
+except Exception as e:
+    raise RuntimeError("Download failed: " + str(e))
 
 print("Download complete.")
 
@@ -65,8 +99,10 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
             if not hasattr(g, "bottomLevel"):
                 continue
 
-            if not (abs(g.bottomLevel - bottom) < 1 and
-                    abs(g.topLevel - top) < 1):
+            if not (
+                abs(g.bottomLevel - bottom) < 1 and
+                abs(g.topLevel - top) < 1
+            ):
                 continue
 
         print(f"Found {shortname}")
@@ -188,6 +224,9 @@ for i in range(rows):
 # ================= WRITE JSON =================
 
 output = {
+    "run_date": DATE,
+    "run_hour": HOUR,
+    "forecast": "F01",
     "projection": params,
     "features": features
 }
