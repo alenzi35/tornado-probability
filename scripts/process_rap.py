@@ -19,7 +19,7 @@ OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 
 # Logistic regression coefficients
-INTERCEPT = -1.5686
+INTERCEPT = -14
 
 COEFFS = {
     "CAPE": 2.88592370e-03,
