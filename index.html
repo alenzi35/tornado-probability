@@ -244,8 +244,8 @@ canvas.addEventListener("mousemove", e => {
 
 Promise.all([
 
-    fetch("map/data/tornado_prob_lcc.json").then(r=>r.json()),
-    fetch("map/data/borders_lcc.json").then(r=>r.json())
+    fetch("/map/data/tornado_prob_lcc.json").then(r=>r.json()),
+    fetch("/map/data/borders_lcc.json").then(r=>r.json())
 
 ])
 .then(([grid, borderData]) => {
