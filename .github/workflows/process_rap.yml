@@ -1,9 +1,9 @@
 name: Process RAP Tornado Data
 
 on:
-  workflow_dispatch:      # allows manual trigger anytime
   schedule:
     - cron: "*/5 * * * *" # Every 5 minutes for testing
+  workflow_dispatch:      # allows manual trigger anytime
 
 permissions:
   contents: write
