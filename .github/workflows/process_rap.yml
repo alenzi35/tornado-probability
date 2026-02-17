@@ -1,9 +1,9 @@
 name: Process RAP Tornado Data
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *" # Every 5 minutes for testing
-  workflow_dispatch:      # allows manual trigger anytime
+    - cron: "*/5 * * * *"   # Every 5 minutes (polling)
 
 permissions:
   contents: write
@@ -14,29 +14,17 @@ jobs:
 
     steps:
 
-      # ----------------------------
-      # 1. Checkout repo
-      # ----------------------------
+      # 1. Checkout
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # ----------------------------
-      # 2. Print workflow UTC start time (debug)
-      # ----------------------------
-      - name: Workflow start UTC time
-        run: date -u
-
-      # ----------------------------
-      # 3. Setup Python
-      # ----------------------------
+      # 2. Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ----------------------------
-      # 4. Install system + Python deps
-      # ----------------------------
+      # 3. Dependencies
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -50,47 +38,28 @@ jobs:
           pip install \
             pygrib \
             numpy \
-            xarray \
-            geopandas \
             pyproj \
             shapely \
-            fiona \
             requests
 
-      # ----------------------------
-      # 5. Heartbeat (forces cron registration)
-      # ----------------------------
-      - name: Heartbeat
-        run: |
-          echo "Heartbeat - GitHub cron test: $(date -u)"
-
-      # ----------------------------
-      # 6. Run RAP processor
-      # ----------------------------
+      # 4. Process RAP
       - name: Process RAP data
         run: |
           python scripts/process_rap.py
 
-      # ----------------------------
-      # 7. Convert borders to LCC
-      # ----------------------------
-      - name: Convert borders to LCC
+      # 5. Borders
+      - name: Convert borders
         run: |
           python scripts/convert_borders_to_lcc.py
 
-      # ----------------------------
-      # 8. Commit + push outputs
-      # ----------------------------
-      - name: Commit and push data
+      # 6. Commit
+      - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          git add \
-            map/data/tornado_prob.json \
-            map/data/tornado_prob_lcc.json \
-            map/data/borders_lcc.json
+          git add map/data
 
-          git commit -m "Update RAP + LCC borders" || echo "Nothing to commit"
+          git commit -m "Auto RAP update" || echo "No changes"
 
           git push
