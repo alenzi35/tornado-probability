@@ -3,7 +3,7 @@ name: Process RAP Tornado Data
 on:
   workflow_dispatch:
   schedule:
-    - cron: "55 * * * *"   # Every hour at :55 UTC
+    - cron: "*/2 * * * *"   # Every 2 minutes for testing only
 
 permissions:
   contents: write
