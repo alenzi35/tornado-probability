@@ -3,7 +3,7 @@ name: Process RAP Tornado Data
 on:
   workflow_dispatch:      # allows manual trigger anytime
   schedule:
-    - cron: "55 * * * *" # Every hour at :55 UTC
+    - cron: "*/5 * * * *" # Every 5 minutes for testing
 
 permissions:
   contents: write
@@ -21,7 +21,13 @@ jobs:
         uses: actions/checkout@v4
 
       # ----------------------------
-      # 2. Setup Python
+      # 2. Print workflow UTC start time (debug)
+      # ----------------------------
+      - name: Workflow start UTC time
+        run: date -u
+
+      # ----------------------------
+      # 3. Setup Python
       # ----------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,7 +35,7 @@ jobs:
           python-version: "3.11"
 
       # ----------------------------
-      # 3. Install system + Python deps
+      # 4. Install system + Python deps
       # ----------------------------
       - name: Install dependencies
         run: |
@@ -52,28 +58,28 @@ jobs:
             requests
 
       # ----------------------------
-      # 4. Heartbeat step (forces cron registration)
+      # 5. Heartbeat (forces cron registration)
       # ----------------------------
-      - name: Heartbeat for cron registration
+      - name: Heartbeat
         run: |
-          echo "Heartbeat - GitHub cron registration check: $(date -u)"
+          echo "Heartbeat - GitHub cron test: $(date -u)"
 
       # ----------------------------
-      # 5. Run RAP processor
+      # 6. Run RAP processor
       # ----------------------------
       - name: Process RAP data
         run: |
           python scripts/process_rap.py
 
       # ----------------------------
-      # 6. Convert borders to LCC
+      # 7. Convert borders to LCC
       # ----------------------------
       - name: Convert borders to LCC
         run: |
           python scripts/convert_borders_to_lcc.py
 
       # ----------------------------
-      # 7. Commit + push outputs
+      # 8. Commit + push outputs
       # ----------------------------
       - name: Commit and push data
         run: |
