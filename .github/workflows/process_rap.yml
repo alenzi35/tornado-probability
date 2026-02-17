@@ -2,9 +2,14 @@ name: Process RAP Tornado Data
 
 on:
   workflow_dispatch:
+  # Trigger on push to 'main' once to ensure GitHub registers the schedule
+  push:
+    branches:
+      - main
   schedule:
-   - cron: '0 * * * *'   # Every hour at :55 UTC
-
+    # Changed from 0 to 17 to avoid high-traffic delays/drops
+    - cron: '24 * * * *'
+    
 permissions:
   contents: write
 
