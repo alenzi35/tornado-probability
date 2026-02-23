@@ -1,126 +1,97 @@
 import geopandas as gpd
-import requests
-import zipfile
-import io
 import json
+import zipfile, io, requests
+from shapely.geometry import box
+from shapely.ops import unary_union
 from pyproj import CRS
-
 
 # -----------------------------
 # Paths
 # -----------------------------
-
-OUT_PATH = "map/data/borders_lcc.json"
-
-NE_URL = "https://naturalearth.s3.amazonaws.com/50m_cultural/ne_50m_admin_1_states_provinces.zip"
-
+CELLS_IN = "map/data/tornado_prob_lcc.json"
+BORDERS_OUT = "map/data/borders_lcc.json"
+CENSUS_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
+TMP_DIR = "tmp_census"
 
 # -----------------------------
-# Download + unzip shapefile
+# Download + unzip Census shapefile
 # -----------------------------
-
-print("Downloading Natural Earth borders...")
-
-resp = requests.get(NE_URL)
+resp = requests.get(CENSUS_URL)
 resp.raise_for_status()
-
 z = zipfile.ZipFile(io.BytesIO(resp.content))
-z.extractall("tmp_borders")
-
-print("Download complete.")
-
-
-# -----------------------------
-# Load shapefile
-# -----------------------------
-
-shp_path = "tmp_borders/ne_50m_admin_1_states_provinces.shp"
-
-print("Loading shapefile...")
-
+z.extractall(TMP_DIR)
+shp_path = f"{TMP_DIR}/cb_2024_us_state_5m.shp"
 gdf = gpd.read_file(shp_path)
 
+# -----------------------------
+# Filter to lower 48 states
+# -----------------------------
+lower48 = [
+    'AL','AZ','AR','CA','CO','CT','DE','FL','GA','ID','IL','IN','IA','KS','KY','LA',
+    'ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND',
+    'OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+]
+gdf = gdf[gdf['STUSPS'].isin(lower48)]
 
 # -----------------------------
-# Filter to USA only
+# Build RAP CRS
 # -----------------------------
+with open(CELLS_IN) as f:
+    cells_data = json.load(f)
 
-print("Filtering to USA...")
-
-gdf = gdf[gdf["admin"] == "United States of America"]
-
-
-# -----------------------------
-# Build RAP LCC projection
-# -----------------------------
-
-print("Building LCC projection...")
-
-lcc_proj = CRS.from_proj4(
-    "+proj=lcc "
-    "+lat_1=50 "
-    "+lat_2=50 "
-    "+lat_0=50 "
-    "+lon_0=253 "
-    "+a=6371229 "
-    "+b=6371229 "
-    "+units=m "
-    "+no_defs"
+p = cells_data["projection"]
+rap_crs = CRS.from_proj4(
+    f"+proj=lcc +lat_1={p['lat_1']} +lat_2={p['lat_2']} +lat_0={p['lat_0']} "
+    f"+lon_0={p['lon_0']} +a={p.get('a',6371229)} +b={p.get('b',6371229)} +units=m +no_defs"
 )
 
+# -----------------------------
+# Reproject borders
+# -----------------------------
+gdf_lcc = gdf.to_crs(rap_crs)
+us_poly = unary_union(gdf_lcc.geometry)
 
 # -----------------------------
-# Reproject
+# Export lower-48 borders
 # -----------------------------
-
-print("Reprojecting...")
-
-gdf_lcc = gdf.to_crs(lcc_proj)
-
-
-# -----------------------------
-# Export to JSON
-# -----------------------------
-
-print("Exporting JSON...")
-
 features = []
-
 for geom in gdf_lcc.geometry:
-
-    if geom is None:
-        continue
-
-    if geom.geom_type == "MultiPolygon":
-
+    if geom.geom_type == "Polygon":
+        features.append(list(geom.exterior.coords))
+    elif geom.geom_type == "MultiPolygon":
         for poly in geom.geoms:
-            coords = list(poly.exterior.coords)
+            features.append(list(poly.exterior.coords))
+with open(BORDERS_OUT, "w") as f:
+    json.dump({"features": features}, f)
+print(f"Saved {len(features)} lower-48 borders to {BORDERS_OUT}")
 
-            features.append(coords)
+# -----------------------------
+# Build bounding box for CONUS in LCC coordinates
+# -----------------------------
+minx, miny, maxx, maxy = us_poly.bounds
+bbox = box(minx, miny, maxx, maxy)
 
-    elif geom.geom_type == "Polygon":
+# -----------------------------
+# Filter tornado cells to bounding box
+# -----------------------------
+filtered_cells = []
+for c in cells_data["features"]:
+    x = c["x"]
+    y = c["y"]
+    w = c["dx"]
+    h = c["dy"]
+    cell_poly = box(x, y, x+w, y+h)
+    if bbox.intersects(cell_poly):
+        filtered_cells.append(c)
 
-        coords = list(geom.exterior.coords)
-        features.append(coords)
+print(f"Cells inside CONUS bounding box: {len(filtered_cells)}")
 
+# -----------------------------
+# Write filtered cells back to JSON
+# -----------------------------
+cells_data["features"] = filtered_cells
+with open(CELLS_IN, "w") as f:
+    json.dump(cells_data, f)
 
-out = {
-    "projection": {
-        "proj": "lcc",
-        "lat_0": 50,
-        "lat_1": 50,
-        "lat_2": 50,
-        "lon_0": 253,
-        "a": 6371229,
-        "b": 6371229
-    },
-    "features": features
-}
-
-
-with open(OUT_PATH, "w") as f:
-    json.dump(out, f)
-
-
-print(f"Saved {len(features)} borders to {OUT_PATH}")
+print(f"Final cell count written to {CELLS_IN}")
 print("Done.")
