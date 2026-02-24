@@ -42,7 +42,7 @@ def get_target_cycle():
     return date, hour
 
 DATE, HOUR = get_target_cycle()
-FCST = "00"
+FCST = "01"
 
 # ================= DOWNLOAD RAP =================
 
@@ -80,12 +80,11 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     raise RuntimeError(f"{shortname} not found")
 
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
+cape_msg = pick_var(grbs, "cape", "surface")
 grbs.seek(0)
-cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000)
+cin_msg = pick_var(grbs, "cin", "surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
-
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
