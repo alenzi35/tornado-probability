@@ -1,15 +1,18 @@
+import os
+import urllib.request
+import pygrib
+import numpy as np
 import json
-import random
-from pathlib import Path
 import subprocess
-import sys
 
-# =========================
-# CONFIG — EDIT THESE ONLY
-# =========================
+DATA_DIR = "data"
+GRIB_PATH = f"{DATA_DIR}/rap.grib2"
+GRID_JSON = f"{DATA_DIR}/rap_grid.json"
+DATASET_JSON = f"{DATA_DIR}/dataset.json"
 
-# 4 RAP analysis snapshots (NO forecast hour)
-# Format: (YYYYMMDD, HH)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# 4 historical RAP analysis snapshots
 SNAPSHOTS = [
     ("20250724", "14"),
     ("20250915", "17"),
@@ -17,111 +20,100 @@ SNAPSHOTS = [
     ("20251230", "23"),
 ]
 
-TORNADO_FILE = Path("data/tornado_samples.json")
+def download_rap(date, hour):
+    url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f00.grib2"
+    print("Downloading:", url)
+    urllib.request.urlretrieve(url, GRIB_PATH)
 
-OUTPUT_FILE = Path("data/dataset.json")
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    for g in grbs:
+        if g.shortName.lower() != shortname.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
+        if bottom is not None and top is not None:
+            if not hasattr(g, "bottomLevel"):
+                continue
+            if not (abs(g.bottomLevel-bottom)<1 and abs(g.topLevel-top)<1):
+                continue
+        return g
+    raise RuntimeError(f"{shortname} not found")
 
-TEMP_FILE = Path("data/rap_grid.json")
+def extract_grid():
+    grbs = pygrib.open(GRIB_PATH)
 
+    grbs.seek(0)
+    cape = pick_var(grbs,"cape","pressureFromGroundLayer",0,9000).values
 
-# =========================
-# FUNCTIONS
-# =========================
+    grbs.seek(0)
+    cin = pick_var(grbs,"cin","pressureFromGroundLayer",0,9000).values
 
-def run_process_rap(date, hour):
+    grbs.seek(0)
+    hlcy = pick_var(grbs,"hlcy","heightAboveGroundLayer",0,1000).values
 
-    print(f"Processing RAP analysis: {date} {hour}z")
+    cape = np.nan_to_num(cape)
+    cin = np.nan_to_num(cin)
+    hlcy = np.nan_to_num(hlcy)
 
-    cmd = [
-        sys.executable,
-        "scripts/process_rap.py",
-        date,
-        hour
-    ]
+    rows, cols = cape.shape
 
-    subprocess.run(cmd, check=True)
+    samples = []
 
-    if not TEMP_FILE.exists():
-        raise RuntimeError("process_rap.py did not produce rap_grid.json")
+    for i in range(rows):
+        for j in range(cols):
 
-    with open(TEMP_FILE) as f:
-        data = json.load(f)
+            samples.append({
+                "CAPE": float(cape[i,j]),
+                "CIN": float(cin[i,j]),
+                "HLCY": float(hlcy[i,j]),
+                "tornado": 0
+            })
 
-    return data
+    print("Extracted", len(samples), "non-tornado samples")
 
-
-def label_non_tornado(samples):
-
-    return [
-        {
-            "mlcape": s["mlcape"],
-            "mlcin": s["mlcin"],
-            "srh01": s["srh01"],
-            "label": 0
-        }
-        for s in samples
-    ]
+    return samples
 
 
 def load_tornado_samples():
 
-    print("Loading tornado samples...")
+    path = "data/tornado_samples.json"
 
-    with open(TORNADO_FILE) as f:
-        tors = json.load(f)
+    if not os.path.exists(path):
+        print("No tornado samples found yet")
+        return []
 
-    return [
-        {
-            "mlcape": s["mlcape"],
-            "mlcin": s["mlcin"],
-            "srh01": s["srh01"],
-            "label": 1
-        }
-        for s in tors
-    ]
+    with open(path) as f:
+        data = json.load(f)
 
+    print("Loaded", len(data), "tornado samples")
 
-# =========================
-# MAIN
-# =========================
+    return data
+
 
 def main():
 
     dataset = []
 
-    # NON-TORNADO
     for date, hour in SNAPSHOTS:
 
-        samples = run_process_rap(date, hour)
+        print("\nProcessing snapshot:", date, hour)
 
-        samples = label_non_tornado(samples)
+        download_rap(date, hour)
+
+        samples = extract_grid()
 
         dataset.extend(samples)
 
-        print(f"Added {len(samples)} non-tornado samples")
-
-
-    # TORNADO
     tornado_samples = load_tornado_samples()
 
     dataset.extend(tornado_samples)
 
-    print(f"Added {len(tornado_samples)} tornado samples")
+    print("\nFinal dataset size:", len(dataset))
 
+    with open(DATASET_JSON,"w") as f:
+        json.dump(dataset,f)
 
-    # SHUFFLE
-    random.shuffle(dataset)
-
-    print(f"Final dataset size: {len(dataset)}")
-
-
-    # SAVE
-    OUTPUT_FILE.parent.mkdir(exist_ok=True)
-
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(dataset, f)
-
-    print(f"Saved dataset → {OUTPUT_FILE}")
+    print("Saved dataset:", DATASET_JSON)
 
 
 if __name__ == "__main__":
