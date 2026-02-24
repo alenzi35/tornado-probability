@@ -72,7 +72,15 @@ jobs:
         run: |
           python scripts/convert_borders_to_lcc.py
 
+      - name: Build Dataset
+        run: |
+          python scripts/build_dataset.py
 
+      - name: Train Logistic Regression
+        run: |
+          python scripts/train_lr.py
+          
+          
       # ----------------------------
       # 6. Commit + push outputs
       # ----------------------------
