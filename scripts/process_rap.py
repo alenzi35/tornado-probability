@@ -160,12 +160,19 @@ def process_run(date, hour):
 
 all_snapshots = []
 
-for date in DATES_TO_PROCESS:
-    for hour in range(24):
-        hour_str = f"{hour:02d}"
-        snap = process_run(date, hour_str)
-        if snap:
-            all_snapshots.append(snap)
+SNAPSHOTS_TO_PROCESS = [
+    ("20250413", "14"),
+    ("20250724", "17"),
+    ("20250802", "20"),
+    ("20251211", "23")
+]
+
+all_snapshots = []
+
+for date, hour in SNAPSHOTS_TO_PROCESS:
+    snap = process_run(date, hour)
+    if snap:
+        all_snapshots.append(snap)
 
 # ================= SAVE JSON =================
 
