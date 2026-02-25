@@ -81,6 +81,8 @@ jobs:
       # ----------------------------
       - name: Train Logistic Regression Model
         run: |
+          pip install --upgrade pip
+          pip install numpy pandas scikit-learn
           python scripts/train_lr_model.py
           
       # ----------------------------
