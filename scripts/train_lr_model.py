@@ -5,10 +5,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 # ================= PATH CONFIG =================
-# Determine repo root dynamically
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Paths to your data
 UNIFIED_JSON = os.path.join(BASE_DIR, "map", "data", "rap_unified_dataset.json")
 TORNADO_CSV = os.path.join(BASE_DIR, "map", "data", "tornado_samples.csv")
 
@@ -18,7 +15,6 @@ print("Looking for tornado CSV at:", TORNADO_CSV)
 # ================= CHECK FILE EXISTENCE =================
 if not os.path.isfile(UNIFIED_JSON):
     raise FileNotFoundError(f"Non-tornado JSON not found at {UNIFIED_JSON}")
-
 if not os.path.isfile(TORNADO_CSV):
     raise FileNotFoundError(f"Tornado CSV not found at {TORNADO_CSV}")
 
@@ -26,41 +22,37 @@ if not os.path.isfile(TORNADO_CSV):
 with open(UNIFIED_JSON, "r") as f:
     data = json.load(f)
 
-print("File loaded. Top-level keys:", list(data.keys()))
+print("Top-level keys:", list(data.keys()))
+
+if "samples" not in data:
+    raise ValueError("JSON format not recognized. Must contain 'samples' key.")
 
 non_tornado = []
-
-# Multi-snapshot format
-if "snapshots" in data:
-    for snap in data["snapshots"]:
-        for feat in snap["features"]:
-            non_tornado.append([
-                feat["cape"],
-                feat["cin"],
-                feat["hlcy"],
-                0  # label = non-tornado
-            ])
-else:
-    raise ValueError("JSON format not recognized. Must contain 'snapshots'.")
+for feat in data["samples"]:
+    non_tornado.append([
+        feat["cape"],
+        feat["cin"],
+        feat["hlcy"],
+        0  # non-tornado label
+    ])
 
 non_tornado = np.array(non_tornado)
 print("Loaded non-tornado samples:", len(non_tornado))
 
 # ================= LOAD TORNADO =================
 tor_df = pd.read_csv(TORNADO_CSV)
-
 tornado = np.column_stack([
     tor_df["mlcape"].values,
     tor_df["mlcin"].values,
     tor_df["srh01"].values,
-    np.ones(len(tor_df))  # label = tornado
+    np.ones(len(tor_df))  # tornado label
 ])
 print("Loaded tornado samples:", len(tornado))
 
 # ================= COMBINE DATA =================
 all_data = np.vstack([non_tornado, tornado])
 X = all_data[:, 0:3]  # CAPE, CIN, HLCY
-y = all_data[:, 3]    # labels
+y = all_data[:, 3]
 
 print("Total samples:", len(y))
 print("Empirical tornado rate:", np.mean(y))
