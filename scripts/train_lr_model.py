@@ -2,50 +2,57 @@ import json
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 
-# ================= FILE PATHS =================
-DATA_JSON = "map/data/rap_unified_dataset.json"
-OUTPUT_JSON = "map/data/lr_coefficients.json"
+UNIFIED_JSON = "rap_unified_dataset.json"
+TORNADO_CSV = "tornado_samples.csv"
 
-# ================= LOAD DATA =================
-with open(DATA_JSON, "r") as f:
+# ---------- Load non-tornado ----------
+with open(UNIFIED_JSON, "r") as f:
     data = json.load(f)
 
-samples = data["samples"]
+non_tornado = []
 
-X = np.array([[s["cape"], s["cin"], s["hlcy"]] for s in samples])
-y = np.array([s["tornado"] for s in samples])
+for snap in data["snapshots"]:
+    for feat in snap["features"]:
+        non_tornado.append([
+            feat["cape"],
+            feat["cin"],
+            feat["hlcy"],
+            0
+        ])
 
-print("X shape:", X.shape)
-print("y shape:", y.shape)
-print("Number of tornado samples:", y.sum())
-print("Number of non-tornado samples:", len(y) - y.sum())
+non_tornado = np.array(non_tornado)
 
-# ================= STANDARDIZE FEATURES =================
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+# ---------- Load tornado ----------
+tor_df = pd.read_csv(TORNADO_CSV)
 
-# ================= LOGISTIC REGRESSION =================
-lr = LogisticRegression(class_weight='balanced', solver='lbfgs', max_iter=1000)
-lr.fit(X_scaled, y)
+tornado = np.column_stack([
+    tor_df["mlcape"].values,
+    tor_df["mlcin"].values,
+    tor_df["srh01"].values,
+    np.ones(len(tor_df))
+])
 
-# ================= SAVE COEFFICIENTS =================
-coefficients = lr.coef_[0]
-intercept = lr.intercept_[0]
+# ---------- Combine ----------
+all_data = np.vstack([non_tornado, tornado])
 
-coef_output = {
-    "features": ["cape", "cin", "hlcy"],
-    "coefficients": coefficients.tolist(),
-    "intercept": float(intercept)
-}
+X = all_data[:, 0:3]
+y = all_data[:, 3]
 
-with open(OUTPUT_JSON, "w") as f:
-    json.dump(coef_output, f, indent=2)
+print("Total samples:", len(y))
+print("Tornado rate:", np.mean(y))
 
-# ================= PRINT =================
-print("\n=== Logistic Regression Coefficients ===")
-for name, coef in zip(coef_output["features"], coef_output["coefficients"]):
-    print(f"{name}: {coef:.8f}")
-print(f"Intercept: {coef_output['intercept']:.8f}")
-print("\nSaved coefficients to:", OUTPUT_JSON)
+# ---------- Train Logistic Regression ----------
+model = LogisticRegression(
+    max_iter=10000,
+    solver="lbfgs"
+)
+
+model.fit(X, y)
+
+print("\n===== RAW MODEL COEFFICIENTS =====")
+print("CAPE:", model.coef_[0][0])
+print("CIN :", model.coef_[0][1])
+print("HLCY:", model.coef_[0][2])
+print("Intercept:", model.intercept_[0])
+print("==================================")
