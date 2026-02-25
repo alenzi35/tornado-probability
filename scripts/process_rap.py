@@ -14,21 +14,21 @@ from shapely.prepared import prep
 from pyproj import Proj
 
 # ================= CONFIG =================
-
 DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/rap_non_tornado_snapshots.json"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-# Analysis only (no forecast hours)
-FCST = "00"
+# Standardized LR coefficients from training
+COEFFS = {
+    "CAPE": 0.92968438,
+    "CIN": -0.17418338,
+    "HLCY": 0.86443485
+}
 
-# Your manually selected non-tornado dates
-DATES_TO_PROCESS = [
-    "20250413",
-    "20250724",
-    "20250802",
-    "20251211"
-]
+# Empirical dataset for intercept calibration
+NUM_TORNADO = 199
+NUM_NON_TORNADO = 32772
+P_EMPIRICAL = NUM_TORNADO / (NUM_TORNADO + NUM_NON_TORNADO)
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
@@ -36,7 +36,23 @@ CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_sta
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= DOWNLOAD CONUS SHAPE (ONCE) =================
+# ================= HELPER FUNCTIONS =================
+
+def get_snapshots():
+    """
+    Specify exact snapshots you want to process:
+    Format: (YYYYMMDD, HH in UTC)
+    """
+    return [
+        ("20250413", "14"),
+        ("20250724", "17"),
+        ("20250802", "20"),
+        ("20251211", "23")
+    ]
+
+def url_exists(url):
+    r = requests.head(url)
+    return r.status_code == 200
 
 def download_shapefile(url, folder):
     resp = requests.get(url)
@@ -46,45 +62,47 @@ def download_shapefile(url, folder):
     shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
     return gpd.read_file(f"{folder}/{shp_file}")
 
-print("Loading CONUS shapefile...")
-states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    for g in grbs:
+        if g.shortName.lower() != shortname.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
+        if bottom is not None and top is not None:
+            if not hasattr(g, "bottomLevel"):
+                continue
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+                continue
+        return g
+    raise RuntimeError(f"{shortname} not found")
 
-lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
-lower48 = lower48.to_crs(epsg=4326)  # temporary; reproject later
+def calibrate_intercept(cape, cin, hlcy):
+    """
+    Compute intercept calibrated to empirical tornado frequency
+    """
+    linear_pred = COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
+    mean_linear = np.mean(linear_pred)
+    intercept_cal = np.log(P_EMPIRICAL / (1 - P_EMPIRICAL)) - mean_linear
+    return intercept_cal
 
-# ================= CORE PROCESS FUNCTION =================
+# ================= PROCESS SNAPSHOT =================
 
-def process_run(date, hour):
+def process_snapshot(date, hour, fcst="01"):
+    print(f"\nProcessing snapshot: {date} {hour} UTC, F{fcst}")
 
-    RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f{FCST}.grib2"
-    print(f"\nProcessing {date} {hour}z")
+    # ================= DOWNLOAD RAP =================
+    rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f{fcst}.grib2"
+    print("RAP URL:", rap_url)
 
-    # Check if file exists
-    r = requests.head(RAP_URL)
-    if r.status_code != 200:
-        print("File not available, skipping.")
+    if not url_exists(rap_url):
+        print("RAP file not ready. Skipping.")
         return None
 
-    # Download
-    urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+    urllib.request.urlretrieve(rap_url, GRIB_PATH)
+    print("Downloaded RAP GRIB2")
 
-    # Open GRIB
+    # ================= LOAD GRIB =================
     grbs = pygrib.open(GRIB_PATH)
-
-    def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
-        for g in grbs:
-            if g.shortName.lower() != shortname.lower():
-                continue
-            if typeOfLevel and g.typeOfLevel != typeOfLevel:
-                continue
-            if bottom is not None and top is not None:
-                if not hasattr(g, "bottomLevel"):
-                    continue
-                if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
-                    continue
-            return g
-        raise RuntimeError(f"{shortname} not found")
-
     grbs.seek(0)
     cape_msg = pick_var(grbs, "cape", "surface")
     grbs.seek(0)
@@ -111,27 +129,34 @@ def process_run(date, hour):
 
     x_vals, y_vals = proj_lcc(lons, lats)
 
-    # Project CONUS to LCC
+    # ================= CALIBRATE INTERCEPT =================
+    intercept = calibrate_intercept(cape, cin, hlcy)
+    print("Calibrated intercept:", intercept)
+
+    # ================= CALC PROB =================
+    linear = intercept + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
+    prob = 1 / (1 + np.exp(-linear))
+
+    # ================= DOWNLOAD CONUS SHAPE =================
+    print("Downloading CONUS shapefile...")
+    states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+    lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
     lower48_lcc = lower48.to_crs(proj_lcc.srs)
     conus_poly = lower48_lcc.unary_union
     prepared_conus = prep(conus_poly)
 
-    print("Filtering cells inside CONUS...")
-
+    # ================= FILTER CELLS =================
+    print("Filtering grid cells to CONUS...")
     features = []
-    rows, cols = cape.shape
-
+    rows, cols = prob.shape
     for i in range(rows):
         for j in range(cols):
             x = x_vals[i,j]
             y = y_vals[i,j]
-
             dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
             dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
             dx, dy = abs(dx), abs(dy)
-
             cell_box = box(x, y, x+dx, y+dy)
-
             if prepared_conus.intersects(cell_box):
                 features.append({
                     "x": float(x),
@@ -140,44 +165,49 @@ def process_run(date, hour):
                     "dy": float(dy),
                     "cape": float(cape[i,j]),
                     "cin": float(cin[i,j]),
-                    "hlcy": float(hlcy[i,j])
+                    "hlcy": float(hlcy[i,j]),
+                    "prob": float(prob[i,j])
                 })
 
-    print(f"Kept {len(features)} CONUS cells.")
+    print(f"Kept {len(features)} cells inside or touching CONUS.")
 
-    snapshot = {
+    valid_start = f"{int(hour):02d}:00"
+    valid_end = f"{(int(hour)+1)%24:02d}:00"
+
+    snapshot_output = {
         "run_date": date,
         "run_hour": hour,
-        "valid": f"{hour}:00 UTC",
+        "forecast": f"F{fcst}",
+        "valid": f"{valid_start}-{valid_end} UTC",
         "generated": datetime.datetime.utcnow().isoformat()+"Z",
         "projection": params,
         "features": features
     }
 
-    return snapshot
+    return snapshot_output
 
-# ================= MAIN LOOP =================
+# ================= MAIN =================
 
-all_snapshots = []
+def main():
+    snapshots_to_process = get_snapshots()
+    all_snapshots = []
 
-SNAPSHOTS_TO_PROCESS = [
-    ("20250413", "14"),
-    ("20250724", "17"),
-    ("20250802", "20"),
-    ("20251211", "23")
-]
+    for date, hour in snapshots_to_process:
+        snap = process_snapshot(date, hour)
+        if snap:
+            all_snapshots.append(snap)
 
-all_snapshots = []
+    # ================= SAVE JSON =================
+    output = {
+        "snapshots": all_snapshots,
+        "generated": datetime.datetime.utcnow().isoformat()+"Z"
+    }
 
-for date, hour in SNAPSHOTS_TO_PROCESS:
-    snap = process_run(date, hour)
-    if snap:
-        all_snapshots.append(snap)
+    with open(OUTPUT_JSON, "w") as f:
+        json.dump(output, f)
 
-# ================= SAVE JSON =================
+    print("\nSaved tornado probability map to:", OUTPUT_JSON)
+    print("DONE.")
 
-with open(OUTPUT_JSON, "w") as f:
-    json.dump({"snapshots": all_snapshots}, f)
-
-print("\nSaved:", OUTPUT_JSON)
-print("DONE.")
+if __name__ == "__main__":
+    main()
