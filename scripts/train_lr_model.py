@@ -1,53 +1,63 @@
+import os
 import json
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
-UNIFIED_JSON = "../map/data/rap_unified_dataset.json"
-TORNADO_CSV = "tornado_samples.csv"
+# ================= PATH CONFIG =================
+# Works whether running locally or in GitHub Actions
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UNIFIED_JSON = os.path.join(BASE_DIR, "map", "data", "rap_unified_dataset.json")
+TORNADO_CSV = os.path.join(BASE_DIR, "map", "data", "tornado_samples.csv")
 
-# ---------- Load non-tornado ----------
+print("Looking for non-tornado JSON at:", UNIFIED_JSON)
+print("Looking for tornado CSV at:", TORNADO_CSV)
+
+# ================= LOAD NON-TORNADO =================
 with open(UNIFIED_JSON, "r") as f:
     data = json.load(f)
 
+print("Top-level keys in JSON:", list(data.keys()))
+
 non_tornado = []
 
-for snap in data["snapshots"]:
-    for feat in snap["features"]:
-        non_tornado.append([
-            feat["cape"],
-            feat["cin"],
-            feat["hlcy"],
-            0
-        ])
+# Multi-snapshot format
+if "snapshots" in data:
+    for snap in data["snapshots"]:
+        for feat in snap["features"]:
+            non_tornado.append([
+                feat["cape"],
+                feat["cin"],
+                feat["hlcy"],
+                0  # label = non-tornado
+            ])
+else:
+    raise ValueError("JSON format not recognized. Must contain 'snapshots'.")
 
 non_tornado = np.array(non_tornado)
+print("Loaded non-tornado samples:", len(non_tornado))
 
-# ---------- Load tornado ----------
+# ================= LOAD TORNADO =================
 tor_df = pd.read_csv(TORNADO_CSV)
 
 tornado = np.column_stack([
     tor_df["mlcape"].values,
     tor_df["mlcin"].values,
     tor_df["srh01"].values,
-    np.ones(len(tor_df))
+    np.ones(len(tor_df))  # label = tornado
 ])
+print("Loaded tornado samples:", len(tornado))
 
-# ---------- Combine ----------
+# ================= COMBINE DATA =================
 all_data = np.vstack([non_tornado, tornado])
-
-X = all_data[:, 0:3]
-y = all_data[:, 3]
+X = all_data[:, 0:3]  # CAPE, CIN, HLCY
+y = all_data[:, 3]    # labels
 
 print("Total samples:", len(y))
-print("Tornado rate:", np.mean(y))
+print("Empirical tornado rate:", np.mean(y))
 
-# ---------- Train Logistic Regression ----------
-model = LogisticRegression(
-    max_iter=10000,
-    solver="lbfgs"
-)
-
+# ================= TRAIN LOGISTIC REGRESSION =================
+model = LogisticRegression(max_iter=10000, solver="lbfgs")
 model.fit(X, y)
 
 print("\n===== RAW MODEL COEFFICIENTS =====")
