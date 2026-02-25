@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
-UNIFIED_JSON = "rap_unified_dataset.json"
+UNIFIED_JSON = "map/data/rap_unified_dataset.json"
 TORNADO_CSV = "tornado_samples.csv"
 
 # ---------- Load non-tornado ----------
