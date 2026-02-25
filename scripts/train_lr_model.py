@@ -5,19 +5,28 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 # ================= PATH CONFIG =================
-# Works whether running locally or in GitHub Actions
+# Determine repo root dynamically
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Paths to your data
 UNIFIED_JSON = os.path.join(BASE_DIR, "map", "data", "rap_unified_dataset.json")
 TORNADO_CSV = os.path.join(BASE_DIR, "map", "data", "tornado_samples.csv")
 
 print("Looking for non-tornado JSON at:", UNIFIED_JSON)
 print("Looking for tornado CSV at:", TORNADO_CSV)
 
+# ================= CHECK FILE EXISTENCE =================
+if not os.path.isfile(UNIFIED_JSON):
+    raise FileNotFoundError(f"Non-tornado JSON not found at {UNIFIED_JSON}")
+
+if not os.path.isfile(TORNADO_CSV):
+    raise FileNotFoundError(f"Tornado CSV not found at {TORNADO_CSV}")
+
 # ================= LOAD NON-TORNADO =================
 with open(UNIFIED_JSON, "r") as f:
     data = json.load(f)
 
-print("Top-level keys in JSON:", list(data.keys()))
+print("File loaded. Top-level keys:", list(data.keys()))
 
 non_tornado = []
 
