@@ -75,7 +75,14 @@ jobs:
       - name: Build unified dataset
         run: |
           python scripts/build_unified_dataset.py
-
+    
+      # ----------------------------
+      # 7. Train logistic regression
+      # ----------------------------
+      - name: Train Logistic Regression Model
+        run: |
+          python scripts/train_lr_model.py
+          
       # ----------------------------
       # 6. Commit + push outputs
       # ----------------------------
