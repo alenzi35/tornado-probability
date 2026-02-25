@@ -68,10 +68,6 @@ jobs:
       # ----------------------------
       # 5. Convert borders to LCC
       # ----------------------------
-      - name: Convert borders to LCC
-        run: |
-          python scripts/convert_borders_to_lcc.py
-    
       - name: Build unified dataset
         run: |
           python scripts/build_unified_dataset.py
