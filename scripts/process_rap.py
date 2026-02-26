@@ -14,18 +14,21 @@ from shapely.prepared import prep
 from pyproj import Proj
 
 # ================= CONFIG =================
-
 DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/rap_tornado_prob.json"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-# Updated coefficients from training
-INTERCEPT = -6.274846902965728
+# Standardized LR coefficients from training
 COEFFS = {
-    "CAPE": 0.0007852504286701655,
-    "CIN": -0.003028035273017941,
-    "HLCY": 0.008318690761993085
+    "CAPE": 0.92968438,
+    "CIN": -0.17418338,
+    "HLCY": 0.86443485
 }
+
+# Empirical dataset for intercept calibration
+NUM_TORNADO = 199
+NUM_NON_TORNADO = 32772
+P_EMPIRICAL = NUM_TORNADO / (NUM_TORNADO + NUM_NON_TORNADO)
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
@@ -33,38 +36,31 @@ CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_sta
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= TIME LOGIC =================
+# ================= HELPER FUNCTIONS =================
 
-def get_target_cycle():
-    now = datetime.datetime.utcnow()
-    run_time = now - datetime.timedelta(hours=1)
-    date = run_time.strftime("%Y%m%d")
-    hour = run_time.strftime("%H")
-    return date, hour
-
-DATE, HOUR = get_target_cycle()
-FCST = "01"
-
-# ================= DOWNLOAD RAP =================
-
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-print("Target:", DATE, HOUR, "F01")
-print("URL:", RAP_URL)
+def get_snapshots():
+    """
+    Specify exact snapshots you want to process:
+    Format: (YYYYMMDD, HH in UTC)
+    """
+    return [
+        ("20250413", "14"),
+        ("20250724", "17"),
+        ("20250802", "20"),
+        ("20251211", "23")
+    ]
 
 def url_exists(url):
     r = requests.head(url)
     return r.status_code == 200
 
-if not url_exists(RAP_URL):
-    print("RAP file not ready yet. Skipping.")
-    exit(0)
-
-urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-print("Downloaded RAP GRIB2")
-
-# ================= LOAD GRIB =================
-
-grbs = pygrib.open(GRIB_PATH)
+def download_shapefile(url, folder):
+    resp = requests.get(url)
+    resp.raise_for_status()
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    z.extractall(folder)
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+    return gpd.read_file(f"{folder}/{shp_file}")
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     for g in grbs:
@@ -80,102 +76,167 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         return g
     raise RuntimeError(f"{shortname} not found")
 
-grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", "surface")
-grbs.seek(0)
-cin_msg = pick_var(grbs, "cin", "surface")
-grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+def calibrate_intercept(cape, cin, hlcy):
+    """
+    Compute intercept calibrated to empirical tornado frequency
+    """
+    linear_pred = COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
+    mean_linear = np.mean(linear_pred)
+    intercept_cal = np.log(P_EMPIRICAL / (1 - P_EMPIRICAL)) - mean_linear
+    return intercept_cal
 
-cape = np.nan_to_num(cape_msg.values)
-cin = np.nan_to_num(cin_msg.values)
-hlcy = np.nan_to_num(hlcy_msg.values)
+# ================= PROCESS SNAPSHOT =================
 
-lats, lons = cape_msg.latlons()
-params = cape_msg.projparams
+def process_snapshot(date, hour, fcst="01"):
+    print(f"\nProcessing snapshot: {date} {hour} UTC, F{fcst}")
 
-proj_lcc = Proj(
-    proj="lcc",
-    lat_1=params["lat_1"],
-    lat_2=params["lat_2"],
-    lat_0=params["lat_0"],
-    lon_0=params["lon_0"],
-    a=params.get("a", 6371229),
-    b=params.get("b", 6371229)
-)
+    # ================= DOWNLOAD RAP =================
+    rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f{fcst}.grib2"
+    print("RAP URL:", rap_url)
 
-x_vals, y_vals = proj_lcc(lons, lats)
+    if not url_exists(rap_url):
+        print("RAP file not ready. Skipping.")
+        return None
 
-# ================= CALC PROB =================
+    urllib.request.urlretrieve(rap_url, GRIB_PATH)
+    print("Downloaded RAP GRIB2")
 
-linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
-prob = 1 / (1 + np.exp(-linear))
+    # ================= LOAD GRIB =================
+    grbs = pygrib.open(GRIB_PATH)
+    grbs.seek(0)
+    cape_msg = pick_var(grbs, "cape", "surface")
+    grbs.seek(0)
+    cin_msg = pick_var(grbs, "cin", "surface")
+    grbs.seek(0)
+    hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
-# ================= DOWNLOAD CONUS SHAPE =================
+    cape = np.nan_to_num(cape_msg.values)
+    cin = np.nan_to_num(cin_msg.values)
+    hlcy = np.nan_to_num(hlcy_msg.values)
 
-def download_shapefile(url, folder):
-    resp = requests.get(url)
-    resp.raise_for_status()
-    z = zipfile.ZipFile(io.BytesIO(resp.content))
-    z.extractall(folder)
-    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
-    return gpd.read_file(f"{folder}/{shp_file}")
+    lats, lons = cape_msg.latlons()
+    params = cape_msg.projparams
 
-print("Downloading CONUS shapefile...")
-states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+    proj_lcc = Proj(
+        proj="lcc",
+        lat_1=params["lat_1"],
+        lat_2=params["lat_2"],
+        lat_0=params["lat_0"],
+        lon_0=params["lon_0"],
+        a=params.get("a", 6371229),
+        b=params.get("b", 6371229)
+    )
 
-# Keep only lower 48 states
-lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
+    x_vals, y_vals = proj_lcc(lons, lats)
 
-# Project to RAP LCC
-lower48_lcc = lower48.to_crs(proj_lcc.srs)
+    # ================= CALIBRATE INTERCEPT =================
+    intercept = calibrate_intercept(cape, cin, hlcy)
+    print("Calibrated intercept:", intercept)
 
-# Merge into a single CONUS polygon
-conus_poly = lower48_lcc.unary_union
-prepared_conus = prep(conus_poly)
+    # ================= CALC PROB =================
+    linear = intercept + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
+    prob = 1 / (1 + np.exp(-linear))
+    print("Current mean probability for this snapshot:", np.mean(prob))
 
-# ================= FILTER CELLS =================
+    # ================= DOWNLOAD CONUS SHAPE =================
+    print("Downloading CONUS shapefile...")
+    states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+    lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
+    lower48_lcc = lower48.to_crs(proj_lcc.srs)
+    conus_poly = lower48_lcc.unary_union
+    prepared_conus = prep(conus_poly)
 
-print("Filtering grid cells to CONUS (intersects polygon)...")
-features = []
-rows, cols = prob.shape
+    # ================= FILTER CELLS =================
+    print("Filtering grid cells to CONUS...")
+    features = []
+    rows, cols = prob.shape
+    for i in range(rows):
+        for j in range(cols):
+            x = x_vals[i,j]
+            y = y_vals[i,j]
+            dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
+            dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
+            dx, dy = abs(dx), abs(dy)
+            cell_box = box(x, y, x+dx, y+dy)
+            if prepared_conus.intersects(cell_box):
+                features.append({
+                    "x": float(x),
+                    "y": float(y),
+                    "dx": float(dx),
+                    "dy": float(dy),
+                    "cape": float(cape[i,j]),
+                    "cin": float(cin[i,j]),
+                    "hlcy": float(hlcy[i,j]),
+                    "prob": float(prob[i,j])
+                })
 
-for i in range(rows):
-    for j in range(cols):
-        x = x_vals[i,j]
-        y = y_vals[i,j]
-        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
-        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
-        dx, dy = abs(dx), abs(dy)
-        cell_box = box(x, y, x+dx, y+dy)
-        if prepared_conus.intersects(cell_box):
-            features.append({
-                "x": float(x),
-                "y": float(y),
-                "dx": float(dx),
-                "dy": float(dy),
-                "prob": float(prob[i,j])
-            })
+    print(f"Kept {len(features)} cells inside or touching CONUS.")
 
-print(f"Kept {len(features)} cells inside or touching CONUS.")
+    valid_start = f"{int(hour):02d}:00"
+    valid_end = f"{(int(hour)+1)%24:02d}:00"
 
-# ================= OUTPUT =================
+    snapshot_output = {
+        "run_date": date,
+        "run_hour": hour,
+        "forecast": f"F{fcst}",
+        "valid": f"{valid_start}-{valid_end} UTC",
+        "generated": datetime.datetime.utcnow().isoformat()+"Z",
+        "projection": params,
+        "features": features
+    }
 
-valid_start = f"{int(HOUR):02d}:00"
-valid_end = f"{(int(HOUR)+1)%24:02d}:00"
+    return snapshot_output
 
-output = {
-    "run_date": DATE,
-    "run_hour": HOUR,
-    "forecast": "F01",
-    "valid": f"{valid_start}-{valid_end} UTC",
-    "generated": datetime.datetime.utcnow().isoformat()+"Z",
-    "projection": params,
-    "features": features
-}
+# ================= NEW FUNCTION: MEAN PROBABILITY =================
 
-with open(OUTPUT_JSON, "w") as f:
-    json.dump(output, f)
+def print_global_mean_probability(json_path):
+    with open(json_path, "r") as f:
+        data = json.load(f)
 
-print("Saved:", OUTPUT_JSON)
-print("DONE.")
+    total_prob = 0.0
+    total_cells = 0
+
+    for snap in data["snapshots"]:
+        for feature in snap["features"]:
+            total_prob += feature["prob"]
+            total_cells += 1
+
+    mean_prob = total_prob / total_cells
+    mean_percent = mean_prob * 100
+
+    print("\n==============================")
+    print("GLOBAL MEAN PROBABILITY")
+    print("Decimal :", mean_prob)
+    print("Percent :", mean_percent, "%")
+    print("Total Cells:", total_cells)
+    print("==============================\n")
+
+# ================= MAIN =================
+
+def main():
+    snapshots_to_process = get_snapshots()
+    all_snapshots = []
+
+    for date, hour in snapshots_to_process:
+        snap = process_snapshot(date, hour)
+        if snap:
+            all_snapshots.append(snap)
+
+    # ================= SAVE JSON =================
+    output = {
+        "snapshots": all_snapshots,
+        "generated": datetime.datetime.utcnow().isoformat()+"Z"
+    }
+
+    with open(OUTPUT_JSON, "w") as f:
+        json.dump(output, f)
+
+    print("\nSaved tornado probability map to:", OUTPUT_JSON)
+
+    # ================= PRINT GLOBAL MEAN =================
+    print_global_mean_probability(OUTPUT_JSON)
+
+    print("DONE.")
+
+if __name__ == "__main__":
+    main()
