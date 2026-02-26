@@ -26,8 +26,7 @@ COEFFS = {
 }
 
 # === MANUAL INTERCEPT FOR TRIAL-AND-ERROR ===
-# Edit this value manually until mean probability reaches your target
-INTERCEPT_MANUAL = -100.0
+INTERCEPT_MANUAL = -6.0  # change this to adjust mean probability
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
@@ -38,10 +37,6 @@ os.makedirs("map/data", exist_ok=True)
 # ================= HELPER FUNCTIONS =================
 
 def get_snapshots():
-    """
-    Specify exact snapshots you want to process:
-    Format: (YYYYMMDD, HH in UTC)
-    """
     return [
         ("20250413", "14"),
         ("20250724", "17"),
@@ -80,7 +75,6 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
 def process_snapshot(date, hour, fcst="01"):
     print(f"\nProcessing snapshot: {date} {hour} UTC, F{fcst}")
 
-    # ================= DOWNLOAD RAP =================
     rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f{fcst}.grib2"
     print("RAP URL:", rap_url)
 
@@ -91,7 +85,6 @@ def process_snapshot(date, hour, fcst="01"):
     urllib.request.urlretrieve(rap_url, GRIB_PATH)
     print("Downloaded RAP GRIB2")
 
-    # ================= LOAD GRIB =================
     grbs = pygrib.open(GRIB_PATH)
     grbs.seek(0)
     cape_msg = pick_var(grbs, "cape", "surface")
@@ -126,11 +119,9 @@ def process_snapshot(date, hour, fcst="01"):
     # ================= CALC PROB =================
     linear = intercept + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
     prob = 1 / (1 + np.exp(-linear))
-    print("Current mean probability (decimal):", np.mean(prob))
-    print("Current mean probability (%):", np.mean(prob)*100)
+    print("Snapshot mean probability (decimal):", np.mean(prob))
 
     # ================= DOWNLOAD CONUS SHAPE =================
-    print("Downloading CONUS shapefile...")
     states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
     lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
     lower48_lcc = lower48.to_crs(proj_lcc.srs)
@@ -138,7 +129,6 @@ def process_snapshot(date, hour, fcst="01"):
     prepared_conus = prep(conus_poly)
 
     # ================= FILTER CELLS =================
-    print("Filtering grid cells to CONUS...")
     features = []
     rows, cols = prob.shape
     for i in range(rows):
@@ -160,8 +150,6 @@ def process_snapshot(date, hour, fcst="01"):
                     "hlcy": float(hlcy[i,j]),
                     "prob": float(prob[i,j])
                 })
-
-    print(f"Kept {len(features)} cells inside or touching CONUS.")
 
     valid_start = f"{int(hour):02d}:00"
     valid_end = f"{(int(hour)+1)%24:02d}:00"
@@ -199,6 +187,17 @@ def main():
         json.dump(output, f)
 
     print("\nSaved tornado probability map to:", OUTPUT_JSON)
+
+    # ================= COMBINED MEAN PROB =================
+    all_probs = []
+    for snap in all_snapshots:
+        for cell in snap["features"]:
+            all_probs.append(cell["prob"])
+    all_probs = np.array(all_probs)
+    combined_mean = np.mean(all_probs)
+    print("\nCombined mean probability across all snapshots (decimal):", combined_mean)
+    print("Combined mean probability across all snapshots (%):", combined_mean*100)
+
     print("DONE.")
 
 if __name__ == "__main__":
