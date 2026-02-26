@@ -20,13 +20,13 @@ OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 # Standardized LR coefficients from training
 COEFFS = {
-    "CAPE": 0.92968438,
-    "CIN": -0.17418338,
-    "HLCY": 0.86443485
+    "CAPE": 0.0007852504286701655,
+    "CIN": -0.003028035273017941,
+    "HLCY": 0.008318690761993085
 }
 
 # === MANUAL INTERCEPT FOR TRIAL-AND-ERROR ===
-INTERCEPT_MANUAL = -1000.0  # change this to adjust mean probability
+INTERCEPT_MANUAL = -100.0  # change this to adjust mean probability
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
