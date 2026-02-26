@@ -25,10 +25,9 @@ COEFFS = {
     "HLCY": 0.86443485
 }
 
-# Empirical dataset for intercept calibration
-NUM_TORNADO = 199
-NUM_NON_TORNADO = 32772
-P_EMPIRICAL = NUM_TORNADO / (NUM_TORNADO + NUM_NON_TORNADO)
+# === MANUAL INTERCEPT FOR TRIAL-AND-ERROR ===
+# Edit this value manually until mean probability reaches your target
+INTERCEPT_MANUAL = -6.0
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
@@ -76,15 +75,6 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         return g
     raise RuntimeError(f"{shortname} not found")
 
-def calibrate_intercept(cape, cin, hlcy):
-    """
-    Compute intercept calibrated to empirical tornado frequency
-    """
-    linear_pred = COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
-    mean_linear = np.mean(linear_pred)
-    intercept_cal = np.log(P_EMPIRICAL / (1 - P_EMPIRICAL)) - mean_linear
-    return intercept_cal
-
 # ================= PROCESS SNAPSHOT =================
 
 def process_snapshot(date, hour, fcst="01"):
@@ -129,14 +119,15 @@ def process_snapshot(date, hour, fcst="01"):
 
     x_vals, y_vals = proj_lcc(lons, lats)
 
-    # ================= CALIBRATE INTERCEPT =================
-    intercept = calibrate_intercept(cape, cin, hlcy)
-    print("Calibrated intercept:", intercept)
+    # ================= USE MANUAL INTERCEPT =================
+    intercept = INTERCEPT_MANUAL
+    print("Using manual intercept:", intercept)
 
     # ================= CALC PROB =================
     linear = intercept + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
     prob = 1 / (1 + np.exp(-linear))
-    print("Current mean probability for this snapshot:", np.mean(prob))
+    print("Current mean probability (decimal):", np.mean(prob))
+    print("Current mean probability (%):", np.mean(prob)*100)
 
     # ================= DOWNLOAD CONUS SHAPE =================
     print("Downloading CONUS shapefile...")
@@ -187,30 +178,6 @@ def process_snapshot(date, hour, fcst="01"):
 
     return snapshot_output
 
-# ================= NEW FUNCTION: MEAN PROBABILITY =================
-
-def print_global_mean_probability(json_path):
-    with open(json_path, "r") as f:
-        data = json.load(f)
-
-    total_prob = 0.0
-    total_cells = 0
-
-    for snap in data["snapshots"]:
-        for feature in snap["features"]:
-            total_prob += feature["prob"]
-            total_cells += 1
-
-    mean_prob = total_prob / total_cells
-    mean_percent = mean_prob * 100
-
-    print("\n==============================")
-    print("GLOBAL MEAN PROBABILITY")
-    print("Decimal :", mean_prob)
-    print("Percent :", mean_percent, "%")
-    print("Total Cells:", total_cells)
-    print("==============================\n")
-
 # ================= MAIN =================
 
 def main():
@@ -232,10 +199,6 @@ def main():
         json.dump(output, f)
 
     print("\nSaved tornado probability map to:", OUTPUT_JSON)
-
-    # ================= PRINT GLOBAL MEAN =================
-    print_global_mean_probability(OUTPUT_JSON)
-
     print("DONE.")
 
 if __name__ == "__main__":
