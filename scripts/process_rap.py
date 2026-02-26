@@ -26,7 +26,7 @@ COEFFS = {
 }
 
 # === MANUAL INTERCEPT FOR TRIAL-AND-ERROR ===
-INTERCEPT_MANUAL = -100.0  # change this to adjust mean probability
+INTERCEPT_MANUAL = -10.0  # change this to adjust mean probability
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
