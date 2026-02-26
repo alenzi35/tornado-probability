@@ -136,6 +136,7 @@ def process_snapshot(date, hour, fcst="01"):
     # ================= CALC PROB =================
     linear = intercept + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
     prob = 1 / (1 + np.exp(-linear))
+    print("Current mean probability:", np.mean(prob))
 
     # ================= DOWNLOAD CONUS SHAPE =================
     print("Downloading CONUS shapefile...")
