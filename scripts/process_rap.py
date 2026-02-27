@@ -1,5 +1,4 @@
 import os
-import sys
 import urllib.request
 import pygrib
 import numpy as np
@@ -15,19 +14,19 @@ from shapely.prepared import prep
 from pyproj import Proj
 
 # ================= CONFIG =================
+
 DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-# Logistic regression coefficients
 COEFFS = {
     "CAPE": 0.92968438,
     "CIN": -0.17418338,
     "HLCY": 0.86443485
 }
 
-# === MANUAL INTERCEPT ===
-INTERCEPT_MANUAL = -6.0  # <-- Adjust this manually for calibration
+# ===== MANUAL INTERCEPT =====
+INTERCEPT_MANUAL = -6.0   # <-- adjust manually for calibration
 
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
@@ -35,25 +34,26 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
 
-# ================= CUSTOM SNAPSHOT INPUT =================
+# ================= SNAPSHOT CONFIG (GITHUB ACTIONS SAFE) =================
 
-def get_snapshots():
+def get_snapshot_from_env():
     """
-    Usage:
-        python process.rap.py 20260226 14
+    Uses GitHub Actions environment variables:
+        RAP_DATE=YYYYMMDD
+        RAP_HOUR=HH
+
+    If not set, defaults to test case.
     """
-    if len(sys.argv) != 3:
-        print("Usage: python process.rap.py YYYYMMDD HH")
-        sys.exit(1)
 
-    date = sys.argv[1]
-    hour = sys.argv[2]
+    date = os.getenv("RAP_DATE")
+    hour = os.getenv("RAP_HOUR")
 
-    if len(date) != 8 or len(hour) != 2:
-        print("Invalid format. Date must be YYYYMMDD and hour must be HH (UTC).")
-        sys.exit(1)
+    if date and hour:
+        print(f"Using RAP_DATE={date}, RAP_HOUR={hour}")
+        return date, hour
 
-    return [(date, hour)]
+    print("No RAP_DATE/RAP_HOUR provided. Using default test case.")
+    return "20250427", "21"
 
 
 # ================= HELPERS =================
@@ -87,22 +87,26 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     raise RuntimeError(f"{shortname} not found")
 
 
-# ================= PROCESS SNAPSHOT =================
+# ================= MAIN PROCESS =================
 
-def process_snapshot(date, hour, fcst="01"):
-    print(f"\nProcessing snapshot: {date} {hour} UTC, F{fcst}")
+def main():
 
-    rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f{fcst}.grib2"
+    date, hour = get_snapshot_from_env()
+
+    print(f"\nProcessing RAP snapshot: {date} {hour} UTC")
+
+    rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f01.grib2"
     print("RAP URL:", rap_url)
 
     if not url_exists(rap_url):
-        print("RAP file not ready. Skipping.")
-        return None
+        print("RAP file not available.")
+        return
 
     urllib.request.urlretrieve(rap_url, GRIB_PATH)
     print("Downloaded RAP GRIB2")
 
     grbs = pygrib.open(GRIB_PATH)
+
     grbs.seek(0)
     cape_msg = pick_var(grbs, "cape", "surface")
     grbs.seek(0)
@@ -129,7 +133,7 @@ def process_snapshot(date, hour, fcst="01"):
 
     x_vals, y_vals = proj_lcc(lons, lats)
 
-    # ===== Manual Intercept =====
+    # ===== Logistic Regression =====
     intercept = INTERCEPT_MANUAL
     print("Using manual intercept:", intercept)
 
@@ -157,13 +161,14 @@ def process_snapshot(date, hour, fcst="01"):
 
     for i in range(rows):
         for j in range(cols):
+
             x = x_vals[i, j]
             y = y_vals[i, j]
 
             dx = x_vals[i, j + 1] - x if j < cols - 1 else x - x_vals[i, j - 1]
             dy = y_vals[i + 1, j] - y if i < rows - 1 else y - y_vals[i - 1, j]
-            dx, dy = abs(dx), abs(dy)
 
+            dx, dy = abs(dx), abs(dy)
             cell_box = box(x, y, x + dx, y + dy)
 
             if prepared_conus.intersects(cell_box):
@@ -180,31 +185,15 @@ def process_snapshot(date, hour, fcst="01"):
 
     print(f"Kept {len(features)} cells inside CONUS.")
 
-    snapshot_output = {
-        "run_date": date,
-        "run_hour": hour,
-        "forecast": f"F{fcst}",
-        "generated": datetime.datetime.utcnow().isoformat() + "Z",
-        "projection": params,
-        "features": features
-    }
-
-    return snapshot_output
-
-
-# ================= MAIN =================
-
-def main():
-    snapshots_to_process = get_snapshots()
-    all_snapshots = []
-
-    for date, hour in snapshots_to_process:
-        snap = process_snapshot(date, hour)
-        if snap:
-            all_snapshots.append(snap)
-
     output = {
-        "snapshots": all_snapshots,
+        "snapshots": [{
+            "run_date": date,
+            "run_hour": hour,
+            "forecast": "F01",
+            "generated": datetime.datetime.utcnow().isoformat() + "Z",
+            "projection": params,
+            "features": features
+        }],
         "generated": datetime.datetime.utcnow().isoformat() + "Z"
     }
 
@@ -213,16 +202,12 @@ def main():
 
     print("\nSaved tornado probability map to:", OUTPUT_JSON)
 
-    # ===== Combined Mean =====
-    all_probs = []
-    for snap in all_snapshots:
-        for cell in snap["features"]:
-            all_probs.append(cell["prob"])
+    # ===== Combined Mean (Single Snapshot Here) =====
+    all_probs = [cell["prob"] for cell in features]
+    combined_mean = np.mean(all_probs)
 
-    if len(all_probs) > 0:
-        combined_mean = np.mean(all_probs)
-        print("\nCombined mean probability (decimal):", combined_mean)
-        print("Combined mean probability (%):", combined_mean * 100)
+    print("\nCombined mean probability (decimal):", combined_mean)
+    print("Combined mean probability (%):", combined_mean * 100)
 
     print("DONE.")
 
