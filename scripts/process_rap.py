@@ -40,10 +40,7 @@ os.makedirs("map/data", exist_ok=True)
 def get_snapshots():
     """
     Usage:
-        python process.rap.py YYYYMMDD HH
-
-    Example:
-        python process.rap.py 20250427 21
+        python process.rap.py 20260226 14
     """
     if len(sys.argv) != 3:
         print("Usage: python process.rap.py YYYYMMDD HH")
