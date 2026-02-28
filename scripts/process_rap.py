@@ -54,7 +54,7 @@ def get_target_cycle():
     return date, hour
 
 DATE, HOUR = get_target_cycle()
-FCST = "01"
+FCST = "00"
 
 # ================= DOWNLOAD RAP =================
 
