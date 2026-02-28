@@ -27,23 +27,23 @@
 
     /* Fixed colour classes */
     .white-cell {
-        background-color: #ffffff;
-        color: #000000;
+        background-color: white;
+        color: black;
     }
 
     .green-cell {
-        background-color: #008000;
-        color: #ffffff;
+        background-color: green;
+        color: white;
     }
 
     .brown-cell {
-        background-color: #8B4513;
-        color: #ffffff;
+        background-color: brown;
+        color: white;
     }
 
     .yellow-cell {
-        background-color: #FFFF00;
-        color: #000000;
+        background-color: yellow;
+        color: black;
     }
 </style>
 </head>
@@ -54,6 +54,7 @@
 
 <table id="probabilityTable">
     <tbody>
+        <!-- Example row (replace with your generated rows if needed) -->
         <tr>
             <td>0.25</td>
             <td>0.65</td>
@@ -70,26 +71,26 @@ function applyColors() {
     cells.forEach(cell => {
         let value = parseFloat(cell.textContent);
 
+        // Remove existing classes
         cell.classList.remove("white-cell", "green-cell", "brown-cell", "yellow-cell");
 
         if (isNaN(value)) return;
 
-        if (value < 0.4) {
+        // Fixed color thresholds
+        if (value < 0.004) {          // <0.4%
             cell.classList.add("white-cell");
-        } else if (value < 1) {
+        } else if (value < 0.01) {    // 0.4% - 1%
             cell.classList.add("green-cell");
-        } else if (value < 2) {
+        } else if (value < 0.02) {    // 1% - 2%
             cell.classList.add("brown-cell");
-        } else {
+        } else {                      // >= 2%
             cell.classList.add("yellow-cell");
         }
     });
 }
 
-// Ensure it runs AFTER everything is loaded
-window.addEventListener("load", function() {
-    applyColors();
-});
+// Run on load
+applyColors();
 </script>
 
 </body>
