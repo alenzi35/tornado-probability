@@ -30,7 +30,7 @@ COEFFS = {
 
 # ===== MANUAL DATE CONTROL =====
 # Set to None to use latest available cycle
-MANUAL_DATE = "20250315"   # "YYYYMMDD" or None
+MANUAL_DATE = "20250620"   # "YYYYMMDD" or None
 MANUAL_HOUR = "17"         # "HH" or None
 
 # US Census lower 48 states 5m shapefile
