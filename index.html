@@ -120,42 +120,14 @@ fetch("map/data/tornado_prob_lcc.json")
 
 
 // --------------------------------
-// Smooth gradient color scale
-// 0 → light yellow
-// 1% → magenta
+// Discrete color scale based on your thresholds
 // --------------------------------
 function probToColor(p) {
-
-  const maxP = 0.01;
-  let t = p / maxP;
-
-  if (t < 0) t = 0;
-  if (t > 1) t = 1;
-
-  // Color stops
-  const stops = [
-    {t:0.00, c:[255,255,224]}, // light yellow
-    {t:0.25, c:[255,255,0]},   // yellow
-    {t:0.50, c:[255,165,0]},   // orange
-    {t:0.75, c:[255,0,0]},     // red
-    {t:1.00, c:[255,0,255]}    // magenta
-  ];
-
-  let i;
-  for (i=0; i<stops.length-1; i++) {
-    if (t >= stops[i].t && t <= stops[i+1].t) break;
-  }
-
-  const s0 = stops[i];
-  const s1 = stops[i+1];
-
-  const k = (t - s0.t) / (s1.t - s0.t);
-
-  const r = Math.round(s0.c[0] + k*(s1.c[0]-s0.c[0]));
-  const g = Math.round(s0.c[1] + k*(s1.c[1]-s0.c[1]));
-  const b = Math.round(s0.c[2] + k*(s1.c[2]-s0.c[2]));
-
-  return `rgba(${r},${g},${b},0.85)`;
+  if (p < 0.004) return 'white';
+  else if (p >= 0.004 && p <= 0.01) return 'green';
+  else if (p > 0.01 && p <= 0.02) return 'brown';
+  else if (p > 0.02) return 'yellow';
+  else return 'white'; // fallback
 }
 
 
@@ -294,7 +266,8 @@ canvas.addEventListener("wheel",e=>{
 // --------------------------------
 canvas.addEventListener("mousedown",e=>{
   dragging=true;
-  lastX=e.clientX;
+  lastX
+=e.clientX;
   lastY=e.clientY;
 });
 
