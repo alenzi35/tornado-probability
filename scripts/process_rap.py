@@ -19,58 +19,63 @@ DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
+# ===== MODEL (CALIBRATED) =====
+INTERCEPT = -11.9
+
 COEFFS = {
-    "CAPE": 0.92968438,
-    "CIN": -0.17418338,
-    "HLCY": 0.86443485
+    "CAPE": 0.0007852504286701655,
+    "CIN": -0.003028035273017941,
+    "HLCY": 0.008318690761993085
 }
 
-# ===== MANUAL INTERCEPT =====
-INTERCEPT_MANUAL = -6.0   # <-- adjust manually for calibration
+# ===== MANUAL DATE CONTROL =====
+# Set to None to use latest available cycle
+MANUAL_DATE = "20240506"   # "YYYYMMDD" or None
+MANUAL_HOUR = "21"         # "HH" or None
 
+# US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
+# ================= TIME LOGIC =================
 
-# ================= SNAPSHOT CONFIG (GITHUB ACTIONS SAFE) =================
+def get_target_cycle():
+    if MANUAL_DATE is not None and MANUAL_HOUR is not None:
+        print("Using MANUAL date/time.")
+        return MANUAL_DATE, MANUAL_HOUR
 
-def get_snapshot_from_env():
-    """
-    Uses GitHub Actions environment variables:
-        RAP_DATE=YYYYMMDD
-        RAP_HOUR=HH
+    print("Using AUTO latest cycle.")
+    now = datetime.datetime.utcnow()
+    run_time = now - datetime.timedelta(hours=1)
+    date = run_time.strftime("%Y%m%d")
+    hour = run_time.strftime("%H")
+    return date, hour
 
-    If not set, defaults to test case.
-    """
+DATE, HOUR = get_target_cycle()
+FCST = "01"
 
-    date = os.getenv("RAP_DATE")
-    hour = os.getenv("RAP_HOUR")
+# ================= DOWNLOAD RAP =================
 
-    if date and hour:
-        print(f"Using RAP_DATE={date}, RAP_HOUR={hour}")
-        return date, hour
-
-    print("No RAP_DATE/RAP_HOUR provided. Using default test case.")
-    return "20250427", "21"
-
-
-# ================= HELPERS =================
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+print("Target:", DATE, HOUR, "F01")
+print("URL:", RAP_URL)
 
 def url_exists(url):
     r = requests.head(url)
     return r.status_code == 200
 
+if not url_exists(RAP_URL):
+    print("RAP file not ready yet. Skipping.")
+    exit(0)
 
-def download_shapefile(url, folder):
-    resp = requests.get(url)
-    resp.raise_for_status()
-    z = zipfile.ZipFile(io.BytesIO(resp.content))
-    z.extractall(folder)
-    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
-    return gpd.read_file(f"{folder}/{shp_file}")
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("Downloaded RAP GRIB2")
 
+# ================= LOAD GRIB =================
+
+grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     for g in grbs:
@@ -86,131 +91,109 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         return g
     raise RuntimeError(f"{shortname} not found")
 
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", "surface")
+grbs.seek(0)
+cin_msg = pick_var(grbs, "cin", "surface")
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
-# ================= MAIN PROCESS =================
+cape = np.nan_to_num(cape_msg.values)
+cin = np.nan_to_num(cin_msg.values)
+hlcy = np.nan_to_num(hlcy_msg.values)
 
-def main():
+lats, lons = cape_msg.latlons()
+params = cape_msg.projparams
 
-    date, hour = get_snapshot_from_env()
+proj_lcc = Proj(
+    proj="lcc",
+    lat_1=params["lat_1"],
+    lat_2=params["lat_2"],
+    lat_0=params["lat_0"],
+    lon_0=params["lon_0"],
+    a=params.get("a", 6371229),
+    b=params.get("b", 6371229)
+)
 
-    print(f"\nProcessing RAP snapshot: {date} {hour} UTC")
+x_vals, y_vals = proj_lcc(lons, lats)
 
-    rap_url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awip32f01.grib2"
-    print("RAP URL:", rap_url)
+# ================= CALC PROB =================
 
-    if not url_exists(rap_url):
-        print("RAP file not available.")
-        return
+linear = (
+    INTERCEPT
+    + COEFFS["CAPE"] * cape
+    + COEFFS["CIN"] * cin
+    + COEFFS["HLCY"] * hlcy
+)
 
-    urllib.request.urlretrieve(rap_url, GRIB_PATH)
-    print("Downloaded RAP GRIB2")
+prob = 1 / (1 + np.exp(-linear))
 
-    grbs = pygrib.open(GRIB_PATH)
+# ================= DOWNLOAD CONUS SHAPE =================
 
-    grbs.seek(0)
-    cape_msg = pick_var(grbs, "cape", "surface")
-    grbs.seek(0)
-    cin_msg = pick_var(grbs, "cin", "surface")
-    grbs.seek(0)
-    hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+def download_shapefile(url, folder):
+    resp = requests.get(url)
+    resp.raise_for_status()
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    z.extractall(folder)
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+    return gpd.read_file(f"{folder}/{shp_file}")
 
-    cape = np.nan_to_num(cape_msg.values)
-    cin = np.nan_to_num(cin_msg.values)
-    hlcy = np.nan_to_num(hlcy_msg.values)
+print("Downloading CONUS shapefile...")
+states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
-    lats, lons = cape_msg.latlons()
-    params = cape_msg.projparams
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
+lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
-    proj_lcc = Proj(
-        proj="lcc",
-        lat_1=params["lat_1"],
-        lat_2=params["lat_2"],
-        lat_0=params["lat_0"],
-        lon_0=params["lon_0"],
-        a=params.get("a", 6371229),
-        b=params.get("b", 6371229)
-    )
+conus_poly = lower48_lcc.unary_union
+prepared_conus = prep(conus_poly)
 
-    x_vals, y_vals = proj_lcc(lons, lats)
+# ================= FILTER CELLS =================
 
-    # ===== Logistic Regression =====
-    intercept = INTERCEPT_MANUAL
-    print("Using manual intercept:", intercept)
+print("Filtering grid cells to CONUS...")
+features = []
+rows, cols = prob.shape
 
-    linear = (
-        intercept
-        + COEFFS["CAPE"] * cape
-        + COEFFS["CIN"] * cin
-        + COEFFS["HLCY"] * hlcy
-    )
+for i in range(rows):
+    for j in range(cols):
 
-    prob = 1 / (1 + np.exp(-linear))
+        x = x_vals[i, j]
+        y = y_vals[i, j]
 
-    print("Snapshot mean probability (decimal):", np.mean(prob))
-    print("Snapshot mean probability (%):", np.mean(prob) * 100)
+        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
+        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
+        dx, dy = abs(dx), abs(dy)
 
-    # ===== CONUS FILTER =====
-    states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
-    lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
-    lower48_lcc = lower48.to_crs(proj_lcc.srs)
-    conus_poly = lower48_lcc.unary_union
-    prepared_conus = prep(conus_poly)
+        cell_box = box(x, y, x+dx, y+dy)
 
-    features = []
-    rows, cols = prob.shape
+        if prepared_conus.intersects(cell_box):
+            features.append({
+                "x": float(x),
+                "y": float(y),
+                "dx": float(dx),
+                "dy": float(dy),
+                "prob": float(prob[i,j])
+            })
 
-    for i in range(rows):
-        for j in range(cols):
+print(f"Kept {len(features)} CONUS cells.")
 
-            x = x_vals[i, j]
-            y = y_vals[i, j]
+# ================= OUTPUT =================
 
-            dx = x_vals[i, j + 1] - x if j < cols - 1 else x - x_vals[i, j - 1]
-            dy = y_vals[i + 1, j] - y if i < rows - 1 else y - y_vals[i - 1, j]
+valid_start = f"{int(HOUR):02d}:00"
+valid_end = f"{(int(HOUR)+1)%24:02d}:00"
 
-            dx, dy = abs(dx), abs(dy)
-            cell_box = box(x, y, x + dx, y + dy)
+output = {
+    "run_date": DATE,
+    "run_hour": HOUR,
+    "forecast": "F01",
+    "valid": f"{valid_start}-{valid_end} UTC",
+    "generated": datetime.datetime.utcnow().isoformat()+"Z",
+    "projection": params,
+    "intercept": INTERCEPT,
+    "features": features
+}
 
-            if prepared_conus.intersects(cell_box):
-                features.append({
-                    "x": float(x),
-                    "y": float(y),
-                    "dx": float(dx),
-                    "dy": float(dy),
-                    "cape": float(cape[i, j]),
-                    "cin": float(cin[i, j]),
-                    "hlcy": float(hlcy[i, j]),
-                    "prob": float(prob[i, j])
-                })
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(output, f)
 
-    print(f"Kept {len(features)} cells inside CONUS.")
-
-    output = {
-        "snapshots": [{
-            "run_date": date,
-            "run_hour": hour,
-            "forecast": "F01",
-            "generated": datetime.datetime.utcnow().isoformat() + "Z",
-            "projection": params,
-            "features": features
-        }],
-        "generated": datetime.datetime.utcnow().isoformat() + "Z"
-    }
-
-    with open(OUTPUT_JSON, "w") as f:
-        json.dump(output, f)
-
-    print("\nSaved tornado probability map to:", OUTPUT_JSON)
-
-    # ===== Combined Mean (Single Snapshot Here) =====
-    all_probs = [cell["prob"] for cell in features]
-    combined_mean = np.mean(all_probs)
-
-    print("\nCombined mean probability (decimal):", combined_mean)
-    print("Combined mean probability (%):", combined_mean * 100)
-
-    print("DONE.")
-
-
-if __name__ == "__main__":
-    main()
+print("Saved:", OUTPUT_JSON)
+print("DONE.")
