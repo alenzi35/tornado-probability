@@ -54,17 +54,12 @@
 
 <table id="probabilityTable">
     <tbody>
-        <!-- Example row (replace with your generated rows if needed) -->
-        <tr>
-            <td>0.25</td>
-            <td>0.65</td>
-            <td>1.45</td>
-            <td>2.30</td>
-        </tr>
+        <!-- Your JSON will populate rows here -->
     </tbody>
 </table>
 
 <script>
+// ---- COLOR LOGIC FUNCTION ----
 function applyColors() {
     const cells = document.querySelectorAll("#probabilityTable td");
 
@@ -76,7 +71,7 @@ function applyColors() {
 
         if (isNaN(value)) return;
 
-        // Fixed color thresholds
+        // Fixed color thresholds in decimal (0.4% = 0.004)
         if (value < 0.004) {          // <0.4%
             cell.classList.add("white-cell");
         } else if (value < 0.01) {    // 0.4% - 1%
@@ -89,8 +84,33 @@ function applyColors() {
     });
 }
 
-// Run on load
-applyColors();
+// ---- JSON POPULATION FUNCTION (EXAMPLE) ----
+function populateTableFromJSON(data) {
+    const tbody = document.querySelector("#probabilityTable tbody");
+    tbody.innerHTML = ""; // Clear old rows
+
+    data.forEach(row => {
+        const tr = document.createElement("tr");
+        row.forEach(value => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+
+    // Apply colors AFTER JSON populates the table
+    applyColors();
+}
+
+// ---- EXAMPLE JSON DATA (Replace with your actual JSON source) ----
+const exampleData = [
+    [0.0025, 0.0065, 0.0145, 0.023],
+    [0.0005, 0.008, 0.012, 0.025]
+];
+
+// Populate table with example data on load
+populateTableFromJSON(exampleData);
 </script>
 
 </body>
