@@ -20,18 +20,18 @@ GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 # ===== MODEL (CALIBRATED) =====
-INTERCEPT = -8
+INTERCEPT = -12.72
 
 COEFFS = {
-    "CAPE": 0.00039262521,
-    "CIN": -0.00151401763,
-    "HLCY": 0.00415934538
+    "CAPE": 0.0007852504286701655,
+    "CIN": -0.003028035273017941,
+    "HLCY": 0.008318690761993085
 }
 
 # ===== MANUAL DATE CONTROL =====
 # Set to None to use latest available cycle
-MANUAL_DATE = "20250315"   # "YYYYMMDD" or None
-MANUAL_HOUR = "17"         # "HH" or None
+MANUAL_DATE = "20250621"   # "YYYYMMDD" or None
+MANUAL_HOUR = "04"         # "HH" or None
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
