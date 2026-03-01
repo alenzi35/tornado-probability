@@ -30,8 +30,8 @@ COEFFS = {
 
 # ===== MANUAL DATE CONTROL =====
 # Set to None to use latest available cycle
-MANUAL_DATE = "20250621"   # "YYYYMMDD" or None
-MANUAL_HOUR = "04"         # "HH" or None
+MANUAL_DATE = "20250617"   # "YYYYMMDD" or None
+MANUAL_HOUR = "22"         # "HH" or None
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
