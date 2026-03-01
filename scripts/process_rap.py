@@ -20,7 +20,7 @@ GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 # ===== MODEL (CALIBRATED) =====
-INTERCEPT = -10
+INTERCEPT = -11
 
 COEFFS = {
     "CAPE": 0.0007852504286701655,
