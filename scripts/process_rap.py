@@ -122,7 +122,7 @@ hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
-hlcy = np.nan_to_num(hlcy_msg.values)
+srh = np.nan_to_num(hlcy_msg.values)
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
