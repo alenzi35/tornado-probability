@@ -98,13 +98,11 @@ fetch("map/data/tornado_prob_lcc.json")
 
     cells = data.features;
 
-    // Forecast info (FIXED formatting with correct valid hour)
     const runDate = data.run_date;
-    const runHour = parseInt(data.run_hour,10); // numeric
+    const runHour = parseInt(data.run_hour,10);
     const fcst = data.forecast;
 
-    // Compute valid hour range for F01
-    const fcstHour = runHour + 1; // F01 = +1 hour
+    const fcstHour = runHour + 1;
     const validStart = fcstHour % 24;
     const validEnd = (fcstHour + 1) % 24;
 
@@ -120,14 +118,14 @@ fetch("map/data/tornado_prob_lcc.json")
 
 
 // --------------------------------
-// Discrete color scale based on your thresholds
+// Discrete color scale
 // --------------------------------
 function probToColor(p) {
   if (p < 0.004) return 'white';
   else if (p >= 0.004 && p <= 0.01) return 'green';
   else if (p > 0.01 && p <= 0.02) return 'brown';
   else if (p > 0.02) return 'yellow';
-  else return 'white'; // fallback
+  else return 'white';
 }
 
 
@@ -177,13 +175,11 @@ function draw(){
 
   ctx.setTransform(scale,0,0,-scale,offsetX,offsetY);
 
-  // Cells
   cells.forEach(c=>{
     ctx.fillStyle=probToColor(c.prob);
     ctx.fillRect(c.x,c.y,c.dx,c.dy);
   });
 
-  // Borders
   ctx.strokeStyle="white";
   ctx.lineWidth=1/scale;
 
@@ -221,7 +217,6 @@ canvas.addEventListener("mousemove",e=>{
   let hit=null;
 
   for(const c of cells){
-
     if(x>=c.x&&x<=c.x+c.dx&&y>=c.y&&y<=c.y+c.dy){
       hit=c;
       break;
@@ -234,7 +229,11 @@ canvas.addEventListener("mousemove",e=>{
     tooltip.style.left=(e.pageX+12)+"px";
     tooltip.style.top=(e.pageY+12)+"px";
 
-    tooltip.innerHTML=`Probability: ${(hit.prob*100).toFixed(4)}%`;
+    tooltip.innerHTML=
+      `Probability: ${(hit.prob*100).toFixed(4)}%<br>
+       CAPE: ${hit.cape?.toFixed(0) ?? "N/A"} J/kg<br>
+       CIN: ${hit.cin?.toFixed(0) ?? "N/A"} J/kg<br>
+       0–1 km SRH: ${hit.hlcy?.toFixed(0) ?? "N/A"} m²/s²`;
 
   }else{
 
@@ -266,8 +265,7 @@ canvas.addEventListener("wheel",e=>{
 // --------------------------------
 canvas.addEventListener("mousedown",e=>{
   dragging=true;
-  lastX
-=e.clientX;
+  lastX=e.clientX;
   lastY=e.clientY;
 });
 
