@@ -34,7 +34,7 @@ COEFFS = {
 CUSTOM_DATE = 20250620 # example: "20250427"
 CUSTOM_HOUR = 23  # example: "21"
 
-FCST = "00"
+FCST = "05"
 
 # US Census lower 48 states shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
