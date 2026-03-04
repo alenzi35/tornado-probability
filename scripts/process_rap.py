@@ -31,10 +31,10 @@ COEFFS = {
 
 # === OPTIONAL MANUAL DATE TESTING ===
 # Leave as None for automatic RAP cycle
-CUSTOM_DATE = 20250620 # example: "20250427"
-CUSTOM_HOUR = 23  # example: "21"
+CUSTOM_DATE = 20260403 # example: "20250427"
+CUSTOM_HOUR = 21  # example: "21"
 
-FCST = "05"
+FCST = "02"
 
 # US Census lower 48 states shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
