@@ -31,8 +31,8 @@ COEFFS = {
 
 # === OPTIONAL MANUAL DATE TESTING ===
 # Leave as None for automatic RAP cycle
-CUSTOM_DATE = 20260403 # example: "20250427"
-CUSTOM_HOUR = 21  # example: "21"
+CUSTOM_DATE = None # example: "20250427"
+CUSTOM_HOUR = None  # example: "21"
 
 FCST = "02"
 
