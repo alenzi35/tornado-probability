@@ -119,10 +119,13 @@ cin_msg = pick_var(grbs, "cin", "surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
+grbs.seek(0)
+depr_msg = pick_var(grbs, "depr", "heightAboveGroundLayer", 2, 2)
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
+depr = np.nan_to_num(depr_msg.values)
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
