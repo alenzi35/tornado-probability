@@ -120,7 +120,7 @@ grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
 grbs.seek(0)
-depr_msg = pick_var(grbs, "depr", "heightAboveGroundLayer", 2)
+depr_msg = pick_var(grbs, "depr", "heightAboveGround", 2)
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
