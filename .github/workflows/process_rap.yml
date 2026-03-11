@@ -4,10 +4,6 @@ on:
   # Manual trigger (for testing)
   workflow_dispatch:
 
-  # Auto trigger every 5 minutes (to catch RAP ASAP)
-  schedule:
-    - cron: "*/5 * * * *"
-
 permissions:
   contents: write
 
