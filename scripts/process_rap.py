@@ -218,6 +218,7 @@ for i in range(rows):
                 "cape": float(cape[i, j]),
                 "cin": float(cin[i, j]),
                 "srh": float(hlcy[i, j]),
+                "depr": float(depr[i, j]),
 
                 # tornado probability
                 "prob": float(prob[i, j])
