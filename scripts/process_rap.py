@@ -28,7 +28,6 @@ COEFFS = {
     "DEPR": -0.0045
 }
 
-# US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -68,17 +67,31 @@ print("Downloaded RAP GRIB2")
 grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+    shortname = shortname.lower()
+
     for g in grbs:
-        if g.shortName.lower() != shortname.lower():
+
+        sn = str(g.shortName).lower()
+        name = str(g.name).lower()
+
+        if shortname not in sn and shortname not in name:
             continue
+
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
+
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
             if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
+
+        if bottom is not None and top is None:
+            if abs(g.level - bottom) > 0.1:
+                continue
+
         return g
+
     raise RuntimeError(f"{shortname} not found")
 
 # CAPE
@@ -93,7 +106,7 @@ cin_msg = pick_var(grbs, "cin", "surface")
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
-# 2 m Dewpoint Depression
+# Dewpoint depression (2 m)
 grbs.seek(0)
 depr_msg = pick_var(grbs, "depr", "heightAboveGround", 2)
 
@@ -171,13 +184,6 @@ for i in range(ny):
         x = x_vals[i,j]
         y = y_vals[i,j]
 
-        cell = box(
-            x - dx/2,
-            y - dy/2,
-            x + dx/2,
-            y + dy/2
-        )
-
         lon = lons[i,j]
         lat = lats[i,j]
 
@@ -210,3 +216,5 @@ with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
 print("Saved tornado probability GeoJSON")
+```
+                
