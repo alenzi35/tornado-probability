@@ -19,24 +19,16 @@ DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-# === MANUAL INTERCEPT (already calibrated) ===
 INTERCEPT = -6.274846902965728
 
-# === Logistic regression coefficients ===
 COEFFS = {
     "CAPE": 0.0007852504286701655,
     "CIN": -0.003028035273017941,
-    "HLCY": 0.008318690761993085
+    "HLCY": 0.008318690761993085,
+    "DEPR": -0.0045
 }
 
-# === OPTIONAL MANUAL DATE TESTING ===
-# Leave as None for automatic RAP cycle
-CUSTOM_DATE = None # example: "20250427"
-CUSTOM_HOUR = None  # example: "21"
-
-FCST = "02"
-
-# US Census lower 48 states shapefile
+# US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -45,39 +37,28 @@ os.makedirs("map/data", exist_ok=True)
 # ================= TIME LOGIC =================
 
 def get_target_cycle():
-
-    if CUSTOM_DATE and CUSTOM_HOUR:
-        return CUSTOM_DATE, CUSTOM_HOUR
-
     now = datetime.datetime.utcnow()
     run_time = now - datetime.timedelta(hours=1)
-
     date = run_time.strftime("%Y%m%d")
     hour = run_time.strftime("%H")
-
     return date, hour
 
-
 DATE, HOUR = get_target_cycle()
-
-print("Target RAP:", DATE, HOUR)
+FCST = "01"
 
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-
+print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
-
 
 def url_exists(url):
     r = requests.head(url)
     return r.status_code == 200
 
-
 if not url_exists(RAP_URL):
     print("RAP file not ready yet. Skipping.")
     exit(0)
-
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("Downloaded RAP GRIB2")
@@ -86,41 +67,35 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
-
     for g in grbs:
-
         if g.shortName.lower() != shortname.lower():
             continue
-
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
-
         if bottom is not None and top is not None:
-
             if not hasattr(g, "bottomLevel"):
                 continue
-
             if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
-
         return g
-
     raise RuntimeError(f"{shortname} not found")
 
-
+# CAPE
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "surface")
 
+# CIN
 grbs.seek(0)
 cin_msg = pick_var(grbs, "cin", "surface")
 
+# 0–1 km Helicity
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
+# 2 m Dewpoint Depression
 grbs.seek(0)
-depr_msg = pick_var(grbs, "depr", "surface")
+depr_msg = pick_var(grbs, "depr", "heightAboveGround", 2)
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
@@ -129,8 +104,6 @@ depr = np.nan_to_num(depr_msg.values)
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
-
-# ================= PROJECTION =================
 
 proj_lcc = Proj(
     proj="lcc",
@@ -144,106 +117,96 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= LOGISTIC REGRESSION =================
+# ================= MODEL =================
 
-linear = (
+logit = (
     INTERCEPT
     + COEFFS["CAPE"] * cape
     + COEFFS["CIN"] * cin
     + COEFFS["HLCY"] * hlcy
+    + COEFFS["DEPR"] * depr
 )
 
-prob = 1 / (1 + np.exp(-linear))
+prob = 1 / (1 + np.exp(-logit))
 
-# ================= DOWNLOAD CONUS SHAPE =================
-
-
-def download_shapefile(url, folder):
-
-    resp = requests.get(url)
-    resp.raise_for_status()
-
-    z = zipfile.ZipFile(io.BytesIO(resp.content))
-    z.extractall(folder)
-
-    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
-
-    return gpd.read_file(f"{folder}/{shp_file}")
-
+# ================= LOAD CONUS SHAPE =================
 
 print("Downloading CONUS shapefile...")
-states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
-# Remove Alaska/Hawaii
-lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
+r = requests.get(CONUS_SHAPE_URL)
+z = zipfile.ZipFile(io.BytesIO(r.content))
+z.extractall(DATA_DIR)
 
-# Project shapefile to RAP LCC
-lower48_lcc = lower48.to_crs(proj_lcc.srs)
+shp_path = None
+for f in os.listdir(DATA_DIR):
+    if f.endswith(".shp"):
+        shp_path = os.path.join(DATA_DIR, f)
+        break
 
-# Merge into one polygon
-conus_poly = lower48_lcc.unary_union
-prepared_conus = prep(conus_poly)
+states = gpd.read_file(shp_path)
 
-# ================= FILTER CELLS =================
+exclude = ["AK", "HI", "PR", "GU", "VI", "MP", "AS"]
+states = states[~states["STUSPS"].isin(exclude)]
 
-print("Filtering grid cells to CONUS...")
+conus = states.unary_union
+prepared = prep(conus)
+
+# ================= GRID CELL FILTER =================
+
+ny, nx = prob.shape
 
 features = []
 
-rows, cols = prob.shape
+dx = x_vals[0,1] - x_vals[0,0]
+dy = y_vals[1,0] - y_vals[0,0]
 
-for i in range(rows):
+for i in range(ny):
+    for j in range(nx):
 
-    for j in range(cols):
+        p = float(prob[i,j])
 
-        x = x_vals[i, j]
-        y = y_vals[i, j]
+        if p < 0.02:
+            continue
 
-        dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
-        dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
+        x = x_vals[i,j]
+        y = y_vals[i,j]
 
-        dx, dy = abs(dx), abs(dy)
+        cell = box(
+            x - dx/2,
+            y - dy/2,
+            x + dx/2,
+            y + dy/2
+        )
 
-        cell_box = box(x, y, x + dx, y + dy)
+        lon = lons[i,j]
+        lat = lats[i,j]
 
-        if prepared_conus.intersects(cell_box):
+        if not prepared.contains(gpd.points_from_xy([lon],[lat])[0]):
+            continue
 
-            features.append({
-                "x": float(x),
-                "y": float(y),
-                "dx": float(dx),
-                "dy": float(dy),
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [x - dx/2, y - dy/2],
+                    [x + dx/2, y - dy/2],
+                    [x + dx/2, y + dy/2],
+                    [x - dx/2, y + dy/2],
+                    [x - dx/2, y - dy/2]
+                ]]
+            },
+            "properties": {
+                "p": p
+            }
+        })
 
-                # diagnostic variables for tooltip
-                "cape": float(cape[i, j]),
-                "cin": float(cin[i, j]),
-                "srh": float(hlcy[i, j]),
-                "depr": float(depr[i, j]),
-
-                # tornado probability
-                "prob": float(prob[i, j])
-            })
-
-
-print(f"Kept {len(features)} cells inside or touching CONUS.")
-
-# ================= OUTPUT =================
-
-valid_start = f"{int(HOUR):02d}:00"
-valid_end = f"{(int(HOUR)+1)%24:02d}:00"
-
-output = {
-    "run_date": DATE,
-    "run_hour": HOUR,
-    "forecast": "F01",
-    "valid": f"{valid_start}-{valid_end} UTC",
-    "generated": datetime.datetime.utcnow().isoformat() + "Z",
-    "projection": params,
+geojson = {
+    "type": "FeatureCollection",
     "features": features
 }
 
 with open(OUTPUT_JSON, "w") as f:
-    json.dump(output, f)
+    json.dump(geojson, f)
 
-print("Saved:", OUTPUT_JSON)
-print("DONE.")
+print("Saved tornado probability GeoJSON")
