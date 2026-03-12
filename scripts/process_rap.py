@@ -9,7 +9,7 @@ import zipfile
 import io
 
 import geopandas as gpd
-from shapely.geometry import box
+from shapely.geometry import box, Point
 from shapely.prepared import prep
 from pyproj import Proj
 
@@ -48,6 +48,7 @@ FCST = "01"
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.wrfnatf{FCST}.grib2"
+
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
@@ -66,56 +67,56 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
-    shortname = shortname.lower()
+def pick_var(keyword):
+
+    keyword = keyword.lower()
 
     for g in grbs:
 
-        sn = str(g.shortName).lower()
         name = str(g.name).lower()
+        short = str(g.shortName).lower()
 
-        if shortname not in sn and shortname not in name:
-            continue
+        if keyword in name or keyword in short:
+            return g
 
-        if typeOfLevel and g.typeOfLevel != typeOfLevel:
-            continue
-
-        if bottom is not None and top is not None:
-            if not hasattr(g, "bottomLevel"):
-                continue
-            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
-                continue
-
-        if bottom is not None and top is None:
-            if abs(g.level - bottom) > 0.1:
-                continue
-
-        return g
-
-    raise RuntimeError(f"{shortname} not found")
+    raise RuntimeError(f"{keyword} not found")
 
 # CAPE
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", "surface")
+cape_msg = pick_var("cape")
 
 # CIN
 grbs.seek(0)
-cin_msg = pick_var(grbs, "cin", "surface")
+cin_msg = pick_var("cin")
 
-# 0–1 km Helicity
+# Helicity
 grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+hlcy_msg = pick_var("helicity")
 
-# Dewpoint depression (2 m)
+# Dewpoint depression (native RAP usually contains it)
 grbs.seek(0)
-depr_msg = pick_var(grbs, "depr", "heightAboveGround", 2)
+try:
+    depr_msg = pick_var("depression")
+    depr = np.nan_to_num(depr_msg.values)
+except:
+    # fallback compute from temp/dewpoint
+    grbs.seek(0)
+    t2_msg = pick_var("temperature")
+
+    grbs.seek(0)
+    d2_msg = pick_var("dewpoint")
+
+    t2 = np.nan_to_num(t2_msg.values)
+    d2 = np.nan_to_num(d2_msg.values)
+
+    depr = t2 - d2
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
-depr = np.nan_to_num(depr_msg.values)
 
 lats, lons = cape_msg.latlons()
+
 params = cape_msg.projparams
 
 proj_lcc = Proj(
@@ -164,14 +165,14 @@ states = states[~states["STUSPS"].isin(exclude)]
 conus = states.unary_union
 prepared = prep(conus)
 
-# ================= GRID CELL FILTER =================
+# ================= GRID FILTER =================
 
 ny, nx = prob.shape
 
-features = []
-
 dx = x_vals[0,1] - x_vals[0,0]
 dy = y_vals[1,0] - y_vals[0,0]
+
+features = []
 
 for i in range(ny):
     for j in range(nx):
@@ -181,14 +182,14 @@ for i in range(ny):
         if p < 0.02:
             continue
 
-        x = x_vals[i,j]
-        y = y_vals[i,j]
-
         lon = lons[i,j]
         lat = lats[i,j]
 
-        if not prepared.contains(gpd.points_from_xy([lon],[lat])[0]):
+        if not prepared.contains(Point(lon, lat)):
             continue
+
+        x = x_vals[i,j]
+        y = y_vals[i,j]
 
         features.append({
             "type": "Feature",
@@ -216,4 +217,3 @@ with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
 print("Saved tornado probability GeoJSON")
-                
