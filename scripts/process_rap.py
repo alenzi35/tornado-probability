@@ -216,5 +216,4 @@ with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
 print("Saved tornado probability GeoJSON")
-```
                 
