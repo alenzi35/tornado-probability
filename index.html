@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>LCC Tornado Probability Map</title>
+<title>LCC Tornado Probability Map (13km)</title>
 
 <style>
   body { margin:0; overflow:hidden; background:#111; }
@@ -49,42 +49,41 @@ resizeCanvas();
 fetch("map/data/borders_lcc.json")
   .then(r=>r.json())
   .then(data=>{
-    borders = data.features.map(f=>f.geometry.coordinates[0]);
+    borders = data.features;
     fitView(); draw();
   });
 
 // --------------------------------
-// Load tornado probability data
+// Load cells (13km tornado_prob_lcc.json)
 // --------------------------------
 fetch("map/data/tornado_prob_lcc.json")
   .then(r=>r.json())
   .then(data=>{
 
-    // Map features to cells with extra properties
     cells = data.features.map(f=>{
-      const coords=f.geometry.coordinates[0];
-      const xs=coords.map(c=>c[0]), ys=coords.map(c=>c[1]);
       return {
-        x: Math.min(...xs),
-        y: Math.min(...ys),
-        dx: Math.max(...xs)-Math.min(...xs),
-        dy: Math.max(...ys)-Math.min(...ys),
-        prob: f.properties.p,
-        cape: f.properties.cape || 0,
-        cin: f.properties.cin || 0,
-        hlcy: f.properties.hlcy || 0,
-        depr: f.properties.depr || 0
+        x: f.x,
+        y: f.y,
+        dx: f.dx,
+        dy: f.dy,
+        prob: f.prob,
+        cape: f.cape || 0,
+        cin: f.cin || 0,
+        hlcy: f.hlcy || 0,
+        depr: f.depr || 0
       };
     });
 
     // Forecast info
-    if(data.run_date && data.run_hour!==undefined && data.forecast){
-      const runDate=data.run_date, runHour=parseInt(data.run_hour,10), fcst=data.forecast;
-      const fcstHour=runHour+1, validStart=fcstHour%24, validEnd=(fcstHour+1)%24;
-      const pad=n=>n.toString().padStart(2,"0");
-      infoBox.innerHTML=`Run: ${runDate} ${pad(runHour)}Z (${fcst})<br>
-                         Valid: ${pad(validStart)}:00-${pad(validEnd)}:00 UTC`;
-    } else { infoBox.innerHTML="Tornado probabilities loaded."; }
+    const runDate = data.run_date;
+    const runHour = parseInt(data.run_hour,10);
+    const fcst = data.forecast;
+    const fcstHour = runHour+1;
+    const validStart = fcstHour%24;
+    const validEnd = (fcstHour+1)%24;
+    const pad=n=>n.toString().padStart(2,"0");
+    infoBox.innerHTML=`Run: ${runDate} ${pad(runHour)}Z (${fcst})<br>
+                       Valid: ${pad(validStart)}:00-${pad(validEnd)}:00 UTC`;
 
     fitView(); draw();
   });
@@ -93,9 +92,8 @@ fetch("map/data/tornado_prob_lcc.json")
 // Probability → color
 // --------------------------------
 function probToColor(p){
-  const maxP=0.25; // max for color scale
-  let t=p/maxP; if(t<0) t=0; if(t>1) t=1;
-
+  const maxP=0.25;
+  let t = p/maxP; if(t<0) t=0; if(t>1) t=1;
   const stops=[
     {t:0.00, c:[255,255,224]},
     {t:0.25, c:[255,255,0]},
@@ -103,7 +101,6 @@ function probToColor(p){
     {t:0.75, c:[255,0,0]},
     {t:1.00, c:[255,0,255]}
   ];
-
   let i;
   for(i=0;i<stops.length-1;i++){ if(t>=stops[i].t && t<=stops[i+1].t) break; }
   const s0=stops[i], s1=stops[i+1];
@@ -134,7 +131,14 @@ function fitView(){
 function draw(){
   ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(scale,0,0,-scale,offsetX,offsetY);
-  cells.forEach(c=>{ ctx.fillStyle=probToColor(c.prob); ctx.fillRect(c.x,c.y,c.dx,c.dy); });
+
+  // Draw cells
+  cells.forEach(c=>{
+    ctx.fillStyle=probToColor(c.prob);
+    ctx.fillRect(c.x,c.y,c.dx,c.dy);
+  });
+
+  // Draw borders
   ctx.strokeStyle="white"; ctx.lineWidth=1/scale; ctx.beginPath();
   borders.forEach(line=>line.forEach(([x,y],i)=>{ if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }));
   ctx.stroke();
