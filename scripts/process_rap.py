@@ -47,7 +47,7 @@ FCST = "01"
 
 # ================= DOWNLOAD RAP =================
 
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip13f{FCST}.grib2"
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
