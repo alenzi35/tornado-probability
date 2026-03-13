@@ -1,29 +1,56 @@
-import pygrib
+import requests
+import xarray as xr
 import sys
+import os
 
 # ================= CONFIG =================
-# ← Change this to the actual path of your GRIB2 file
-GRIB_PATH = "https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 
-try:
-    grbs = pygrib.open(GRIB_PATH)
-except Exception as e:
-    print(f"Failed to open GRIB2 file: {e}")
+# **Set actual date/hour/forecast**
+DATE = "20260312"
+HOUR = "22"
+FCST = "01"
+
+# Download path
+LOCAL_GRIB = "data/rap_inspect.grib2"
+
+URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
+print("Downloading:", URL)
+
+# Download the file
+os.makedirs(os.path.dirname(LOCAL_GRIB), exist_ok=True)
+
+r = requests.get(URL)
+if r.status_code != 200:
+    print("Failed to download file:", r.status_code, r.text[:200])
     sys.exit(1)
 
-print(f"\nInspecting GRIB2 file: {GRIB_PATH}\n")
-print(f"{'Idx':>3} | {'shortName':<12} | {'name':<35} | {'typeOfLevel':<20} | level(s)\n" 
-      + "-"*100)
+with open(LOCAL_GRIB, "wb") as f:
+    f.write(r.content)
 
-for i, g in enumerate(grbs, start=1):
-    # build a simple string for level info
-    level_info = ""
-    if hasattr(g, "level"):
-        level_info = f"lvl={g.level}"
-    if hasattr(g, "bottomLevel") and hasattr(g, "topLevel"):
-        level_info = f"bot={g.bottomLevel}, top={g.topLevel}"
+print("Saved to:", LOCAL_GRIB)
+print()
 
-    print(f"{i:3d} | {g.shortName:<12} | {g.name:<35} | {g.typeOfLevel:<20} | {level_info}")
+# ================= INSPECT USING CFGRIB =================
 
-grbs.close()
-print("\nDone.\n")
+print("Opening with cfgrib… (may take a moment)\n")
+
+try:
+    ds = xr.open_dataset(LOCAL_GRIB, engine="cfgrib")
+except Exception as e:
+    print("Error opening GRIB:", e)
+    sys.exit(1)
+
+print("Dataset variables found:\n")
+
+for var in ds.variables:
+    # skip coordinate-like metadata if too noisy
+    if var in ds.coords:
+        continue
+    da = ds[var]
+    name = da.attrs.get("long_name", "")
+    level = da.attrs.get("GRIB_level", "")
+    level_type = da.attrs.get("GRIB_typeOfLevel", "")
+    print(f"{var:<15} | {name:<45} | level: {level_type} {level}")
+
+print("\n=== End of variable list ===")
