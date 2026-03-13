@@ -1,3 +1,9 @@
+import subprocess
+import sys
+
+# ------------------ Install cfgrib at runtime ------------------
+subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "cfgrib", "requests"])
+
 import os
 import requests
 import cfgrib
@@ -25,7 +31,6 @@ print()
 # ------------------ INSPECT VARIABLES ------------------
 print("Inspecting GRIB2 messages…")
 
-# cfgrib opens as a low-level iterator to avoid xarray merging
 from cfgrib import open_file
 
 with open_file(LOCAL_GRIB) as f:
