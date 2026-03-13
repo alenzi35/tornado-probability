@@ -10,7 +10,7 @@ import os
 
 # ------------------ CONFIG ------------------
 DATE = "20260312"
-HOUR = "22"
+HOUR = "21"
 FCST = "01"
 
 LOCAL_GRIB = "data/rap_inspect.grib2"
