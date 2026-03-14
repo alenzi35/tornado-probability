@@ -20,7 +20,6 @@ GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 INTERCEPT = -6.274846902965728
-
 COEFFS = {
     "CAPE": 0.0007852504286701655,
     "CIN": -0.003028035273017941,
@@ -48,7 +47,6 @@ FCST = "01"
 # ================= DOWNLOAD RAP 32km =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
@@ -67,7 +65,8 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortName=None, typeOfLevel=None, level=None):
+# pick_var with optional topLevel
+def pick_var(grbs, shortName=None, typeOfLevel=None, level=None, topLevel=None):
     for g in grbs:
         if shortName and g.shortName.lower() != shortName.lower():
             continue
@@ -75,26 +74,25 @@ def pick_var(grbs, shortName=None, typeOfLevel=None, level=None):
             continue
         if level is not None and g.level != level:
             continue
+        if topLevel is not None and getattr(g, 'topLevel', None) != topLevel:
+            continue
         return g
-    raise RuntimeError(f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}")
-
-# ================= EXTRACT VARIABLES =================
+    raise RuntimeError(f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}, topLevel={topLevel}")
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, shortName="cape")
-
 grbs.seek(0)
 cin_msg = pick_var(grbs, shortName="cin")
-
 grbs.seek(0)
-hlcy_msg = pick_var(grbs, shortName="hlcy", typeOfLevel="heightAboveGroundLayer", level=0)
+hlcy_msg = pick_var(grbs, shortName="hlcy", typeOfLevel="heightAboveGroundLayer", level=0, topLevel=1000)
 
+# ================= T2 / TD2 =================
 grbs.seek(0)
 t2_msg = pick_var(grbs, shortName="2t", typeOfLevel="heightAboveGround", level=2)
-
 grbs.seek(0)
-d2_msg = pick_var(grbs, shortName="2d", typeOfLevel="heightAboveGround", level=2)
+td2_msg = pick_var(grbs, shortName="2d", typeOfLevel="heightAboveGround", level=2)
 
+# ================= U/V Winds =================
 grbs.seek(0)
 u10_msg = pick_var(grbs, shortName="10u", typeOfLevel="heightAboveGround", level=10)
 grbs.seek(0)
@@ -105,20 +103,20 @@ u500_msg = pick_var(grbs, shortName="u", typeOfLevel="isobaricInhPa", level=500)
 grbs.seek(0)
 v500_msg = pick_var(grbs, shortName="v", typeOfLevel="isobaricInhPa", level=500)
 
-# ================= COMPUTE DEPR =================
-
-t2 = np.nan_to_num(t2_msg.values)
-d2 = np.nan_to_num(d2_msg.values)
-depr = t2 - d2
+# ================= CONVERT TO NUMPY =================
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
-
+t2 = np.nan_to_num(t2_msg.values)
+td2 = np.nan_to_num(td2_msg.values)
+depr = t2 - td2
 u10 = np.nan_to_num(u10_msg.values)
 v10 = np.nan_to_num(v10_msg.values)
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
+
+# ================= PROJ =================
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
@@ -132,7 +130,6 @@ proj_lcc = Proj(
     a=params.get("a", 6371229),
     b=params.get("b", 6371229)
 )
-
 x_vals, y_vals = proj_lcc(lons, lats)
 
 # ================= MODEL =================
@@ -144,13 +141,24 @@ logit = (
     + COEFFS["HLCY"] * hlcy
     + COEFFS["DEPR"] * depr
 )
-
 prob = 1 / (1 + np.exp(-logit))
+
+print("Array shapes:")
+print("CAPE:", cape.shape)
+print("CIN:", cin.shape)
+print("HLCY:", hlcy.shape)
+print("T2:", t2.shape)
+print("TD2:", td2.shape)
+print("DEPR:", depr.shape)
+print("U10:", u10.shape)
+print("V10:", v10.shape)
+print("U500:", u500.shape)
+print("V500:", v500.shape)
+print("Probability:", prob.shape)
 
 # ================= LOAD CONUS SHAPE =================
 
 print("Downloading CONUS shapefile...")
-
 r = requests.get(CONUS_SHAPE_URL)
 z = zipfile.ZipFile(io.BytesIO(r.content))
 z.extractall(DATA_DIR)
@@ -177,14 +185,12 @@ features = []
 
 for i in range(ny):
     for j in range(nx):
-
         p = float(prob[i,j])
         if p < 0.02:
             continue
 
         lon = lons[i,j]
         lat = lats[i,j]
-
         if not prepared.contains(Point(lon, lat)):
             continue
 
@@ -213,12 +219,4 @@ geojson = {
 
 with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
-
 print("Saved tornado probability GeoJSON")
-
-# ================= PROOF OF EXTRACTION =================
-
-print("Variables extracted successfully:")
-print(f"T2: {t2.shape}, Td2: {d2.shape}")
-print(f"U10/V10: {u10.shape}/{v10.shape}, U500/V500: {u500.shape}/{v500.shape}")
-print(f"CAPE/CIN/HLCY/DEPR: {cape.shape}/{cin.shape}/{hlcy.shape}/{depr.shape}")
