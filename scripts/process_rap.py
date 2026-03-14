@@ -20,6 +20,7 @@ GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 INTERCEPT = -6.274846902965728
+
 COEFFS = {
     "CAPE": 0.0007852504286701655,
     "CIN": -0.003028035273017941,
@@ -47,6 +48,7 @@ FCST = "01"
 # ================= DOWNLOAD RAP 32km =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
@@ -65,58 +67,89 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-# pick_var with optional topLevel
-def pick_var(grbs, shortName=None, typeOfLevel=None, level=None, topLevel=None):
+def pick_var(shortName=None, typeOfLevel=None, level=None, topLevel=None):
+
     for g in grbs:
-        if shortName and g.shortName.lower() != shortName.lower():
+
+        if shortName and g.shortName != shortName:
             continue
-        if typeOfLevel and g.typeOfLevel.lower() != typeOfLevel.lower():
+
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
-        if level is not None and g.level != level:
-            continue
-        if topLevel is not None and getattr(g, 'topLevel', None) != topLevel:
-            continue
+
+        if level is not None:
+
+            if hasattr(g, "level"):
+                if g.level != level:
+                    continue
+
+            if hasattr(g, "bottomLevel"):
+                if g.bottomLevel != level:
+                    continue
+
+        if topLevel is not None:
+
+            if not hasattr(g, "topLevel"):
+                continue
+
+            if g.topLevel != topLevel:
+                continue
+
         return g
-    raise RuntimeError(f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}, topLevel={topLevel}")
+
+    raise RuntimeError(
+        f"{shortName} {typeOfLevel} {level} {topLevel} not found"
+    )
+
+# ================= CORE VARIABLES =================
 
 grbs.seek(0)
-cape_msg = pick_var(grbs, shortName="cape")
-grbs.seek(0)
-cin_msg = pick_var(grbs, shortName="cin")
-grbs.seek(0)
-hlcy_msg = pick_var(grbs, shortName="hlcy", typeOfLevel="heightAboveGroundLayer", level=0, topLevel=1000)
-
-# ================= T2 / TD2 =================
-grbs.seek(0)
-t2_msg = pick_var(grbs, shortName="2t", typeOfLevel="heightAboveGround", level=2)
-grbs.seek(0)
-td2_msg = pick_var(grbs, shortName="2d", typeOfLevel="heightAboveGround", level=2)
-
-# ================= U/V Winds =================
-grbs.seek(0)
-u10_msg = pick_var(grbs, shortName="10u", typeOfLevel="heightAboveGround", level=10)
-grbs.seek(0)
-v10_msg = pick_var(grbs, shortName="10v", typeOfLevel="heightAboveGround", level=10)
+cape_msg = pick_var("cape")
 
 grbs.seek(0)
-u500_msg = pick_var(grbs, shortName="u", typeOfLevel="isobaricInhPa", level=500)
-grbs.seek(0)
-v500_msg = pick_var(grbs, shortName="v", typeOfLevel="isobaricInhPa", level=500)
+cin_msg = pick_var("cin")
 
-# ================= CONVERT TO NUMPY =================
+grbs.seek(0)
+hlcy_msg = pick_var("hlcy", "heightAboveGroundLayer", 0, 1000)
+
+# ================= NEW EXTRACTIONS =================
+
+grbs.seek(0)
+t2_msg = pick_var("2t", "heightAboveGround", 2)
+
+grbs.seek(0)
+d2_msg = pick_var("2d", "heightAboveGround", 2)
+
+grbs.seek(0)
+u10_msg = pick_var("10u", "heightAboveGround", 10)
+
+grbs.seek(0)
+v10_msg = pick_var("10v", "heightAboveGround", 10)
+
+grbs.seek(0)
+u500_msg = pick_var("u", "isobaricInhPa", 500)
+
+grbs.seek(0)
+v500_msg = pick_var("v", "isobaricInhPa", 500)
+
+# ================= ARRAYS =================
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
+
 t2 = np.nan_to_num(t2_msg.values)
-td2 = np.nan_to_num(td2_msg.values)
-depr = t2 - td2
+d2 = np.nan_to_num(d2_msg.values)
+
+depr = t2 - d2
+
 u10 = np.nan_to_num(u10_msg.values)
 v10 = np.nan_to_num(v10_msg.values)
+
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
 
-# ================= PROJ =================
+# ================= GRID =================
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
@@ -130,6 +163,7 @@ proj_lcc = Proj(
     a=params.get("a", 6371229),
     b=params.get("b", 6371229)
 )
+
 x_vals, y_vals = proj_lcc(lons, lats)
 
 # ================= MODEL =================
@@ -141,43 +175,37 @@ logit = (
     + COEFFS["HLCY"] * hlcy
     + COEFFS["DEPR"] * depr
 )
+
 prob = 1 / (1 + np.exp(-logit))
 
-print("Array shapes:")
-print("CAPE:", cape.shape)
-print("CIN:", cin.shape)
-print("HLCY:", hlcy.shape)
-print("T2:", t2.shape)
-print("TD2:", td2.shape)
-print("DEPR:", depr.shape)
-print("U10:", u10.shape)
-print("V10:", v10.shape)
-print("U500:", u500.shape)
-print("V500:", v500.shape)
-print("Probability:", prob.shape)
-
-# ================= LOAD CONUS SHAPE =================
+# ================= LOAD CONUS =================
 
 print("Downloading CONUS shapefile...")
+
 r = requests.get(CONUS_SHAPE_URL)
 z = zipfile.ZipFile(io.BytesIO(r.content))
 z.extractall(DATA_DIR)
 
 shp_path = None
+
 for f in os.listdir(DATA_DIR):
     if f.endswith(".shp"):
         shp_path = os.path.join(DATA_DIR, f)
         break
 
 states = gpd.read_file(shp_path)
+
 exclude = ["AK", "HI", "PR", "GU", "VI", "MP", "AS"]
+
 states = states[~states["STUSPS"].isin(exclude)]
+
 conus = states.unary_union
 prepared = prep(conus)
 
 # ================= GRID FILTER =================
 
 ny, nx = prob.shape
+
 dx = x_vals[0,1] - x_vals[0,0]
 dy = y_vals[1,0] - y_vals[0,0]
 
@@ -185,12 +213,15 @@ features = []
 
 for i in range(ny):
     for j in range(nx):
+
         p = float(prob[i,j])
+
         if p < 0.02:
             continue
 
         lon = lons[i,j]
         lat = lats[i,j]
+
         if not prepared.contains(Point(lon, lat)):
             continue
 
@@ -219,4 +250,15 @@ geojson = {
 
 with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
+
 print("Saved tornado probability GeoJSON")
+
+# ================= PROOF EXTRACTION =================
+
+print("Extraction check:")
+print("T2:", t2.shape)
+print("Td2:", d2.shape)
+print("U10:", u10.shape)
+print("V10:", v10.shape)
+print("U500:", u500.shape)
+print("V500:", v500.shape)
