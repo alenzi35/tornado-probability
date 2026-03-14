@@ -67,18 +67,32 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(*keywords):
-    keywords = [k.lower() for k in keywords]
+def pick_var(shortName=None, typeOfLevel=None, level=None):
+    """
+    Pick a variable from the GRIB file by shortName (string), typeOfLevel (string), and level (int).
+    Returns the first matching GRIB message.
+    """
+    shortName = shortName.lower() if shortName is not None else None
+    typeOfLevel = typeOfLevel.lower() if typeOfLevel is not None else None
 
     for g in grbs:
-        name = str(g.name).lower()
-        short = str(g.shortName).lower()
-        for k in keywords:
-            if k in name or k in short:
-                return g
-    raise RuntimeError(f"{keywords} not found in native 13km RAP")
+        s = str(g.shortName).lower()
+        t = str(g.typeOfLevel).lower()
+        l = g.level
 
-# --- EXISTING TRAINED VARIABLES ---
+        if shortName and shortName not in s:
+            continue
+        if typeOfLevel and typeOfLevel not in t:
+            continue
+        if level is not None and level != l:
+            continue
+
+        return g
+
+    # If not found, raise
+    raise RuntimeError(f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}")
+
+# ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
 cape_msg = pick_var("cape")
@@ -87,50 +101,30 @@ cin_msg = pick_var("cin")
 grbs.seek(0)
 hlcy_msg = pick_var("hlcy", "helicity")
 
-# Dewpoint depression (T2-Td2)
+# Dewpoint depression
 grbs.seek(0)
-depr_msg = None
 try:
     depr_msg = pick_var("depr")
+    depr = np.nan_to_num(depr_msg.values)
 except:
-    grbs.seek(0)
+    # fallback to computing from 2m T and dewpoint
     t2_msg = pick_var("2t", "heightAboveGround", 2)
-    grbs.seek(0)
     td2_msg = pick_var("2d", "heightAboveGround", 2)
     t2 = np.nan_to_num(t2_msg.values)
     td2 = np.nan_to_num(td2_msg.values)
     depr = t2 - td2
 
-if depr_msg is not None:
-    depr = np.nan_to_num(depr_msg.values)
-
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
 
-# --- NEW VARIABLES FOR FUTURE RETRAINING ---
-
-grbs.seek(0)
-t2_msg = pick_var("2t", "heightAboveGround", 2)
-grbs.seek(0)
-td2_msg = pick_var("2d", "heightAboveGround", 2)
-grbs.seek(0)
+# New variables for later shear/LCL computation
 u10_msg = pick_var("10u", "heightAboveGround", 10)
-grbs.seek(0)
 v10_msg = pick_var("10v", "heightAboveGround", 10)
-grbs.seek(0)
 u500_msg = pick_var("u", "isobaricInhPa", 500)
-grbs.seek(0)
 v500_msg = pick_var("v", "isobaricInhPa", 500)
 
-t2 = np.nan_to_num(t2_msg.values)
-td2 = np.nan_to_num(td2_msg.values)
-u10 = np.nan_to_num(u10_msg.values)
-v10 = np.nan_to_num(v10_msg.values)
-u500 = np.nan_to_num(u500_msg.values)
-v500 = np.nan_to_num(v500_msg.values)
-
-# ================= COORDINATES =================
+# ================= GRID COORDINATES =================
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
