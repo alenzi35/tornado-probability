@@ -1,7 +1,7 @@
 name: Process RAP Tornado Data
 
 on:
-  # Manual trigger (for testing)
+  # Run manually if needed
   workflow_dispatch:
 
 permissions:
@@ -14,11 +14,10 @@ jobs:
     steps:
 
       # ----------------------------
-      # 1. Checkout repository
+      # 1. Checkout repo
       # ----------------------------
       - name: Checkout repo
         uses: actions/checkout@v4
-
 
       # ----------------------------
       # 2. Setup Python
@@ -28,64 +27,59 @@ jobs:
         with:
           python-version: "3.11"
 
-
       # ----------------------------
-      # 3. Install system + Python deps
+      # 3. Install system dependencies
       # ----------------------------
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
-            libeccodes-dev \
             gdal-bin \
-            libgdal-dev
+            libgdal-dev \
+            libproj-dev \
+            proj-data \
+            proj-bin \
+            libeccodes-dev
 
+      # ----------------------------
+      # 4. Install Python packages
+      # ----------------------------
+      - name: Install Python dependencies
+        run: |
           pip install --upgrade pip
-
           pip install \
             pygrib \
             numpy \
+            xarray \
+            geopandas \
             pyproj \
             shapely \
-            requests \
-            geopandas \
-            fiona
-
+            fiona \
+            requests
 
       # ----------------------------
-      # 4. Run RAP processor
+      # 5. Process RAP data
       # ----------------------------
       - name: Process RAP data
         run: |
           python scripts/process_rap.py
 
+      # ----------------------------
+      # 6. Convert borders to LCC
+      # ----------------------------
+      - name: Convert borders to LCC
+        run: |
+          python scripts/convert_borders_to_lcc.py
 
       # ----------------------------
-      # 5. Convert borders to LCC
-      # ----------------------------
-      - name: Build unified dataset
-        run: |
-          python scripts/build_unified_dataset.py
-    
-      # ----------------------------
-      # 7. Train logistic regression
-      # ----------------------------
-      - name: Train Logistic Regression Model
-        run: |
-          pip install --upgrade pip
-          pip install numpy pandas scikit-learn
-          python scripts/train_lr_model.py
-          
-      # ----------------------------
-      # 6. Commit + push outputs
+      # 7. Commit + push updated files
       # ----------------------------
       - name: Commit and push data
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          git add map/data data
+          git add map/data
 
           git commit -m "Auto update RAP + LCC borders" || echo "Nothing to commit"
 
