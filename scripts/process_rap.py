@@ -45,9 +45,9 @@ def get_target_cycle():
 DATE, HOUR = get_target_cycle()
 FCST = "01"
 
-# ================= DOWNLOAD RAP 13km =================
+# ================= DOWNLOAD RAP 32km =================
 
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awp130pgrbf{FCST}.grib2"
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
@@ -67,64 +67,54 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(shortName=None, typeOfLevel=None, level=None):
-    """
-    Pick a variable from the GRIB file by shortName (string), typeOfLevel (string), and level (int).
-    Returns the first matching GRIB message.
-    """
-    shortName = shortName.lower() if shortName is not None else None
-    typeOfLevel = typeOfLevel.lower() if typeOfLevel is not None else None
-
+def pick_var(grbs, shortName=None, typeOfLevel=None, level=None):
+    """Pick a variable by shortName and/or typeOfLevel and level"""
     for g in grbs:
-        s = str(g.shortName).lower()
-        t = str(g.typeOfLevel).lower()
-        l = g.level
-
-        if shortName and shortName not in s:
-            continue
-        if typeOfLevel and typeOfLevel not in t:
-            continue
-        if level is not None and level != l:
-            continue
-
-        return g
-
-    # If not found, raise
+        matches = True
+        if shortName and shortName.lower() != str(g.shortName).lower():
+            matches = False
+        if typeOfLevel and typeOfLevel.lower() != str(g.typeOfLevel).lower():
+            matches = False
+        if level is not None and level != g.level:
+            matches = False
+        if matches:
+            return g
     raise RuntimeError(f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}")
 
 # ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
-cape_msg = pick_var("cape")
-grbs.seek(0)
-cin_msg = pick_var("cin")
-grbs.seek(0)
-hlcy_msg = pick_var("hlcy", "helicity")
+cape_msg = pick_var(grbs, "cape")
 
-# Dewpoint depression
 grbs.seek(0)
-try:
-    depr_msg = pick_var("depr")
-    depr = np.nan_to_num(depr_msg.values)
-except:
-    # fallback to computing from 2m T and dewpoint
-    t2_msg = pick_var("2t", "heightAboveGround", 2)
-    td2_msg = pick_var("2d", "heightAboveGround", 2)
-    t2 = np.nan_to_num(t2_msg.values)
-    td2 = np.nan_to_num(td2_msg.values)
-    depr = t2 - td2
+cin_msg = pick_var(grbs, "cin")
+
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)  # keep previous working string
+
+# DEPR computed manually from 2m temperature/dewpoint
+grbs.seek(0)
+t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2)
+grbs.seek(0)
+d2_msg = pick_var(grbs, "2d", "heightAboveGround", 2)
+t2 = np.nan_to_num(t2_msg.values)
+d2 = np.nan_to_num(d2_msg.values)
+depr = t2 - d2
+
+# Extract U/V winds
+grbs.seek(0)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10)
+grbs.seek(0)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10)
+
+grbs.seek(0)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
+grbs.seek(0)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
-
-# New variables for later shear/LCL computation
-u10_msg = pick_var("10u", "heightAboveGround", 10)
-v10_msg = pick_var("10v", "heightAboveGround", 10)
-u500_msg = pick_var("u", "isobaricInhPa", 500)
-v500_msg = pick_var("v", "isobaricInhPa", 500)
-
-# ================= GRID COORDINATES =================
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
@@ -222,3 +212,13 @@ with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
 print("Saved tornado probability GeoJSON")
+
+# ================= EXTRACTION CHECK =================
+
+print("Extraction complete. Shapes:")
+print("T2:", t2.shape)
+print("Td2:", d2.shape)
+print("U10:", u10_msg.values.shape)
+print("V10:", v10_msg.values.shape)
+print("U500:", u500_msg.values.shape)
+print("V500:", v500_msg.values.shape)
