@@ -19,6 +19,17 @@ DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
+INTERCEPT = -6.274846902965728
+
+COEFFS = {
+    "CAPE": 0.0007852504286701655,
+    "CIN": -0.003028035273017941,
+    "HLCY": 0.008318690761993085,
+    "DEPR": -0.0045
+}
+
+CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
+
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
@@ -56,32 +67,43 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var_exact(grbs, shortName, typeOfLevel=None, level=None):
+def pick_var(grbs, shortName, typeOfLevel=None, level=None):
     for g in grbs:
         if g.shortName.lower() == shortName.lower():
-            if (typeOfLevel is None or g.typeOfLevel.lower() == typeOfLevel.lower()) and (level is None or g.level == level):
-                return g
+            if typeOfLevel and g.typeOfLevel.lower() != typeOfLevel.lower():
+                continue
+            if level and g.level != level:
+                continue
+            return g
     raise RuntimeError(f"{shortName} {typeOfLevel} {level} not found")
 
-# 2m temperature & dewpoint
+# Extract trained variables
 grbs.seek(0)
-t2_msg = pick_var_exact(grbs, "2t", "heightAboveGround", 2)
+cape_msg = pick_var(grbs, "cape")
 grbs.seek(0)
-td2_msg = pick_var_exact(grbs, "2d", "heightAboveGround", 2)
+cin_msg = pick_var(grbs, "cin")
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy")
 
-# 10m wind
+# Extract new fields for retraining
 grbs.seek(0)
-u10_msg = pick_var_exact(grbs, "10u", "heightAboveGround", 10)
+t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2)
 grbs.seek(0)
-v10_msg = pick_var_exact(grbs, "10v", "heightAboveGround", 10)
+td2_msg = pick_var(grbs, "2d", "heightAboveGround", 2)
+grbs.seek(0)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10)
+grbs.seek(0)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10)
+grbs.seek(0)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
+grbs.seek(0)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
 
-# 500mb wind (isobaric level)
-grbs.seek(0)
-u500_msg = pick_var_exact(grbs, "u", "isobaricInhPa", 500)
-grbs.seek(0)
-v500_msg = pick_var_exact(grbs, "v", "isobaricInhPa", 500)
+# Convert to numpy
+cape = np.nan_to_num(cape_msg.values)
+cin = np.nan_to_num(cin_msg.values)
+hlcy = np.nan_to_num(hlcy_msg.values)
 
-# Extract numpy arrays
 t2 = np.nan_to_num(t2_msg.values)
 td2 = np.nan_to_num(td2_msg.values)
 u10 = np.nan_to_num(u10_msg.values)
@@ -89,10 +111,12 @@ v10 = np.nan_to_num(v10_msg.values)
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
 
-# ================= GRID INFO =================
+# Dewpoint depression (T2-Td2)
+depr = t2 - td2
 
-lats, lons = t2_msg.latlons()
-params = t2_msg.projparams
+# Coordinates
+lats, lons = cape_msg.latlons()
+params = cape_msg.projparams
 proj_lcc = Proj(
     proj="lcc",
     lat_1=params["lat_1"],
@@ -104,16 +128,22 @@ proj_lcc = Proj(
 )
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= CREATE DUMMY PROB MAP =================
-# Here we just demonstrate putting the extracted fields on a map
-# For now, we'll make a simple "probability" = T2 - Td2 (dewpoint depression) as placeholder
+# ================= MODEL =================
 
-prob = t2 - td2
+logit = (
+    INTERCEPT
+    + COEFFS["CAPE"] * cape
+    + COEFFS["CIN"] * cin
+    + COEFFS["HLCY"] * hlcy
+    + COEFFS["DEPR"] * depr
+)
+
+prob = 1 / (1 + np.exp(-logit))
 
 # ================= LOAD CONUS SHAPE =================
 
-CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 print("Downloading CONUS shapefile...")
+
 r = requests.get(CONUS_SHAPE_URL)
 z = zipfile.ZipFile(io.BytesIO(r.content))
 z.extractall(DATA_DIR)
@@ -141,14 +171,18 @@ features = []
 for i in range(ny):
     for j in range(nx):
         p = float(prob[i,j])
-        if p < 0.5:  # placeholder threshold
+        if p < 0.02:
             continue
+
         lon = lons[i,j]
         lat = lats[i,j]
+
         if not prepared.contains(Point(lon, lat)):
             continue
+
         x = x_vals[i,j]
         y = y_vals[i,j]
+
         features.append({
             "type": "Feature",
             "geometry": {
@@ -172,4 +206,4 @@ geojson = {
 with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
-print("Saved GeoJSON map with T2/Td2-derived probabilities")
+print("Saved tornado probability GeoJSON")
