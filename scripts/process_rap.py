@@ -68,53 +68,57 @@ print("Downloaded RAP GRIB2")
 grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortName=None, typeOfLevel=None, level=None):
-    """Pick a variable by shortName and/or typeOfLevel and level"""
     for g in grbs:
-        matches = True
-        if shortName and shortName.lower() != str(g.shortName).lower():
-            matches = False
-        if typeOfLevel and typeOfLevel.lower() != str(g.typeOfLevel).lower():
-            matches = False
-        if level is not None and level != g.level:
-            matches = False
-        if matches:
-            return g
+        if shortName and g.shortName.lower() != shortName.lower():
+            continue
+        if typeOfLevel and g.typeOfLevel.lower() != typeOfLevel.lower():
+            continue
+        if level is not None and g.level != level:
+            continue
+        return g
     raise RuntimeError(f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}")
 
 # ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape")
+cape_msg = pick_var(grbs, shortName="cape")
 
 grbs.seek(0)
-cin_msg = pick_var(grbs, "cin")
+cin_msg = pick_var(grbs, shortName="cin")
 
 grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)  # keep previous working string
+hlcy_msg = pick_var(grbs, shortName="hlcy", typeOfLevel="heightAboveGroundLayer", level=0)
 
-# DEPR computed manually from 2m temperature/dewpoint
 grbs.seek(0)
-t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2)
+t2_msg = pick_var(grbs, shortName="2t", typeOfLevel="heightAboveGround", level=2)
+
 grbs.seek(0)
-d2_msg = pick_var(grbs, "2d", "heightAboveGround", 2)
+d2_msg = pick_var(grbs, shortName="2d", typeOfLevel="heightAboveGround", level=2)
+
+grbs.seek(0)
+u10_msg = pick_var(grbs, shortName="10u", typeOfLevel="heightAboveGround", level=10)
+grbs.seek(0)
+v10_msg = pick_var(grbs, shortName="10v", typeOfLevel="heightAboveGround", level=10)
+
+grbs.seek(0)
+u500_msg = pick_var(grbs, shortName="u", typeOfLevel="isobaricInhPa", level=500)
+grbs.seek(0)
+v500_msg = pick_var(grbs, shortName="v", typeOfLevel="isobaricInhPa", level=500)
+
+# ================= COMPUTE DEPR =================
+
 t2 = np.nan_to_num(t2_msg.values)
 d2 = np.nan_to_num(d2_msg.values)
 depr = t2 - d2
 
-# Extract U/V winds
-grbs.seek(0)
-u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10)
-grbs.seek(0)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10)
-
-grbs.seek(0)
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
-grbs.seek(0)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
-
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
+
+u10 = np.nan_to_num(u10_msg.values)
+v10 = np.nan_to_num(v10_msg.values)
+u500 = np.nan_to_num(u500_msg.values)
+v500 = np.nan_to_num(v500_msg.values)
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
@@ -175,7 +179,6 @@ for i in range(ny):
     for j in range(nx):
 
         p = float(prob[i,j])
-
         if p < 0.02:
             continue
 
@@ -213,12 +216,9 @@ with open(OUTPUT_JSON, "w") as f:
 
 print("Saved tornado probability GeoJSON")
 
-# ================= EXTRACTION CHECK =================
+# ================= PROOF OF EXTRACTION =================
 
-print("Extraction complete. Shapes:")
-print("T2:", t2.shape)
-print("Td2:", d2.shape)
-print("U10:", u10_msg.values.shape)
-print("V10:", v10_msg.values.shape)
-print("U500:", u500_msg.values.shape)
-print("V500:", v500_msg.values.shape)
+print("Variables extracted successfully:")
+print(f"T2: {t2.shape}, Td2: {d2.shape}")
+print(f"U10/V10: {u10.shape}/{v10.shape}, U500/V500: {u500.shape}/{v500.shape}")
+print(f"CAPE/CIN/HLCY/DEPR: {cape.shape}/{cin.shape}/{hlcy.shape}/{depr.shape}")
