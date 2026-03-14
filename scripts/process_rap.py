@@ -17,7 +17,7 @@ from pyproj import Proj
 
 DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/tornado_vars.json"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
@@ -56,41 +56,43 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortName, typeOfLevel=None, level=None):
+def pick_var_exact(grbs, shortName, typeOfLevel=None, level=None):
     for g in grbs:
-        if g.shortName == shortName:
-            if typeOfLevel is not None and g.typeOfLevel != typeOfLevel:
-                continue
-            if level is not None and g.level != level:
-                continue
-            return g
+        if g.shortName.lower() == shortName.lower():
+            if (typeOfLevel is None or g.typeOfLevel.lower() == typeOfLevel.lower()) and (level is None or g.level == level):
+                return g
     raise RuntimeError(f"{shortName} {typeOfLevel} {level} not found")
 
-# =============== EXTRACT VARIABLES =================
+# 2m temperature & dewpoint
+grbs.seek(0)
+t2_msg = pick_var_exact(grbs, "2t", "heightAboveGround", 2)
+grbs.seek(0)
+td2_msg = pick_var_exact(grbs, "2d", "heightAboveGround", 2)
 
+# 10m wind
 grbs.seek(0)
-t2_msg = pick_var(grbs, "2t", "surface", 2)
+u10_msg = pick_var_exact(grbs, "10u", "heightAboveGround", 10)
 grbs.seek(0)
-td2_msg = pick_var(grbs, "2d", "surface", 2)
-grbs.seek(0)
-u10_msg = pick_var(grbs, "10u", "surface", 10)
-grbs.seek(0)
-v10_msg = pick_var(grbs, "10v", "surface", 10)
-grbs.seek(0)
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
-grbs.seek(0)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
+v10_msg = pick_var_exact(grbs, "10v", "heightAboveGround", 10)
 
-T2 = np.nan_to_num(t2_msg.values)
-Td2 = np.nan_to_num(td2_msg.values)
-U10 = np.nan_to_num(u10_msg.values)
-V10 = np.nan_to_num(v10_msg.values)
-U500 = np.nan_to_num(u500_msg.values)
-V500 = np.nan_to_num(v500_msg.values)
+# 500mb wind (isobaric level)
+grbs.seek(0)
+u500_msg = pick_var_exact(grbs, "u", "isobaricInhPa", 500)
+grbs.seek(0)
+v500_msg = pick_var_exact(grbs, "v", "isobaricInhPa", 500)
+
+# Extract numpy arrays
+t2 = np.nan_to_num(t2_msg.values)
+td2 = np.nan_to_num(td2_msg.values)
+u10 = np.nan_to_num(u10_msg.values)
+v10 = np.nan_to_num(v10_msg.values)
+u500 = np.nan_to_num(u500_msg.values)
+v500 = np.nan_to_num(v500_msg.values)
+
+# ================= GRID INFO =================
 
 lats, lons = t2_msg.latlons()
 params = t2_msg.projparams
-
 proj_lcc = Proj(
     proj="lcc",
     lat_1=params["lat_1"],
@@ -100,14 +102,18 @@ proj_lcc = Proj(
     a=params.get("a", 6371229),
     b=params.get("b", 6371229)
 )
-
 x_vals, y_vals = proj_lcc(lons, lats)
+
+# ================= CREATE DUMMY PROB MAP =================
+# Here we just demonstrate putting the extracted fields on a map
+# For now, we'll make a simple "probability" = T2 - Td2 (dewpoint depression) as placeholder
+
+prob = t2 - td2
 
 # ================= LOAD CONUS SHAPE =================
 
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 print("Downloading CONUS shapefile...")
-
 r = requests.get(CONUS_SHAPE_URL)
 z = zipfile.ZipFile(io.BytesIO(r.content))
 z.extractall(DATA_DIR)
@@ -126,7 +132,7 @@ prepared = prep(conus)
 
 # ================= GRID FILTER =================
 
-ny, nx = T2.shape
+ny, nx = prob.shape
 dx = x_vals[0,1] - x_vals[0,0]
 dy = y_vals[1,0] - y_vals[0,0]
 
@@ -134,16 +140,15 @@ features = []
 
 for i in range(ny):
     for j in range(nx):
-
+        p = float(prob[i,j])
+        if p < 0.5:  # placeholder threshold
+            continue
         lon = lons[i,j]
         lat = lats[i,j]
-
         if not prepared.contains(Point(lon, lat)):
             continue
-
         x = x_vals[i,j]
         y = y_vals[i,j]
-
         features.append({
             "type": "Feature",
             "geometry": {
@@ -156,14 +161,7 @@ for i in range(ny):
                     [x - dx/2, y - dy/2]
                 ]]
             },
-            "properties": {
-                "T2": float(T2[i,j]),
-                "Td2": float(Td2[i,j]),
-                "U10": float(U10[i,j]),
-                "V10": float(V10[i,j]),
-                "U500": float(U500[i,j]),
-                "V500": float(V500[i,j])
-            }
+            "properties": {"p": p}
         })
 
 geojson = {
@@ -174,4 +172,4 @@ geojson = {
 with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
-print("Saved variables GeoJSON")
+print("Saved GeoJSON map with T2/Td2-derived probabilities")
