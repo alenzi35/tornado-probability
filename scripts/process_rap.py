@@ -17,7 +17,7 @@ from pyproj import Proj
 
 DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
-OUTPUT_JSON = "map/data/tornado_vars_lcc.json"
+OUTPUT_JSON = "map/data/tornado_vars.json"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
@@ -37,6 +37,7 @@ FCST = "01"
 # ================= DOWNLOAD RAP 32km =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
@@ -58,31 +59,37 @@ grbs = pygrib.open(GRIB_PATH)
 def pick_var(grbs, shortName, typeOfLevel=None, level=None):
     for g in grbs:
         if g.shortName == shortName:
-            if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            if typeOfLevel is not None and g.typeOfLevel != typeOfLevel:
                 continue
             if level is not None and g.level != level:
                 continue
             return g
     raise RuntimeError(f"{shortName} {typeOfLevel} {level} not found")
 
-# ================= EXTRACT VARIABLES =================
+# =============== EXTRACT VARIABLES =================
 
 grbs.seek(0)
-T2 = pick_var(grbs, "2t", "heightAboveGround", 2).values
+t2_msg = pick_var(grbs, "2t", "surface", 2)
 grbs.seek(0)
-Td2 = pick_var(grbs, "2d", "heightAboveGround", 2).values
+td2_msg = pick_var(grbs, "2d", "surface", 2)
 grbs.seek(0)
-U10 = pick_var(grbs, "10u", "heightAboveGround", 10).values
+u10_msg = pick_var(grbs, "10u", "surface", 10)
 grbs.seek(0)
-V10 = pick_var(grbs, "10v", "heightAboveGround", 10).values
+v10_msg = pick_var(grbs, "10v", "surface", 10)
 grbs.seek(0)
-U500 = pick_var(grbs, "u", "isobaricInhPa", 500).values
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
 grbs.seek(0)
-V500 = pick_var(grbs, "v", "isobaricInhPa", 500).values
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
 
-# Get lats/lons for mapping
-lats, lons = pick_var(grbs, "2t", "heightAboveGround", 2).latlons()
-params = pick_var(grbs, "2t", "heightAboveGround", 2).projparams
+T2 = np.nan_to_num(t2_msg.values)
+Td2 = np.nan_to_num(td2_msg.values)
+U10 = np.nan_to_num(u10_msg.values)
+V10 = np.nan_to_num(v10_msg.values)
+U500 = np.nan_to_num(u500_msg.values)
+V500 = np.nan_to_num(v500_msg.values)
+
+lats, lons = t2_msg.latlons()
+params = t2_msg.projparams
 
 proj_lcc = Proj(
     proj="lcc",
@@ -99,6 +106,8 @@ x_vals, y_vals = proj_lcc(lons, lats)
 # ================= LOAD CONUS SHAPE =================
 
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
+print("Downloading CONUS shapefile...")
+
 r = requests.get(CONUS_SHAPE_URL)
 z = zipfile.ZipFile(io.BytesIO(r.content))
 z.extractall(DATA_DIR)
@@ -115,7 +124,7 @@ states = states[~states["STUSPS"].isin(exclude)]
 conus = states.unary_union
 prepared = prep(conus)
 
-# ================= BUILD GEOJSON =================
+# ================= GRID FILTER =================
 
 ny, nx = T2.shape
 dx = x_vals[0,1] - x_vals[0,0]
@@ -165,4 +174,4 @@ geojson = {
 with open(OUTPUT_JSON, "w") as f:
     json.dump(geojson, f)
 
-print("Saved variables GeoJSON for CONUS mapping")
+print("Saved variables GeoJSON")
