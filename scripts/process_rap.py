@@ -45,9 +45,9 @@ def get_target_cycle():
 DATE, HOUR = get_target_cycle()
 FCST = "01"
 
-# ================= DOWNLOAD RAP 32km =================
+# ================= DOWNLOAD RAP 13km =================
 
-RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awp130pgrbf{FCST}.grib2"
 
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
@@ -67,42 +67,61 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortName, typeOfLevel=None, level=None):
+def pick_var(*keywords):
+    keywords = [k.lower() for k in keywords]
+
     for g in grbs:
-        if g.shortName.lower() == shortName.lower():
-            if typeOfLevel and g.typeOfLevel.lower() != typeOfLevel.lower():
-                continue
-            if level and g.level != level:
-                continue
-            return g
-    raise RuntimeError(f"{shortName} {typeOfLevel} {level} not found")
+        name = str(g.name).lower()
+        short = str(g.shortName).lower()
+        for k in keywords:
+            if k in name or k in short:
+                return g
+    raise RuntimeError(f"{keywords} not found in native 13km RAP")
 
-# Extract trained variables
-grbs.seek(0)
-cape_msg = pick_var(grbs, "cape")
-grbs.seek(0)
-cin_msg = pick_var(grbs, "cin")
-grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy")
+# --- EXISTING TRAINED VARIABLES ---
 
-# Extract new fields for retraining
 grbs.seek(0)
-t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2)
+cape_msg = pick_var("cape")
 grbs.seek(0)
-td2_msg = pick_var(grbs, "2d", "heightAboveGround", 2)
+cin_msg = pick_var("cin")
 grbs.seek(0)
-u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10)
-grbs.seek(0)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10)
-grbs.seek(0)
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
-grbs.seek(0)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
+hlcy_msg = pick_var("hlcy", "helicity")
 
-# Convert to numpy
+# Dewpoint depression (T2-Td2)
+grbs.seek(0)
+depr_msg = None
+try:
+    depr_msg = pick_var("depr")
+except:
+    grbs.seek(0)
+    t2_msg = pick_var("2t", "heightAboveGround", 2)
+    grbs.seek(0)
+    td2_msg = pick_var("2d", "heightAboveGround", 2)
+    t2 = np.nan_to_num(t2_msg.values)
+    td2 = np.nan_to_num(td2_msg.values)
+    depr = t2 - td2
+
+if depr_msg is not None:
+    depr = np.nan_to_num(depr_msg.values)
+
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
+
+# --- NEW VARIABLES FOR FUTURE RETRAINING ---
+
+grbs.seek(0)
+t2_msg = pick_var("2t", "heightAboveGround", 2)
+grbs.seek(0)
+td2_msg = pick_var("2d", "heightAboveGround", 2)
+grbs.seek(0)
+u10_msg = pick_var("10u", "heightAboveGround", 10)
+grbs.seek(0)
+v10_msg = pick_var("10v", "heightAboveGround", 10)
+grbs.seek(0)
+u500_msg = pick_var("u", "isobaricInhPa", 500)
+grbs.seek(0)
+v500_msg = pick_var("v", "isobaricInhPa", 500)
 
 t2 = np.nan_to_num(t2_msg.values)
 td2 = np.nan_to_num(td2_msg.values)
@@ -111,12 +130,11 @@ v10 = np.nan_to_num(v10_msg.values)
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
 
-# Dewpoint depression (T2-Td2)
-depr = t2 - td2
+# ================= COORDINATES =================
 
-# Coordinates
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
+
 proj_lcc = Proj(
     proj="lcc",
     lat_1=params["lat_1"],
@@ -126,6 +144,7 @@ proj_lcc = Proj(
     a=params.get("a", 6371229),
     b=params.get("b", 6371229)
 )
+
 x_vals, y_vals = proj_lcc(lons, lats)
 
 # ================= MODEL =================
@@ -170,7 +189,9 @@ features = []
 
 for i in range(ny):
     for j in range(nx):
+
         p = float(prob[i,j])
+
         if p < 0.02:
             continue
 
