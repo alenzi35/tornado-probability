@@ -1,7 +1,6 @@
 import urllib.request
 import pygrib
 import numpy as np
-from datetime import datetime
 
 # -----------------------------
 # CONFIG
@@ -25,47 +24,43 @@ urllib.request.urlretrieve(URL, FILE)
 print("Downloaded RAP GRIB2")
 
 # -----------------------------
-# VARIABLE PICKER
-# -----------------------------
-
-def pick_var(grbs, shortName, typeOfLevel, bottomLevel, topLevel):
-    for g in grbs:
-        if (
-            g.shortName.lower() == shortName.lower()
-            and g.typeOfLevel == typeOfLevel
-            and getattr(g, "bottomLevel", None) == bottomLevel
-            and getattr(g, "topLevel", None) == topLevel
-        ):
-            return g
-    raise RuntimeError(
-        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, bottomLevel={bottomLevel}, topLevel={topLevel}"
-    )
-
-# -----------------------------
 # OPEN GRIB
 # -----------------------------
 
 grbs = pygrib.open(FILE)
 
 # -----------------------------
+# VARIABLE PICKER
+# -----------------------------
+
+def pick(shortName, typeOfLevel, level):
+    msgs = grbs.select(shortName=shortName, typeOfLevel=typeOfLevel, level=level)
+    if len(msgs) == 0:
+        raise RuntimeError(
+            f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}"
+        )
+    return msgs[0]
+
+# -----------------------------
 # EXTRACT VARIABLES
 # -----------------------------
 
-cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 18000)
-cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 18000)
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+cape_msg = pick("cape", "pressureFromGroundLayer", 18000)
+cin_msg  = pick("cin",  "pressureFromGroundLayer", 18000)
 
-t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2, 2)
-td2_msg = pick_var(grbs, "2d", "heightAboveGround", 2, 2)
+hlcy_msg = pick("hlcy", "heightAboveGroundLayer", 1000)
 
-u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10, 10)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10, 10)
+t2_msg  = pick("2t",  "heightAboveGround", 2)
+td2_msg = pick("2d",  "heightAboveGround", 2)
 
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500, 500)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500, 500)
+u10_msg = pick("10u", "heightAboveGround", 10)
+v10_msg = pick("10v", "heightAboveGround", 10)
+
+u500_msg = pick("u", "isobaricInhPa", 500)
+v500_msg = pick("v", "isobaricInhPa", 500)
 
 # -----------------------------
-# LOAD DATA ARRAYS
+# LOAD ARRAYS
 # -----------------------------
 
 cape = cape_msg.values
@@ -84,40 +79,16 @@ v500 = v500_msg.values
 lats, lons = cape_msg.latlons()
 
 # -----------------------------
-# BASIC DERIVED FIELDS
+# DERIVED FIELDS
 # -----------------------------
 
-# convert K -> C
 t2c = t2 - 273.15
 td2c = td2 - 273.15
 
-# wind speed
 wind10 = np.sqrt(u10**2 + v10**2)
 wind500 = np.sqrt(u500**2 + v500**2)
 
-# simple shear magnitude
-shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
-
-# -----------------------------
-# OUTPUT STRUCTURE
-# -----------------------------
-
-data = {
-    "cape": cape,
-    "cin": cin,
-    "srh": srh,
-    "t2c": t2c,
-    "td2c": td2c,
-    "u10": u10,
-    "v10": v10,
-    "u500": u500,
-    "v500": v500,
-    "wind10": wind10,
-    "wind500": wind500,
-    "shear": shear,
-    "lat": lats,
-    "lon": lons,
-}
+shear = np.sqrt((u500-u10)**2 + (v500-v10)**2)
 
 print("Extraction complete")
 print("Grid shape:", cape.shape)
