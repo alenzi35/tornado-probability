@@ -1,31 +1,48 @@
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pygrib
 import numpy as np
 
 OUT_JSON = "map/data/tornado_prob_lcc.json"
 TMP_GRIB = "rap.grib2"
 
-# -------------------------------
-# RAP URL
-# -------------------------------
+# -------------------------------------------------
+# Find latest available RAP run (production safe)
+# -------------------------------------------------
 
 now = datetime.utcnow()
-date_str = now.strftime("%Y%m%d")
-run_hour = now.hour
 
-url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/rap.t{run_hour:02d}z.awip32f01.grib2"
+rap_url = None
+run_hour = None
+date_str = None
 
-print(f"Target: {date_str} {run_hour:02d} F01")
-print("URL:", url)
+for h in range(0, 6):  # search last 6 hours
+    test_time = now - timedelta(hours=h)
 
-# -------------------------------
+    date_str = test_time.strftime("%Y%m%d")
+    run_hour = test_time.hour
+
+    url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/rap.t{run_hour:02d}z.awip32f01.grib2"
+
+    r = requests.head(url)
+
+    if r.status_code == 200:
+        rap_url = url
+        break
+
+if rap_url is None:
+    raise RuntimeError("No RAP run found in last 6 hours")
+
+print(f"Using RAP run: {date_str} {run_hour:02d}z F01")
+print("URL:", rap_url)
+
+# -------------------------------------------------
 # Download GRIB
-# -------------------------------
+# -------------------------------------------------
 
-r = requests.get(url)
+r = requests.get(rap_url)
 r.raise_for_status()
 
 with open(TMP_GRIB, "wb") as f:
@@ -33,11 +50,15 @@ with open(TMP_GRIB, "wb") as f:
 
 print("Downloaded RAP GRIB2")
 
+# -------------------------------------------------
+# Open GRIB
+# -------------------------------------------------
+
 grbs = pygrib.open(TMP_GRIB)
 
-# -------------------------------
-# Variable extractor
-# -------------------------------
+# -------------------------------------------------
+# Variable selector
+# -------------------------------------------------
 
 def pick_var(grbs, shortName, typeOfLevel=None, level=None, bottomLevel=None, topLevel=None):
 
@@ -64,9 +85,9 @@ def pick_var(grbs, shortName, typeOfLevel=None, level=None, bottomLevel=None, to
         f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}, bottomLevel={bottomLevel}, topLevel={topLevel}"
     )
 
-# -------------------------------
+# -------------------------------------------------
 # Extract variables
-# -------------------------------
+# -------------------------------------------------
 
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", level=18000)
 cin_msg  = pick_var(grbs, "cin",  "pressureFromGroundLayer", level=18000)
@@ -88,9 +109,9 @@ v10_msg = pick_var(grbs, "10v", "heightAboveGround", level=10)
 u500_msg = pick_var(grbs, "u", "isobaricInhPa", level=500)
 v500_msg = pick_var(grbs, "v", "isobaricInhPa", level=500)
 
-# -------------------------------
+# -------------------------------------------------
 # Grid + projection
-# -------------------------------
+# -------------------------------------------------
 
 lats, lons = cape_msg.latlons()
 projparams = cape_msg.projparams
@@ -98,9 +119,9 @@ projparams = cape_msg.projparams
 dx = cape_msg["DxInMetres"]
 dy = cape_msg["DyInMetres"]
 
-# -------------------------------
+# -------------------------------------------------
 # Values
-# -------------------------------
+# -------------------------------------------------
 
 cape = cape_msg.values
 cin  = cin_msg.values
@@ -115,17 +136,17 @@ v10 = v10_msg.values
 u500 = u500_msg.values
 v500 = v500_msg.values
 
-# -------------------------------
+# -------------------------------------------------
 # Derived parameters
-# -------------------------------
+# -------------------------------------------------
 
 lcl = (t2 - td2) * 125
 
 shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
 
-# -------------------------------
-# Build cells
-# -------------------------------
+# -------------------------------------------------
+# Build grid cells
+# -------------------------------------------------
 
 features = []
 
@@ -151,9 +172,9 @@ for j in range(ny):
             "shear": float(shear[j, i])
         })
 
-# -------------------------------
+# -------------------------------------------------
 # Save JSON with projection
-# -------------------------------
+# -------------------------------------------------
 
 output = {
     "projection": {
