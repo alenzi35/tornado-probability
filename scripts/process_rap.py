@@ -5,29 +5,25 @@ from datetime import datetime
 import pygrib
 import numpy as np
 
-# -------------------------------------------------
-# CONFIG
-# -------------------------------------------------
-
 OUT_JSON = "map/data/tornado_prob_lcc.json"
 TMP_GRIB = "rap.grib2"
 
-# -------------------------------------------------
-# Determine latest RAP run
-# -------------------------------------------------
+# -------------------------------
+# RAP URL
+# -------------------------------
 
 now = datetime.utcnow()
-run_hour = now.hour
 date_str = now.strftime("%Y%m%d")
+run_hour = now.hour
 
 url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/rap.t{run_hour:02d}z.awip32f01.grib2"
 
 print(f"Target: {date_str} {run_hour:02d} F01")
 print("URL:", url)
 
-# -------------------------------------------------
+# -------------------------------
 # Download GRIB
-# -------------------------------------------------
+# -------------------------------
 
 r = requests.get(url)
 r.raise_for_status()
@@ -37,17 +33,13 @@ with open(TMP_GRIB, "wb") as f:
 
 print("Downloaded RAP GRIB2")
 
-# -------------------------------------------------
-# Open GRIB
-# -------------------------------------------------
-
 grbs = pygrib.open(TMP_GRIB)
 
-# -------------------------------------------------
-# Helper function to extract variables
-# -------------------------------------------------
+# -------------------------------
+# Variable extractor
+# -------------------------------
 
-def pick_var(grbs, shortName, typeOfLevel=None, level=None):
+def pick_var(grbs, shortName, typeOfLevel=None, level=None, bottomLevel=None, topLevel=None):
 
     for g in grbs:
 
@@ -60,51 +52,61 @@ def pick_var(grbs, shortName, typeOfLevel=None, level=None):
         if level is not None and g.level != level:
             continue
 
+        if bottomLevel is not None and getattr(g, "bottomLevel", None) != bottomLevel:
+            continue
+
+        if topLevel is not None and getattr(g, "topLevel", None) != topLevel:
+            continue
+
         return g
 
     raise RuntimeError(
-        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}"
+        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}, bottomLevel={bottomLevel}, topLevel={topLevel}"
     )
 
+# -------------------------------
+# Extract variables
+# -------------------------------
 
-# -------------------------------------------------
-# Extract variables (exact list you gave)
-# -------------------------------------------------
+cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", level=18000)
+cin_msg  = pick_var(grbs, "cin",  "pressureFromGroundLayer", level=18000)
 
-cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 18000)
-cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 18000)
+hlcy_msg = pick_var(
+    grbs,
+    "hlcy",
+    "heightAboveGroundLayer",
+    bottomLevel=0,
+    topLevel=1000
+)
 
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 1000)
+t2_msg  = pick_var(grbs, "2t",  "heightAboveGround", level=2)
+td2_msg = pick_var(grbs, "2d",  "heightAboveGround", level=2)
 
-t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2)
-td2_msg = pick_var(grbs, "2d", "heightAboveGround", 2)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", level=10)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", level=10)
 
-u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", level=500)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", level=500)
 
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
-
-# -------------------------------------------------
-# Get grid + projection
-# -------------------------------------------------
+# -------------------------------
+# Grid + projection
+# -------------------------------
 
 lats, lons = cape_msg.latlons()
-
 projparams = cape_msg.projparams
 
 dx = cape_msg["DxInMetres"]
 dy = cape_msg["DyInMetres"]
 
-# -------------------------------------------------
-# Extract values
-# -------------------------------------------------
+# -------------------------------
+# Values
+# -------------------------------
 
 cape = cape_msg.values
-cin = cin_msg.values
+cin  = cin_msg.values
 hlcy = hlcy_msg.values
 
-t2 = t2_msg.values
+t2  = t2_msg.values
 td2 = td2_msg.values
 
 u10 = u10_msg.values
@@ -113,19 +115,17 @@ v10 = v10_msg.values
 u500 = u500_msg.values
 v500 = v500_msg.values
 
-# -------------------------------------------------
-# Example derived calculations
-# -------------------------------------------------
+# -------------------------------
+# Derived parameters
+# -------------------------------
 
-# LCL (approx)
 lcl = (t2 - td2) * 125
 
-# Shear magnitude
-shear = np.sqrt((u500 - u10) ** 2 + (v500 - v10) ** 2)
+shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
 
-# -------------------------------------------------
-# Build output cells
-# -------------------------------------------------
+# -------------------------------
+# Build cells
+# -------------------------------
 
 features = []
 
@@ -147,13 +147,13 @@ for j in range(ny):
             "t2": float(t2[j, i]),
             "td2": float(td2[j, i]),
 
-            "shear": float(shear[j, i]),
-            "lcl": float(lcl[j, i])
+            "lcl": float(lcl[j, i]),
+            "shear": float(shear[j, i])
         })
 
-# -------------------------------------------------
-# Save JSON (WITH projection)
-# -------------------------------------------------
+# -------------------------------
+# Save JSON with projection
+# -------------------------------
 
 output = {
     "projection": {
