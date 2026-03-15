@@ -1,71 +1,108 @@
-import urllib.request
+import os
+import json
+import requests
+from datetime import datetime
 import pygrib
 import numpy as np
 
-# -----------------------------
+# -------------------------------------------------
 # CONFIG
-# -----------------------------
+# -------------------------------------------------
 
-RUN_DATE = "20260314"
-RUN_HOUR = "22"
-FORECAST = "01"
+OUT_JSON = "map/data/tornado_prob_lcc.json"
+TMP_GRIB = "rap.grib2"
 
-URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{RUN_DATE}/rap.t{RUN_HOUR}z.awip32f{FORECAST}.grib2"
-FILE = "rap.grib2"
+# -------------------------------------------------
+# Determine latest RAP run
+# -------------------------------------------------
 
-print(f"Target: {RUN_DATE} {RUN_HOUR} F{FORECAST}")
-print("URL:", URL)
+now = datetime.utcnow()
+run_hour = now.hour
+date_str = now.strftime("%Y%m%d")
 
-# -----------------------------
-# DOWNLOAD
-# -----------------------------
+url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/rap.t{run_hour:02d}z.awip32f01.grib2"
 
-urllib.request.urlretrieve(URL, FILE)
+print(f"Target: {date_str} {run_hour:02d} F01")
+print("URL:", url)
+
+# -------------------------------------------------
+# Download GRIB
+# -------------------------------------------------
+
+r = requests.get(url)
+r.raise_for_status()
+
+with open(TMP_GRIB, "wb") as f:
+    f.write(r.content)
+
 print("Downloaded RAP GRIB2")
 
-# -----------------------------
-# OPEN GRIB
-# -----------------------------
+# -------------------------------------------------
+# Open GRIB
+# -------------------------------------------------
 
-grbs = pygrib.open(FILE)
+grbs = pygrib.open(TMP_GRIB)
 
-# -----------------------------
-# VARIABLE PICKER
-# -----------------------------
+# -------------------------------------------------
+# Helper function to extract variables
+# -------------------------------------------------
 
-def pick(shortName, typeOfLevel, level):
-    msgs = grbs.select(shortName=shortName, typeOfLevel=typeOfLevel, level=level)
-    if len(msgs) == 0:
-        raise RuntimeError(
-            f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}"
-        )
-    return msgs[0]
+def pick_var(grbs, shortName, typeOfLevel=None, level=None):
 
-# -----------------------------
-# EXTRACT VARIABLES
-# -----------------------------
+    for g in grbs:
 
-cape_msg = pick("cape", "pressureFromGroundLayer", 18000)
-cin_msg  = pick("cin",  "pressureFromGroundLayer", 18000)
+        if g.shortName != shortName:
+            continue
 
-hlcy_msg = pick("hlcy", "heightAboveGroundLayer", 1000)
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
 
-t2_msg  = pick("2t",  "heightAboveGround", 2)
-td2_msg = pick("2d",  "heightAboveGround", 2)
+        if level is not None and g.level != level:
+            continue
 
-u10_msg = pick("10u", "heightAboveGround", 10)
-v10_msg = pick("10v", "heightAboveGround", 10)
+        return g
 
-u500_msg = pick("u", "isobaricInhPa", 500)
-v500_msg = pick("v", "isobaricInhPa", 500)
+    raise RuntimeError(
+        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}"
+    )
 
-# -----------------------------
-# LOAD ARRAYS
-# -----------------------------
+
+# -------------------------------------------------
+# Extract variables (exact list you gave)
+# -------------------------------------------------
+
+cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 18000)
+cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 18000)
+
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 1000)
+
+t2_msg = pick_var(grbs, "2t", "heightAboveGround", 2)
+td2_msg = pick_var(grbs, "2d", "heightAboveGround", 2)
+
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10)
+
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500)
+
+# -------------------------------------------------
+# Get grid + projection
+# -------------------------------------------------
+
+lats, lons = cape_msg.latlons()
+
+projparams = cape_msg.projparams
+
+dx = cape_msg["DxInMetres"]
+dy = cape_msg["DyInMetres"]
+
+# -------------------------------------------------
+# Extract values
+# -------------------------------------------------
 
 cape = cape_msg.values
 cin = cin_msg.values
-srh = hlcy_msg.values
+hlcy = hlcy_msg.values
 
 t2 = t2_msg.values
 td2 = td2_msg.values
@@ -76,19 +113,64 @@ v10 = v10_msg.values
 u500 = u500_msg.values
 v500 = v500_msg.values
 
-lats, lons = cape_msg.latlons()
+# -------------------------------------------------
+# Example derived calculations
+# -------------------------------------------------
 
-# -----------------------------
-# DERIVED FIELDS
-# -----------------------------
+# LCL (approx)
+lcl = (t2 - td2) * 125
 
-t2c = t2 - 273.15
-td2c = td2 - 273.15
+# Shear magnitude
+shear = np.sqrt((u500 - u10) ** 2 + (v500 - v10) ** 2)
 
-wind10 = np.sqrt(u10**2 + v10**2)
-wind500 = np.sqrt(u500**2 + v500**2)
+# -------------------------------------------------
+# Build output cells
+# -------------------------------------------------
 
-shear = np.sqrt((u500-u10)**2 + (v500-v10)**2)
+features = []
 
-print("Extraction complete")
-print("Grid shape:", cape.shape)
+ny, nx = cape.shape
+
+for j in range(ny):
+    for i in range(nx):
+
+        features.append({
+            "x": float(i * dx),
+            "y": float(j * dy),
+            "dx": float(dx),
+            "dy": float(dy),
+
+            "cape": float(cape[j, i]),
+            "cin": float(cin[j, i]),
+            "hlcy": float(hlcy[j, i]),
+
+            "t2": float(t2[j, i]),
+            "td2": float(td2[j, i]),
+
+            "shear": float(shear[j, i]),
+            "lcl": float(lcl[j, i])
+        })
+
+# -------------------------------------------------
+# Save JSON (WITH projection)
+# -------------------------------------------------
+
+output = {
+    "projection": {
+        "lat_1": projparams["lat_1"],
+        "lat_2": projparams["lat_2"],
+        "lat_0": projparams["lat_0"],
+        "lon_0": projparams["lon_0"],
+        "a": projparams.get("a", 6371229),
+        "b": projparams.get("b", 6371229)
+    },
+    "features": features
+}
+
+os.makedirs("map/data", exist_ok=True)
+
+with open(OUT_JSON, "w") as f:
+    json.dump(output, f)
+
+print("Saved:", OUT_JSON)
+print("Total cells:", len(features))
