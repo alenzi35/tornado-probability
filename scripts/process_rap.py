@@ -9,7 +9,7 @@ OUT_JSON = "map/data/tornado_prob_lcc.json"
 TMP_GRIB = "rap.grib2"
 
 # -------------------------------------------------
-# Find latest available RAP run (production safe)
+# Find latest available RAP run
 # -------------------------------------------------
 
 now = datetime.utcnow()
@@ -18,7 +18,7 @@ rap_url = None
 run_hour = None
 date_str = None
 
-for h in range(0, 6):  # search last 6 hours
+for h in range(0, 6):
     test_time = now - timedelta(hours=h)
 
     date_str = test_time.strftime("%Y%m%d")
@@ -61,6 +61,8 @@ grbs = pygrib.open(TMP_GRIB)
 # -------------------------------------------------
 
 def pick_var(grbs, shortName, typeOfLevel=None, level=None):
+
+    grbs.seek(0)  # reset iterator
 
     for g in grbs:
 
