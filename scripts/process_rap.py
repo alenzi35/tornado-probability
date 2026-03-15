@@ -60,7 +60,7 @@ grbs = pygrib.open(TMP_GRIB)
 # Variable selector
 # -------------------------------------------------
 
-def pick_var(grbs, shortName, typeOfLevel=None, level=None, bottomLevel=None, topLevel=None):
+def pick_var(grbs, shortName, typeOfLevel=None, level=None):
 
     for g in grbs:
 
@@ -73,16 +73,10 @@ def pick_var(grbs, shortName, typeOfLevel=None, level=None, bottomLevel=None, to
         if level is not None and g.level != level:
             continue
 
-        if bottomLevel is not None and getattr(g, "bottomLevel", None) != bottomLevel:
-            continue
-
-        if topLevel is not None and getattr(g, "topLevel", None) != topLevel:
-            continue
-
         return g
 
     raise RuntimeError(
-        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}, bottomLevel={bottomLevel}, topLevel={topLevel}"
+        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}"
     )
 
 # -------------------------------------------------
@@ -92,13 +86,7 @@ def pick_var(grbs, shortName, typeOfLevel=None, level=None, bottomLevel=None, to
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", level=18000)
 cin_msg  = pick_var(grbs, "cin",  "pressureFromGroundLayer", level=18000)
 
-hlcy_msg = pick_var(
-    grbs,
-    "hlcy",
-    "heightAboveGroundLayer",
-    bottomLevel=0,
-    topLevel=1000
-)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", level=1000)
 
 t2_msg  = pick_var(grbs, "2t",  "heightAboveGround", level=2)
 td2_msg = pick_var(grbs, "2d",  "heightAboveGround", level=2)
