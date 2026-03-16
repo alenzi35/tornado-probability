@@ -1,256 +1,160 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>LCC Tornado Probability Map</title>
+<meta charset="UTF-8">
+<title>Tornado Probability Map</title>
 
 <style>
-  body {
-    margin: 0;
-    overflow: hidden;
-    background: #111;
-  }
 
-  canvas {
-    display: block;
-  }
+body{
+  margin:0;
+  font-family:Arial,Helvetica,sans-serif;
+  background:#111;
+}
 
-  #tooltip {
-    position: absolute;
-    padding: 6px 10px;
-    background: rgba(0,0,0,0.85);
-    color: white;
-    border-radius: 5px;
-    pointer-events: none;
-    display: none;
-    font-family: sans-serif;
-    font-size: 13px;
-    white-space: nowrap;
-  }
+canvas{
+  display:block;
+}
 
-  #forecastInfo {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    padding: 8px 12px;
-    background: rgba(0,0,0,0.7);
-    color: white;
-    font-family: sans-serif;
-    font-size: 13px;
-    border-radius: 6px;
-    z-index: 10;
-  }
+#tooltip{
+
+  position:absolute;
+  pointer-events:none;
+  background:rgba(0,0,0,0.85);
+  color:white;
+  padding:8px 10px;
+  font-size:13px;
+  border-radius:4px;
+  display:none;
+  white-space:nowrap;
+}
+
 </style>
 </head>
 
 <body>
 
-<canvas id="mapCanvas"></canvas>
+<canvas id="map"></canvas>
 <div id="tooltip"></div>
-<div id="forecastInfo">Loading forecast…</div>
 
 <script>
-const canvas = document.getElementById("mapCanvas");
+
+const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
-const infoBox = document.getElementById("forecastInfo");
 
-let scale = 1;
-let offsetX = 0;
-let offsetY = 0;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-let dragging = false;
-let lastX, lastY;
+// --------------------------------
+// Lambert Conformal Projection
+// --------------------------------
+
+const LON0 = -97;
+const LAT0 = 38.5;
+const LAT1 = 38.5;
+const LAT2 = 38.5;
+const R = 6370000;
+
+const DEG = Math.PI/180;
+
+const n = Math.sin(LAT1*DEG);
+
+const F = (Math.cos(LAT1*DEG) * Math.pow(Math.tan(Math.PI/4 + LAT1*DEG/2), n)) / n;
+
+const rho0 = R * F / Math.pow(Math.tan(Math.PI/4 + LAT0*DEG/2), n);
+
+function lonlatToLCC(lon,lat){
+
+  const rho = R * F / Math.pow(Math.tan(Math.PI/4 + lat*DEG/2), n);
+  const theta = n * (lon - LON0) * DEG;
+
+  const x = rho * Math.sin(theta);
+  const y = rho0 - rho * Math.cos(theta);
+
+  return {x,y};
+}
+
+// --------------------------------
+// Convert screen coords -> LCC
+// --------------------------------
+
+function screenToLCC(px,py){
+
+  const x = (px - canvas.width/2) * 20000;
+  const y = (canvas.height/2 - py) * 20000;
+
+  return {x,y};
+}
+
+// --------------------------------
+// Color scale
+// --------------------------------
+
+function probColor(p){
+
+  if(p<0.001) return "rgba(0,0,0,0)";
+
+  const r = Math.min(255, p*40000);
+  const g = 50;
+  const b = 255 - r;
+
+  return `rgba(${r},${g},${b},0.6)`;
+}
+
+// --------------------------------
+// Data container
+// --------------------------------
 
 let cells = [];
-let borders = [];
-
 
 // --------------------------------
-// Resize
+// Load JSON
 // --------------------------------
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
 
+fetch("tornado_prob_lcc.json")
+.then(r=>r.json())
+.then(data=>{
 
-// --------------------------------
-// Load borders
-// --------------------------------
-fetch("map/data/borders_lcc.json")
-  .then(r => r.json())
-  .then(data => {
-    borders = data.features;
-    fitView();
-    draw();
-  });
+  cells = data;
+  draw();
 
+});
 
 // --------------------------------
-// Load cells
+// Draw grid
 // --------------------------------
-fetch("map/data/tornado_prob_lcc.json")
-  .then(r => r.json())
-  .then(data => {
 
-    cells = data.features;
-
-    // Forecast info (FIXED formatting with correct valid hour)
-    const runDate = data.run_date;
-    const runHour = parseInt(data.run_hour,10); // numeric
-    const fcst = data.forecast;
-
-    // Compute valid hour range for F01
-    const fcstHour = runHour + 1; // F01 = +1 hour
-    const validStart = fcstHour % 24;
-    const validEnd = (fcstHour + 1) % 24;
-
-    function pad(n){return n.toString().padStart(2,"0");}
-
-    infoBox.innerHTML =
-      `Run: ${runDate} ${pad(runHour)}Z (${fcst})<br>
-       Valid: ${pad(validStart)}:00-${pad(validEnd)}:00 UTC`;
-
-    fitView();
-    draw();
-  });
-
-
-// --------------------------------
-// Smooth gradient color scale
-// 0 → light yellow
-// 1% → magenta
-// --------------------------------
-function probToColor(p) {
-
-  const maxP = 0.01;
-  let t = p / maxP;
-
-  if (t < 0) t = 0;
-  if (t > 1) t = 1;
-
-  // Color stops
-  const stops = [
-    {t:0.00, c:[255,255,224]}, // light yellow
-    {t:0.25, c:[255,255,0]},   // yellow
-    {t:0.50, c:[255,165,0]},   // orange
-    {t:0.75, c:[255,0,0]},     // red
-    {t:1.00, c:[255,0,255]}    // magenta
-  ];
-
-  let i;
-  for (i=0; i<stops.length-1; i++) {
-    if (t >= stops[i].t && t <= stops[i+1].t) break;
-  }
-
-  const s0 = stops[i];
-  const s1 = stops[i+1];
-
-  const k = (t - s0.t) / (s1.t - s0.t);
-
-  const r = Math.round(s0.c[0] + k*(s1.c[0]-s0.c[0]));
-  const g = Math.round(s0.c[1] + k*(s1.c[1]-s0.c[1]));
-  const b = Math.round(s0.c[2] + k*(s1.c[2]-s0.c[2]));
-
-  return `rgba(${r},${g},${b},0.85)`;
-}
-
-
-// --------------------------------
-// Fit view
-// --------------------------------
-function fitView() {
-
-  if (cells.length === 0) return;
-
-  let minX=Infinity, maxX=-Infinity;
-  let minY=Infinity, maxY=-Infinity;
-
-  cells.forEach(c=>{
-    minX=Math.min(minX,c.x);
-    maxX=Math.max(maxX,c.x+c.dx);
-    minY=Math.min(minY,c.y);
-    maxY=Math.max(maxY,c.y+c.dy);
-  });
-
-  borders.forEach(line=>{
-    line.forEach(([x,y])=>{
-      minX=Math.min(minX,x);
-      maxX=Math.max(maxX,x);
-      minY=Math.min(minY,y);
-      maxY=Math.max(maxY,y);
-    });
-  });
-
-  const rx=maxX-minX;
-  const ry=maxY-minY;
-
-  scale=Math.min(canvas.width/rx,canvas.height/ry)*0.9;
-
-  offsetX=canvas.width/2-(minX+rx/2)*scale;
-  offsetY=canvas.height/2+(minY+ry/2)*scale;
-}
-
-
-// --------------------------------
-// Draw
-// --------------------------------
 function draw(){
 
-  ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  ctx.setTransform(scale,0,0,-scale,offsetX,offsetY);
+  for(const c of cells){
 
-  // Cells
-  cells.forEach(c=>{
-    ctx.fillStyle=probToColor(c.prob);
-    ctx.fillRect(c.x,c.y,c.dx,c.dy);
-  });
+    const sx = canvas.width/2 + c.x/20000;
+    const sy = canvas.height/2 - c.y/20000;
 
-  // Borders
-  ctx.strokeStyle="white";
-  ctx.lineWidth=1/scale;
+    const dx = c.dx/20000;
+    const dy = c.dy/20000;
 
-  ctx.beginPath();
-
-  borders.forEach(line=>{
-    line.forEach(([x,y],i)=>{
-      if(i===0) ctx.moveTo(x,y);
-      else ctx.lineTo(x,y);
-    });
-  });
-
-  ctx.stroke();
+    ctx.fillStyle = probColor(c.prob);
+    ctx.fillRect(sx,sy,dx,dy);
+  }
 }
 
+// --------------------------------
+// Tooltip (UPDATED DEBUG VERSION)
+// --------------------------------
 
-// --------------------------------
-// Screen → LCC
-// --------------------------------
-function screenToLCC(px,py){
-  return {
-    x:(px-offsetX)/scale,
-    y:-(py-offsetY)/scale
-  };
-}
-
-
-// --------------------------------
-// Tooltip
-// --------------------------------
 canvas.addEventListener("mousemove",e=>{
 
-  const {x,y}=screenToLCC(e.offsetX,e.offsetY);
+  const {x,y} = screenToLCC(e.offsetX,e.offsetY);
 
   let hit=null;
 
   for(const c of cells){
 
-    if(x>=c.x&&x<=c.x+c.dx&&y>=c.y&&y<=c.y+c.dy){
+    if(x>=c.x && x<=c.x+c.dx && y>=c.y && y<=c.y+c.dy){
       hit=c;
       break;
     }
@@ -262,55 +166,24 @@ canvas.addEventListener("mousemove",e=>{
     tooltip.style.left=(e.pageX+12)+"px";
     tooltip.style.top=(e.pageY+12)+"px";
 
-    tooltip.innerHTML=`Probability: ${(hit.prob*100).toFixed(4)}%`;
+    tooltip.innerHTML = `
+      <b>Tornado Probability</b><br>
+      ${(hit.prob*100).toFixed(5)} %<br><br>
+
+      <b>Wind Components</b><br>
+      U: ${hit.u?.toFixed(3)} m/s<br>
+      V: ${hit.v?.toFixed(3)} m/s<br><br>
+
+      <b>Grid Cell</b><br>
+      x: ${hit.x.toFixed(0)}<br>
+      y: ${hit.y.toFixed(0)}
+    `;
 
   }else{
 
     tooltip.style.display="none";
   }
-});
 
-
-// --------------------------------
-// Zoom
-// --------------------------------
-canvas.addEventListener("wheel",e=>{
-
-  e.preventDefault();
-
-  const z=e.deltaY<0?1.15:0.87;
-
-  offsetX=e.offsetX-z*(e.offsetX-offsetX);
-  offsetY=e.offsetY-z*(e.offsetY-offsetY);
-
-  scale*=z;
-
-  draw();
-});
-
-
-// --------------------------------
-// Pan
-// --------------------------------
-canvas.addEventListener("mousedown",e=>{
-  dragging=true;
-  lastX=e.clientX;
-  lastY=e.clientY;
-});
-
-window.addEventListener("mouseup",()=>dragging=false);
-
-window.addEventListener("mousemove",e=>{
-
-  if(!dragging) return;
-
-  offsetX+=e.clientX-lastX;
-  offsetY+=e.clientY-lastY;
-
-  lastX=e.clientX;
-  lastY=e.clientY;
-
-  draw();
 });
 
 </script>
