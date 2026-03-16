@@ -27,6 +27,7 @@ COEFFS = {
     "HLCY": 0.008318690761993085
 }
 
+# US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -35,17 +36,11 @@ os.makedirs("map/data", exist_ok=True)
 # ================= TIME LOGIC =================
 
 def get_target_cycle():
-
     now = datetime.datetime.utcnow()
-
-    # RAP files typically appear ~50 minutes after the hour
     run_time = now - datetime.timedelta(hours=1)
-
     date = run_time.strftime("%Y%m%d")
     hour = run_time.strftime("%H")
-
     return date, hour
-
 
 DATE, HOUR = get_target_cycle()
 FCST = "01"
@@ -53,23 +48,16 @@ FCST = "01"
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-
-print("Using RAP run:", DATE, HOUR+"z", "F01")
+print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
-
 def url_exists(url):
-    try:
-        r = requests.head(url, timeout=10)
-        return r.status_code == 200
-    except:
-        return False
-
+    r = requests.head(url)
+    return r.status_code == 200
 
 if not url_exists(RAP_URL):
     print("RAP file not ready yet. Skipping.")
     exit(0)
-
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("Downloaded RAP GRIB2")
@@ -78,79 +66,43 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
-
     for g in grbs:
-
         if g.shortName.lower() != shortname.lower():
             continue
-
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
-
         if bottom is not None and top is not None:
-
             if not hasattr(g, "bottomLevel"):
                 continue
-
-            if abs(g.bottomLevel-bottom) > 1:
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
-
-            if abs(g.topLevel-top) > 1:
-                continue
-
         return g
-
     raise RuntimeError(f"{shortname} not found")
 
-
-# ================= VARIABLES =================
-
-grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer")
+# ================= PICK VARIABLES =================
 
 grbs.seek(0)
-cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer")
+cape_msg  = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 18000)
+cin_msg   = pick_var(grbs, "cin",  "pressureFromGroundLayer", 0, 18000)
+hlcy_msg  = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+t2_msg    = pick_var(grbs, "2t", "heightAboveGround", 2, 2)
+d2_msg    = pick_var(grbs, "2d", "heightAboveGround", 2, 2)
+u10_msg   = pick_var(grbs, "10u", "heightAboveGround", 10, 10)
+v10_msg   = pick_var(grbs, "10v", "heightAboveGround", 10, 10)
+u500_msg  = pick_var(grbs, "u", "isobaricInhPa", 500, 500)
+v500_msg  = pick_var(grbs, "v", "isobaricInhPa", 500, 500)
 
-grbs.seek(0)
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
-
-# Optional extracted fields (for future model improvements)
-
-grbs.seek(0)
-t2_msg = pick_var(grbs, "2t", "heightAboveGround")
-
-grbs.seek(0)
-d2_msg = pick_var(grbs, "2d", "heightAboveGround")
-
-grbs.seek(0)
-u10_msg = pick_var(grbs, "10u", "heightAboveGround")
-
-grbs.seek(0)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround")
-
-grbs.seek(0)
-u500_msg = pick_var(grbs, "u", "isobaricInhPa")
-
-grbs.seek(0)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa")
-
-# ================= ARRAYS =================
-
-cape = np.nan_to_num(cape_msg.values)
-cin = np.nan_to_num(cin_msg.values)
-hlcy = np.nan_to_num(hlcy_msg.values)
-
-# extracted but unused for now
-t2 = np.nan_to_num(t2_msg.values)
-td2 = np.nan_to_num(d2_msg.values)
-u10 = np.nan_to_num(u10_msg.values)
-v10 = np.nan_to_num(v10_msg.values)
-u500 = np.nan_to_num(u500_msg.values)
-v500 = np.nan_to_num(v500_msg.values)
-
-# ================= GRID =================
+# Convert to numpy arrays, replace NaN with 0
+cape  = np.nan_to_num(cape_msg.values)
+cin   = np.nan_to_num(cin_msg.values)
+hlcy  = np.nan_to_num(hlcy_msg.values)
+t2    = np.nan_to_num(t2_msg.values)
+d2    = np.nan_to_num(d2_msg.values)
+u10   = np.nan_to_num(u10_msg.values)
+v10   = np.nan_to_num(v10_msg.values)
+u500  = np.nan_to_num(u500_msg.values)
+v500  = np.nan_to_num(v500_msg.values)
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
@@ -167,82 +119,61 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= MODEL =================
+# ================= CALC PROB =================
 
-linear = (
-    INTERCEPT
-    + COEFFS["CAPE"] * cape
-    + COEFFS["CIN"] * cin
-    + COEFFS["HLCY"] * hlcy
-)
-
+linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
 prob = 1 / (1 + np.exp(-linear))
 
-# ================= LOAD CONUS =================
+# ================= DOWNLOAD CONUS SHAPE =================
 
 def download_shapefile(url, folder):
-
     resp = requests.get(url)
     resp.raise_for_status()
-
     z = zipfile.ZipFile(io.BytesIO(resp.content))
     z.extractall(folder)
-
-    shp = [f for f in z.namelist() if f.endswith(".shp")][0]
-
-    return gpd.read_file(f"{folder}/{shp}")
-
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+    return gpd.read_file(f"{folder}/{shp_file}")
 
 print("Downloading CONUS shapefile...")
-
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
-
-lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
-
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
 lower48_lcc = lower48.to_crs(proj_lcc.srs)
-
 conus_poly = lower48_lcc.unary_union
-
 prepared_conus = prep(conus_poly)
 
-# ================= FILTER GRID =================
+# ================= FILTER CELLS =================
 
 print("Filtering grid cells to CONUS...")
-
 features = []
-
 rows, cols = prob.shape
 
 for i in range(rows):
     for j in range(cols):
-
-        x = x_vals[i, j]
-        y = y_vals[i, j]
-
-        if j < cols-1:
-            dx = abs(x_vals[i, j+1] - x)
-        else:
-            dx = abs(x - x_vals[i, j-1])
-
-        if i < rows-1:
-            dy = abs(y_vals[i+1, j] - y)
-        else:
-            dy = abs(y - y_vals[i-1, j])
-
+        x = x_vals[i,j]
+        y = y_vals[i,j]
+        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
+        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
+        dx, dy = abs(dx), abs(dy)
         cell_box = box(x, y, x+dx, y+dy)
-
         if prepared_conus.intersects(cell_box):
-
             features.append({
                 "x": float(x),
                 "y": float(y),
                 "dx": float(dx),
                 "dy": float(dy),
-                "prob": float(prob[i, j])
+                "prob": float(prob[i,j]),
+                "cape": float(cape[i,j]),
+                "cin": float(cin[i,j]),
+                "hlcy": float(hlcy[i,j]),
+                "t2": float(t2[i,j]),
+                "d2": float(d2[i,j]),
+                "u10": float(u10[i,j]),
+                "v10": float(v10[i,j]),
+                "u500": float(u500[i,j]),
+                "v500": float(v500[i,j])
             })
 
-
-print("Cells kept:", len(features))
+print(f"Kept {len(features)} cells inside or touching CONUS.")
 
 # ================= OUTPUT =================
 
