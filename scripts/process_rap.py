@@ -1,187 +1,266 @@
 import os
-import json
-import requests
-from datetime import datetime, timedelta
+import urllib.request
 import pygrib
 import numpy as np
+import json
+import datetime
+import requests
+import zipfile
+import io
 
-OUT_JSON = "map/data/tornado_prob_lcc.json"
-TMP_GRIB = "rap.grib2"
+import geopandas as gpd
+from shapely.geometry import box
+from shapely.prepared import prep
+from pyproj import Proj
 
-# -------------------------------------------------
-# Find latest available RAP run
-# -------------------------------------------------
+# ================= CONFIG =================
 
-now = datetime.utcnow()
+DATA_DIR = "data"
+GRIB_PATH = "data/rap.grib2"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-rap_url = None
-run_hour = None
-date_str = None
+INTERCEPT = -6.274846902965728
 
-for h in range(0, 6):
-    test_time = now - timedelta(hours=h)
+COEFFS = {
+    "CAPE": 0.0007852504286701655,
+    "CIN": -0.003028035273017941,
+    "HLCY": 0.008318690761993085
+}
 
-    date_str = test_time.strftime("%Y%m%d")
-    run_hour = test_time.hour
+CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
-    url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date_str}/rap.t{run_hour:02d}z.awip32f01.grib2"
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-    r = requests.head(url)
+# ================= TIME LOGIC =================
 
-    if r.status_code == 200:
-        rap_url = url
-        break
+def get_target_cycle():
 
-if rap_url is None:
-    raise RuntimeError("No RAP run found in last 6 hours")
+    now = datetime.datetime.utcnow()
 
-print(f"Using RAP run: {date_str} {run_hour:02d}z F01")
-print("URL:", rap_url)
+    # RAP files typically appear ~50 minutes after the hour
+    run_time = now - datetime.timedelta(hours=1)
 
-# -------------------------------------------------
-# Download GRIB
-# -------------------------------------------------
+    date = run_time.strftime("%Y%m%d")
+    hour = run_time.strftime("%H")
 
-r = requests.get(rap_url)
-r.raise_for_status()
+    return date, hour
 
-with open(TMP_GRIB, "wb") as f:
-    f.write(r.content)
 
+DATE, HOUR = get_target_cycle()
+FCST = "01"
+
+# ================= DOWNLOAD RAP =================
+
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
+print("Using RAP run:", DATE, HOUR+"z", "F01")
+print("URL:", RAP_URL)
+
+
+def url_exists(url):
+    try:
+        r = requests.head(url, timeout=10)
+        return r.status_code == 200
+    except:
+        return False
+
+
+if not url_exists(RAP_URL):
+    print("RAP file not ready yet. Skipping.")
+    exit(0)
+
+
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 print("Downloaded RAP GRIB2")
 
-# -------------------------------------------------
-# Open GRIB
-# -------------------------------------------------
+# ================= LOAD GRIB =================
 
-grbs = pygrib.open(TMP_GRIB)
+grbs = pygrib.open(GRIB_PATH)
 
-# -------------------------------------------------
-# Variable selector
-# -------------------------------------------------
 
-def pick_var(grbs, shortName, typeOfLevel=None, level=None):
-
-    grbs.seek(0)  # reset iterator
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
 
     for g in grbs:
 
-        if g.shortName != shortName:
+        if g.shortName.lower() != shortname.lower():
             continue
 
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
 
-        if level is not None and g.level != level:
-            continue
+        if bottom is not None and top is not None:
+
+            if not hasattr(g, "bottomLevel"):
+                continue
+
+            if abs(g.bottomLevel-bottom) > 1:
+                continue
+
+            if abs(g.topLevel-top) > 1:
+                continue
 
         return g
 
-    raise RuntimeError(
-        f"Variable not found: shortName={shortName}, typeOfLevel={typeOfLevel}, level={level}"
-    )
+    raise RuntimeError(f"{shortname} not found")
 
-# -------------------------------------------------
-# Extract variables
-# -------------------------------------------------
 
-cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", level=18000)
-cin_msg  = pick_var(grbs, "cin",  "pressureFromGroundLayer", level=18000)
+# ================= VARIABLES =================
 
-hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", level=1000)
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer")
 
-t2_msg  = pick_var(grbs, "2t",  "heightAboveGround", level=2)
-td2_msg = pick_var(grbs, "2d",  "heightAboveGround", level=2)
+grbs.seek(0)
+cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer")
 
-u10_msg = pick_var(grbs, "10u", "heightAboveGround", level=10)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround", level=10)
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", level=500)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", level=500)
+# Optional extracted fields (for future model improvements)
 
-# -------------------------------------------------
-# Grid + projection
-# -------------------------------------------------
+grbs.seek(0)
+t2_msg = pick_var(grbs, "2t", "heightAboveGround")
+
+grbs.seek(0)
+d2_msg = pick_var(grbs, "2d", "heightAboveGround")
+
+grbs.seek(0)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround")
+
+grbs.seek(0)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround")
+
+grbs.seek(0)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa")
+
+grbs.seek(0)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa")
+
+# ================= ARRAYS =================
+
+cape = np.nan_to_num(cape_msg.values)
+cin = np.nan_to_num(cin_msg.values)
+hlcy = np.nan_to_num(hlcy_msg.values)
+
+# extracted but unused for now
+t2 = np.nan_to_num(t2_msg.values)
+td2 = np.nan_to_num(d2_msg.values)
+u10 = np.nan_to_num(u10_msg.values)
+v10 = np.nan_to_num(v10_msg.values)
+u500 = np.nan_to_num(u500_msg.values)
+v500 = np.nan_to_num(v500_msg.values)
+
+# ================= GRID =================
 
 lats, lons = cape_msg.latlons()
-projparams = cape_msg.projparams
+params = cape_msg.projparams
 
-dx = cape_msg["DxInMetres"]
-dy = cape_msg["DyInMetres"]
+proj_lcc = Proj(
+    proj="lcc",
+    lat_1=params["lat_1"],
+    lat_2=params["lat_2"],
+    lat_0=params["lat_0"],
+    lon_0=params["lon_0"],
+    a=params.get("a", 6371229),
+    b=params.get("b", 6371229)
+)
 
-# -------------------------------------------------
-# Values
-# -------------------------------------------------
+x_vals, y_vals = proj_lcc(lons, lats)
 
-cape = cape_msg.values
-cin  = cin_msg.values
-hlcy = hlcy_msg.values
+# ================= MODEL =================
 
-t2  = t2_msg.values
-td2 = td2_msg.values
+linear = (
+    INTERCEPT
+    + COEFFS["CAPE"] * cape
+    + COEFFS["CIN"] * cin
+    + COEFFS["HLCY"] * hlcy
+)
 
-u10 = u10_msg.values
-v10 = v10_msg.values
+prob = 1 / (1 + np.exp(-linear))
 
-u500 = u500_msg.values
-v500 = v500_msg.values
+# ================= LOAD CONUS =================
 
-# -------------------------------------------------
-# Derived parameters
-# -------------------------------------------------
+def download_shapefile(url, folder):
 
-lcl = (t2 - td2) * 125
+    resp = requests.get(url)
+    resp.raise_for_status()
 
-shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    z.extractall(folder)
 
-# -------------------------------------------------
-# Build grid cells
-# -------------------------------------------------
+    shp = [f for f in z.namelist() if f.endswith(".shp")][0]
+
+    return gpd.read_file(f"{folder}/{shp}")
+
+
+print("Downloading CONUS shapefile...")
+
+states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
+
+lower48_lcc = lower48.to_crs(proj_lcc.srs)
+
+conus_poly = lower48_lcc.unary_union
+
+prepared_conus = prep(conus_poly)
+
+# ================= FILTER GRID =================
+
+print("Filtering grid cells to CONUS...")
 
 features = []
 
-ny, nx = cape.shape
+rows, cols = prob.shape
 
-for j in range(ny):
-    for i in range(nx):
+for i in range(rows):
+    for j in range(cols):
 
-        features.append({
-            "x": float(i * dx),
-            "y": float(j * dy),
-            "dx": float(dx),
-            "dy": float(dy),
+        x = x_vals[i, j]
+        y = y_vals[i, j]
 
-            "cape": float(cape[j, i]),
-            "cin": float(cin[j, i]),
-            "hlcy": float(hlcy[j, i]),
+        if j < cols-1:
+            dx = abs(x_vals[i, j+1] - x)
+        else:
+            dx = abs(x - x_vals[i, j-1])
 
-            "t2": float(t2[j, i]),
-            "td2": float(td2[j, i]),
+        if i < rows-1:
+            dy = abs(y_vals[i+1, j] - y)
+        else:
+            dy = abs(y - y_vals[i-1, j])
 
-            "lcl": float(lcl[j, i]),
-            "shear": float(shear[j, i])
-        })
+        cell_box = box(x, y, x+dx, y+dy)
 
-# -------------------------------------------------
-# Save JSON with projection
-# -------------------------------------------------
+        if prepared_conus.intersects(cell_box):
+
+            features.append({
+                "x": float(x),
+                "y": float(y),
+                "dx": float(dx),
+                "dy": float(dy),
+                "prob": float(prob[i, j])
+            })
+
+
+print("Cells kept:", len(features))
+
+# ================= OUTPUT =================
+
+valid_start = f"{int(HOUR):02d}:00"
+valid_end = f"{(int(HOUR)+1)%24:02d}:00"
 
 output = {
-    "projection": {
-        "lat_1": projparams["lat_1"],
-        "lat_2": projparams["lat_2"],
-        "lat_0": projparams["lat_0"],
-        "lon_0": projparams["lon_0"],
-        "a": projparams.get("a", 6371229),
-        "b": projparams.get("b", 6371229)
-    },
+    "run_date": DATE,
+    "run_hour": HOUR,
+    "forecast": "F01",
+    "valid": f"{valid_start}-{valid_end} UTC",
+    "generated": datetime.datetime.utcnow().isoformat()+"Z",
+    "projection": params,
     "features": features
 }
 
-os.makedirs("map/data", exist_ok=True)
-
-with open(OUT_JSON, "w") as f:
+with open(OUTPUT_JSON, "w") as f:
     json.dump(output, f)
 
-print("Saved:", OUT_JSON)
-print("Total cells:", len(features))
+print("Saved:", OUTPUT_JSON)
+print("DONE.")
