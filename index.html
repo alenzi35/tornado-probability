@@ -3,42 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <title>Tornado Probability Map</title>
-
 <style>
-
-body{
-  margin:0;
-  font-family:Arial,Helvetica,sans-serif;
-  background:#111;
-}
-
-canvas{
-  display:block;
-}
-
-#tooltip{
-
-  position:absolute;
-  pointer-events:none;
-  background:rgba(0,0,0,0.85);
-  color:white;
-  padding:8px 10px;
-  font-size:13px;
-  border-radius:4px;
-  display:none;
-  white-space:nowrap;
-}
-
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#111}
+canvas{display:block}
+#tooltip{position:absolute;pointer-events:none;background:rgba(0,0,0,0.85);color:white;padding:8px 10px;font-size:13px;border-radius:4px;display:none;white-space:nowrap}
 </style>
 </head>
-
 <body>
 
 <canvas id="map"></canvas>
 <div id="tooltip"></div>
 
 <script>
-
 const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
@@ -46,147 +22,62 @@ const tooltip = document.getElementById("tooltip");
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-// --------------------------------
-// Lambert Conformal Projection
-// --------------------------------
+// ---------------- LCC projection ----------------
+const LON0=-97,LAT0=38.5,LAT1=38.5,LAT2=38.5,R=6370000,DEG=Math.PI/180;
+const n=Math.sin(LAT1*DEG);
+const F=(Math.cos(LAT1*DEG)*Math.pow(Math.tan(Math.PI/4+LAT1*DEG/2),n))/n;
+const rho0=R*F/Math.pow(Math.tan(Math.PI/4+LAT0*DEG/2),n);
+function lonlatToLCC(lon,lat){const rho=R*F/Math.pow(Math.tan(Math.PI/4+lat*DEG/2),n);const theta=n*(lon-LON0)*DEG;return {x:rho*Math.sin(theta),y:rho0-rho*Math.cos(theta)}}
+function screenToLCC(px,py){return {x:(px-canvas.width/2)*20000,y:(canvas.height/2-py)*20000}}
 
-const LON0 = -97;
-const LAT0 = 38.5;
-const LAT1 = 38.5;
-const LAT2 = 38.5;
-const R = 6370000;
+// ---------------- Color scale ----------------
+function probColor(p){if(p<0.001)return "rgba(0,0,0,0)";const r=Math.min(255,p*40000);const g=50;const b=255-r;return `rgba(${r},${g},${b},0.6)`}
 
-const DEG = Math.PI/180;
-
-const n = Math.sin(LAT1*DEG);
-
-const F = (Math.cos(LAT1*DEG) * Math.pow(Math.tan(Math.PI/4 + LAT1*DEG/2), n)) / n;
-
-const rho0 = R * F / Math.pow(Math.tan(Math.PI/4 + LAT0*DEG/2), n);
-
-function lonlatToLCC(lon,lat){
-
-  const rho = R * F / Math.pow(Math.tan(Math.PI/4 + lat*DEG/2), n);
-  const theta = n * (lon - LON0) * DEG;
-
-  const x = rho * Math.sin(theta);
-  const y = rho0 - rho * Math.cos(theta);
-
-  return {x,y};
-}
-
-// --------------------------------
-// Convert screen coords -> LCC
-// --------------------------------
-
-function screenToLCC(px,py){
-
-  const x = (px - canvas.width/2) * 20000;
-  const y = (canvas.height/2 - py) * 20000;
-
-  return {x,y};
-}
-
-// --------------------------------
-// Color scale
-// --------------------------------
-
-function probColor(p){
-
-  if(p<0.001) return "rgba(0,0,0,0)";
-
-  const r = Math.min(255, p*40000);
-  const g = 50;
-  const b = 255 - r;
-
-  return `rgba(${r},${g},${b},0.6)`;
-}
-
-// --------------------------------
-// Data container
-// --------------------------------
-
-let cells = [];
-
-// --------------------------------
-// Load JSON
-// --------------------------------
-
+// ---------------- Load JSON ----------------
+let cells=[];
 fetch("tornado_prob_lcc.json")
 .then(r=>r.json())
-.then(data=>{
+.then(data=>{cells=data.features;draw();});
 
-  cells = data;
-  draw();
-
-});
-
-// --------------------------------
-// Draw grid
-// --------------------------------
-
+// ---------------- Draw grid ----------------
 function draw(){
-
   ctx.clearRect(0,0,canvas.width,canvas.height);
-
   for(const c of cells){
-
-    const sx = canvas.width/2 + c.x/20000;
-    const sy = canvas.height/2 - c.y/20000;
-
-    const dx = c.dx/20000;
-    const dy = c.dy/20000;
-
-    ctx.fillStyle = probColor(c.prob);
+    const sx=canvas.width/2+c.x/20000;
+    const sy=canvas.height/2-c.y/20000;
+    const dx=c.dx/20000;
+    const dy=c.dy/20000;
+    ctx.fillStyle=probColor(c.prob);
     ctx.fillRect(sx,sy,dx,dy);
   }
 }
 
-// --------------------------------
-// Tooltip (UPDATED DEBUG VERSION)
-// --------------------------------
-
+// ---------------- Tooltip ----------------
 canvas.addEventListener("mousemove",e=>{
-
-  const {x,y} = screenToLCC(e.offsetX,e.offsetY);
-
+  const {x,y}=screenToLCC(e.offsetX,e.offsetY);
   let hit=null;
-
-  for(const c of cells){
-
-    if(x>=c.x && x<=c.x+c.dx && y>=c.y && y<=c.y+c.dy){
-      hit=c;
-      break;
-    }
-  }
-
+  for(const c of cells){if(x>=c.x&&x<=c.x+c.dx&&y>=c.y&&y<=c.y+c.dy){hit=c;break;}}
   if(hit){
-
     tooltip.style.display="block";
     tooltip.style.left=(e.pageX+12)+"px";
     tooltip.style.top=(e.pageY+12)+"px";
-
-    tooltip.innerHTML = `
-      <b>Tornado Probability</b><br>
-      ${(hit.prob*100).toFixed(5)} %<br><br>
-
-      <b>Wind Components</b><br>
-      U: ${hit.u?.toFixed(3)} m/s<br>
-      V: ${hit.v?.toFixed(3)} m/s<br><br>
-
-      <b>Grid Cell</b><br>
-      x: ${hit.x.toFixed(0)}<br>
-      y: ${hit.y.toFixed(0)}
-    `;
-
-  }else{
-
-    tooltip.style.display="none";
-  }
-
+    tooltip.innerHTML=`
+<b>Tornado Probability</b><br>
+${(hit.prob*100).toFixed(3)} %<br><br>
+<b>Environment</b><br>
+CAPE: ${hit.cape.toFixed(1)} J/kg<br>
+CIN: ${hit.cin.toFixed(1)} J/kg<br>
+0–1km SRH: ${hit.hlcy.toFixed(1)} m²/s²<br>
+2m Temp: ${hit.t2.toFixed(1)} °C<br>
+2m Dewpt: ${hit.d2.toFixed(1)} °C<br>
+10m Wind: U=${hit.u10.toFixed(1)} V=${hit.v10.toFixed(1)} m/s<br>
+500 hPa Wind: U=${hit.u500.toFixed(1)} V=${hit.v500.toFixed(1)} m/s<br><br>
+<b>Grid Cell</b><br>
+x: ${hit.x.toFixed(0)}<br>
+y: ${hit.y.toFixed(0)}
+`;
+  }else tooltip.style.display="none";
 });
-
 </script>
-
 </body>
 </html>
