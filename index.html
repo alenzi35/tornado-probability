@@ -233,8 +233,7 @@ canvas.addEventListener("mousemove",e=>{
       `Probability: ${(hit.prob*100).toFixed(4)}%<br>
        CAPE: ${hit.cape?.toFixed(0) ?? "N/A"} J/kg<br>
        CIN: ${hit.cin?.toFixed(0) ?? "N/A"} J/kg<br>
-       SRH: ${hit.srh?.toFixed(0) ?? "N/A"} m²/s²`;
-       DEPR: ${hit.depr?.toFixed(0) ?? "N/A"} °C`
+       SRH: ${hit.hlcy?.toFixed(0) ?? "N/A"} m²/s²`;
 
   }else{
 
@@ -289,5 +288,3 @@ window.addEventListener("mousemove",e=>{
 
 </body>
 </html>
-
-
