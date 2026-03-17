@@ -80,49 +80,16 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         return g
     raise RuntimeError(f"{shortname} not found")
 
-# ===== EXISTING VARIABLES (UNCHANGED) =====
-
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "surface")
-
 grbs.seek(0)
 cin_msg = pick_var(grbs, "cin", "surface")
-
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
 cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
-
-# ===== NEW VARIABLES (ADDED ONLY) =====
-
-grbs.seek(0)
-t2m_msg = pick_var(grbs, "2t", "heightAboveGround", 2, 2)
-
-grbs.seek(0)
-d2m_msg = pick_var(grbs, "2d", "heightAboveGround", 2, 2)
-
-grbs.seek(0)
-u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10, 10)
-
-grbs.seek(0)
-v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10, 10)
-
-grbs.seek(0)
-u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500, 500)
-
-grbs.seek(0)
-v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500, 500)
-
-t2m = np.nan_to_num(t2m_msg.values)
-d2m = np.nan_to_num(d2m_msg.values)
-u10 = np.nan_to_num(u10_msg.values)
-v10 = np.nan_to_num(v10_msg.values)
-u500 = np.nan_to_num(u500_msg.values)
-v500 = np.nan_to_num(v500_msg.values)
-
-# ================= GRID INFO =================
 
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
@@ -180,9 +147,7 @@ for i in range(rows):
         dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
         dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
         dx, dy = abs(dx), abs(dy)
-
         cell_box = box(x, y, x+dx, y+dy)
-
         if prepared_conus.intersects(cell_box):
             features.append({
                 "x": float(x),
