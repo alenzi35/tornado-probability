@@ -19,7 +19,7 @@ DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-INTERCEPT = -11.9
+INTERCEPT = -6.274846902965728
 
 COEFFS = {
     "CAPE": 0.0007852504286701655,
@@ -27,15 +27,7 @@ COEFFS = {
     "HLCY": 0.008318690761993085
 }
 
-# ================= MANUAL DATE (FOR TESTING) =================
-# Set AUTO_TIME = True for automatic runs
-AUTO_TIME = False
-
-MANUAL_DATE = "20240506"
-MANUAL_HOUR = "21"
-
-# ================= CONUS SHAPE =================
-
+# US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -46,20 +38,17 @@ os.makedirs("map/data", exist_ok=True)
 def get_target_cycle():
     now = datetime.datetime.utcnow()
     run_time = now - datetime.timedelta(hours=1)
-    return run_time.strftime("%Y%m%d"), run_time.strftime("%H")
+    date = run_time.strftime("%Y%m%d")
+    hour = run_time.strftime("%H")
+    return date, hour
 
-if AUTO_TIME:
-    DATE, HOUR = get_target_cycle()
-else:
-    DATE, HOUR = MANUAL_DATE, MANUAL_HOUR
-
+DATE, HOUR = get_target_cycle()
 FCST = "01"
-
-print("Using run:", DATE, HOUR)
 
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
 def url_exists(url):
@@ -67,11 +56,11 @@ def url_exists(url):
     return r.status_code == 200
 
 if not url_exists(RAP_URL):
-    print("RAP file not ready.")
+    print("RAP file not ready yet. Skipping.")
     exit(0)
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-print("Downloaded RAP")
+print("Downloaded RAP GRIB2")
 
 # ================= LOAD GRIB =================
 
@@ -86,10 +75,12 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (abs(g.bottomLevel-bottom)<1 and abs(g.topLevel-top)<1):
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
         return g
     raise RuntimeError(f"{shortname} not found")
+
+# ===== EXISTING VARIABLES (UNCHANGED) =====
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "surface")
@@ -104,6 +95,35 @@ cape = np.nan_to_num(cape_msg.values)
 cin = np.nan_to_num(cin_msg.values)
 hlcy = np.nan_to_num(hlcy_msg.values)
 
+# ===== NEW VARIABLES (ADDED ONLY) =====
+
+grbs.seek(0)
+t2m_msg = pick_var(grbs, "2t", "heightAboveGround", 2, 2)
+
+grbs.seek(0)
+d2m_msg = pick_var(grbs, "2d", "heightAboveGround", 2, 2)
+
+grbs.seek(0)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", 10, 10)
+
+grbs.seek(0)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", 10, 10)
+
+grbs.seek(0)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", 500, 500)
+
+grbs.seek(0)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", 500, 500)
+
+t2m = np.nan_to_num(t2m_msg.values)
+d2m = np.nan_to_num(d2m_msg.values)
+u10 = np.nan_to_num(u10_msg.values)
+v10 = np.nan_to_num(v10_msg.values)
+u500 = np.nan_to_num(u500_msg.values)
+v500 = np.nan_to_num(v500_msg.values)
+
+# ================= GRID INFO =================
+
 lats, lons = cape_msg.latlons()
 params = cape_msg.projparams
 
@@ -113,16 +133,16 @@ proj_lcc = Proj(
     lat_2=params["lat_2"],
     lat_0=params["lat_0"],
     lon_0=params["lon_0"],
-    a=params.get("a",6371229),
-    b=params.get("b",6371229)
+    a=params.get("a", 6371229),
+    b=params.get("b", 6371229)
 )
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= CALCULATE PROB =================
+# ================= CALC PROB =================
 
 linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy
-prob = 1/(1+np.exp(-linear))
+prob = 1 / (1 + np.exp(-linear))
 
 # ================= DOWNLOAD CONUS SHAPE =================
 
@@ -131,56 +151,48 @@ def download_shapefile(url, folder):
     resp.raise_for_status()
     z = zipfile.ZipFile(io.BytesIO(resp.content))
     z.extractall(folder)
-    shp = [f for f in z.namelist() if f.endswith(".shp")][0]
-    return gpd.read_file(f"{folder}/{shp}")
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+    return gpd.read_file(f"{folder}/{shp_file}")
 
 print("Downloading CONUS shapefile...")
+states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
-states = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+# Keep only lower 48 states
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
 
-lower48 = states[~states["STUSPS"].isin(["AK","HI","PR"])]
-
+# Project to RAP LCC
 lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
+# Merge into a single CONUS polygon
 conus_poly = lower48_lcc.unary_union
 prepared_conus = prep(conus_poly)
 
-# ================= FILTER GRID CELLS =================
+# ================= FILTER CELLS =================
 
+print("Filtering grid cells to CONUS (intersects polygon)...")
 features = []
-
 rows, cols = prob.shape
 
 for i in range(rows):
     for j in range(cols):
-
         x = x_vals[i,j]
         y = y_vals[i,j]
+        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
+        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
+        dx, dy = abs(dx), abs(dy)
 
-        dx = x_vals[i,j+1]-x if j<cols-1 else x-x_vals[i,j-1]
-        dy = y_vals[i+1,j]-y if i<rows-1 else y-y_vals[i-1,j]
+        cell_box = box(x, y, x+dx, y+dy)
 
-        dx,dy = abs(dx),abs(dy)
-
-        cell = box(x,y,x+dx,y+dy)
-
-        if prepared_conus.intersects(cell):
-
+        if prepared_conus.intersects(cell_box):
             features.append({
                 "x": float(x),
                 "y": float(y),
                 "dx": float(dx),
                 "dy": float(dy),
-
-                "prob": float(prob[i,j]),
-
-                # environmental values for tooltip
-                "CAPE": float(cape[i,j]),
-                "CIN": float(cin[i,j]),
-                "SRH": float(hlcy[i,j])
+                "prob": float(prob[i,j])
             })
 
-print("Cells kept:", len(features))
+print(f"Kept {len(features)} cells inside or touching CONUS.")
 
 # ================= OUTPUT =================
 
@@ -197,8 +209,8 @@ output = {
     "features": features
 }
 
-with open(OUTPUT_JSON,"w") as f:
-    json.dump(output,f)
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(output, f)
 
 print("Saved:", OUTPUT_JSON)
-print("DONE")
+print("DONE.")
