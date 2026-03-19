@@ -50,6 +50,7 @@
 <div id="forecastInfo">Loading forecast…</div>
 
 <script>
+
 const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
@@ -69,10 +70,12 @@ let borders = [];
 // --------------------------------
 // Resize
 // --------------------------------
+
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
+
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
@@ -80,6 +83,7 @@ resizeCanvas();
 // --------------------------------
 // Load borders
 // --------------------------------
+
 fetch("map/data/borders_lcc.json")
   .then(r => r.json())
   .then(data => {
@@ -90,8 +94,9 @@ fetch("map/data/borders_lcc.json")
 
 
 // --------------------------------
-// Load cells
+// Load probability grid
 // --------------------------------
+
 fetch("map/data/tornado_prob_lcc.json")
   .then(r => r.json())
   .then(data => {
@@ -118,26 +123,29 @@ fetch("map/data/tornado_prob_lcc.json")
 
 
 // --------------------------------
-// Discrete color scale
+// Discrete probability colors
 // --------------------------------
+
 function probToColor(p) {
+
   if (p < 0.004) return 'white';
-  else if (p >= 0.004 && p <= 0.01) return 'green';
-  else if (p > 0.01 && p <= 0.02) return 'brown';
-  else if (p > 0.02) return 'yellow';
-  else return 'white';
+  else if (p <= 0.01) return 'green';
+  else if (p <= 0.02) return 'brown';
+  else return 'yellow';
+
 }
 
 
 // --------------------------------
-// Fit view
+// Fit map to screen
 // --------------------------------
+
 function fitView() {
 
   if (cells.length === 0) return;
 
-  let minX=Infinity, maxX=-Infinity;
-  let minY=Infinity, maxY=-Infinity;
+  let minX=Infinity,maxX=-Infinity;
+  let minY=Infinity,maxY=-Infinity;
 
   cells.forEach(c=>{
     minX=Math.min(minX,c.x);
@@ -162,12 +170,14 @@ function fitView() {
 
   offsetX=canvas.width/2-(minX+rx/2)*scale;
   offsetY=canvas.height/2+(minY+ry/2)*scale;
+
 }
 
 
 // --------------------------------
-// Draw
+// Draw map
 // --------------------------------
+
 function draw(){
 
   ctx.setTransform(1,0,0,1,0,0);
@@ -197,8 +207,9 @@ function draw(){
 
 
 // --------------------------------
-// Screen → LCC
+// Screen → LCC conversion
 // --------------------------------
+
 function screenToLCC(px,py){
   return {
     x:(px-offsetX)/scale,
@@ -208,8 +219,9 @@ function screenToLCC(px,py){
 
 
 // --------------------------------
-// Tooltip
+// Tooltip environmental probe
 // --------------------------------
+
 canvas.addEventListener("mousemove",e=>{
 
   const {x,y}=screenToLCC(e.offsetX,e.offsetY);
@@ -229,22 +241,37 @@ canvas.addEventListener("mousemove",e=>{
     tooltip.style.left=(e.pageX+12)+"px";
     tooltip.style.top=(e.pageY+12)+"px";
 
-    tooltip.innerHTML=
-      `Probability: ${(hit.prob*100).toFixed(4)}%<br>
-       CAPE: ${hit.cape?.toFixed(0) ?? "N/A"} J/kg<br>
-       CIN: ${hit.cin?.toFixed(0) ?? "N/A"} J/kg<br>
-       SRH: ${hit.hlcy?.toFixed(0) ?? "N/A"} m²/s²`;
+    tooltip.innerHTML =
+`<b>Tornado Probability</b><br>
+${(hit.prob*100).toFixed(3)} %<br><br>
 
-  }else{
+<b>Thermodynamics</b><br>
+CAPE: ${hit.cape?.toFixed(0)} J/kg<br>
+CIN: ${hit.cin?.toFixed(0)} J/kg<br>
+SRH (0-1km): ${hit.hlcy?.toFixed(0)} m²/s²<br><br>
+
+<b>Surface</b><br>
+2m Temp: ${(hit.t2m-273.15).toFixed(1)} °C<br>
+2m Dewpoint: ${(hit.d2m-273.15).toFixed(1)} °C<br>
+10m Wind: ${hit.u10?.toFixed(1)} / ${hit.v10?.toFixed(1)} m/s<br><br>
+
+<b>500 mb Wind</b><br>
+U: ${hit.u500?.toFixed(1)} m/s<br>
+V: ${hit.v500?.toFixed(1)} m/s`;
+
+  } else {
 
     tooltip.style.display="none";
+
   }
+
 });
 
 
 // --------------------------------
 // Zoom
 // --------------------------------
+
 canvas.addEventListener("wheel",e=>{
 
   e.preventDefault();
@@ -257,12 +284,14 @@ canvas.addEventListener("wheel",e=>{
   scale*=z;
 
   draw();
+
 });
 
 
 // --------------------------------
 // Pan
 // --------------------------------
+
 canvas.addEventListener("mousedown",e=>{
   dragging=true;
   lastX=e.clientX;
@@ -282,6 +311,7 @@ window.addEventListener("mousemove",e=>{
   lastY=e.clientY;
 
   draw();
+
 });
 
 </script>
