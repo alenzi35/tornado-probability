@@ -92,10 +92,10 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=Non
 # ================= EXISTING VARIABLES =================
 
 grbs.seek(0)
-cape_msg = pick_var(grbs, "cape", "surface")
+cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
 
 grbs.seek(0)
-cin_msg = pick_var(grbs, "cin", "surface")
+cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000)
 
 grbs.seek(0)
 hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
