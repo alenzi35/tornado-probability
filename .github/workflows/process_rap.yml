@@ -40,21 +40,25 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install \
-            pygrib \
-            numpy \
-            pandas \
-            requests
+          pip install pygrib numpy pandas requests
 
       # ----------------------------
-      # 5. Build dataset
+      # 5. Debug CSV presence (optional but recommended)
+      # ----------------------------
+      - name: Check CSV
+        run: |
+          echo "Listing map/data contents:"
+          ls -l map/data
+
+      # ----------------------------
+      # 6. Build dataset
       # ----------------------------
       - name: Build tornado dataset
         run: |
           python scripts/build_unified_dataset.py
 
       # ----------------------------
-      # 6. Commit dataset
+      # 7. Commit dataset
       # ----------------------------
       - name: Commit and push dataset
         run: |
