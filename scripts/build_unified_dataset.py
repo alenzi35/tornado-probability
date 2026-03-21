@@ -8,7 +8,7 @@ import pygrib
 
 # ================= FILE PATHS =================
 
-TORNADO_CSV = "data/tornado_events.csv"
+TORNADO_CSV = "data/1hr_samples.csv"
 OUTPUT_JSON = "map/data/rap_unified_dataset.json"
 
 CACHE_DIR = "data/rap_cache"
