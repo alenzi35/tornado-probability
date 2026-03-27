@@ -53,12 +53,6 @@ jobs:
       # ----------------------------
       # 6. Generate non-tornado samples
       # ----------------------------
-      - name: Process RAP data
-        run: |
-          python scripts/process_rap.py
-      # ----------------------------
-      # 6. Generate non-tornado samples
-      # ----------------------------
       - name: Generate non-tornado dataset
         run: |
           python scripts/generate_non_tornado_samples.py
