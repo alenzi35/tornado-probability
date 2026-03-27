@@ -1,30 +1,30 @@
 import os
-import pygrib
 import urllib.request
+import pygrib
 import numpy as np
 import pandas as pd
 import datetime
 import requests
 
 # ================= CONFIG =================
+DATA_DIR = "data"
 OUTPUT_CSV = "map/data/rap_non_tornado_samples.csv"
+
+os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= NON-TORNADO DATES =================
-NON_TORNADO_DATES = [
-    ("2025-06-21", "16"),
-    ("2025-07-02", "22"),
-    ("2025-08-25", "18"),
-    ("2025-10-08", "15")
+# ================= NON-TORNADO TIMES =================
+non_tornado_times = [
+    {"date":"20250621","hour":"16"},
+    {"date":"20250702","hour":"22"},
+    {"date":"20250825","hour":"18"},
+    {"date":"20251008","hour":"15"}
 ]
 
-# ================= RAP DOWNLOAD URL =================
-def rap_url(date, hour):
-    ymd = date.replace("-", "")
-    return f"https://noaa-rap-pds.s3.amazonaws.com/rap.{ymd}/rap.t{hour}z.awp130bgrbf00.grib2"
+FCST = "01"  # 1-hour lead time
 
-# ================= VARIABLE PICKER =================
-def pick_var(grbs, shortname, typeOfLevel=None, level=None, bottom=None, top=None):
+# ================= PICK VAR FUNCTION (from process_rap.py) =================
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
     for g in grbs:
         if g.shortName.lower() != shortname.lower():
             continue
@@ -41,63 +41,81 @@ def pick_var(grbs, shortname, typeOfLevel=None, level=None, bottom=None, top=Non
         return g
     raise RuntimeError(f"{shortname} not found")
 
-# ================= PROCESS GRIB =================
-def process_grib(grib_file):
-    print("Processing", grib_file)
-    grbs = pygrib.open(grib_file)
-
-    # ------------------ Extract variables ------------------
-    cape = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000).values
-    cin  = pick_var(grbs, "cin",  "pressureFromGroundLayer", 0, 9000).values
-    srh  = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000).values
-
-    t2m  = pick_var(grbs, "2t", "heightAboveGround", level=2).values
-    d2m  = pick_var(grbs, "2d", "heightAboveGround", level=2).values
-
-    # Compute LCL (approximation)
-    lcl = (t2m - d2m) * 125.0
-
-    u10  = pick_var(grbs, "10u", "heightAboveGround", level=10).values
-    v10  = pick_var(grbs, "10v", "heightAboveGround", level=10).values
-
-    u500 = pick_var(grbs, "u", "isobaricInhPa", level=500).values
-    v500 = pick_var(grbs, "v", "isobaricInhPa", level=500).values
-
-    shear = np.sqrt((u500-u10)**2 + (v500-v10)**2)  # approx 0-6km shear
-
-    rows, cols = cape.shape
-    samples = []
-
-    for i in range(rows):
-        for j in range(cols):
-            samples.append({
-                "CAPE": float(cape[i,j]),
-                "CIN": float(cin[i,j]),
-                "SRH": float(srh[i,j]),
-                "LCL": float(lcl[i,j]),
-                "Shear": float(shear[i,j])
-            })
-
-    return samples
-
-# ================= MAIN =================
+# ================= PROCESS EACH DATE/HOUR =================
 all_samples = []
 
-for date, hour in NON_TORNADO_DATES:
-    url = rap_url(date, hour)
-    local_file = f"data/rap_{date.replace('-','')}_{hour}00.grib2"
+for dt in non_tornado_times:
+    DATE = dt["date"]
+    HOUR = dt["hour"]
 
-    if not os.path.exists(local_file):
-        print("Downloading", url)
-        urllib.request.urlretrieve(url, local_file)
+    print(f"\nProcessing RAP for {DATE} {HOUR}z")
+
+    RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+    local_file = f"{DATA_DIR}/rap_{DATE}_{HOUR}z_f{FCST}.grib2"
+
+    # Download if not already present
+    if not os.path.isfile(local_file):
+        print(f"Downloading {RAP_URL}")
+        urllib.request.urlretrieve(RAP_URL, local_file)
+        print("Download complete")
     else:
-        print("Using cached", local_file)
+        print("File already exists")
 
-    samples = process_grib(local_file)
-    all_samples.extend(samples)
+    # Open GRIB
+    grbs = pygrib.open(local_file)
+
+    # Extract variables (same as process_rap.py)
+    grbs.seek(0)
+    cape = np.nan_to_num(pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000).values)
+    grbs.seek(0)
+    cin = np.nan_to_num(pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000).values)
+    grbs.seek(0)
+    hlcy = np.nan_to_num(pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000).values)
+    grbs.seek(0)
+    t2m = np.nan_to_num(pick_var(grbs, "2t", "heightAboveGround", level=2).values)
+    grbs.seek(0)
+    d2m = np.nan_to_num(pick_var(grbs, "2d", "heightAboveGround", level=2).values)
+    grbs.seek(0)
+    u10 = np.nan_to_num(pick_var(grbs, "10u", "heightAboveGround", level=10).values)
+    grbs.seek(0)
+    v10 = np.nan_to_num(pick_var(grbs, "10v", "heightAboveGround", level=10).values)
+    grbs.seek(0)
+    u500 = np.nan_to_num(pick_var(grbs, "u", "isobaricInhPa", level=500).values)
+    grbs.seek(0)
+    v500 = np.nan_to_num(pick_var(grbs, "v", "isobaricInhPa", level=500).values)
+
+    # Derived variables
+    lcl = (t2m - d2m) * 125  # simple approximation
+    shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
+
+    # Flatten grids and append to list
+    nrows, ncols = cape.shape
+    for i in range(nrows):
+        for j in range(ncols):
+            all_samples.append({
+                "date": DATE,
+                "hour": HOUR,
+                "i": i,
+                "j": j,
+                "cape": cape[i,j],
+                "cin": cin[i,j],
+                "hlcy": hlcy[i,j],
+                "t2m": t2m[i,j],
+                "d2m": d2m[i,j],
+                "lcl": lcl[i,j],
+                "u10": u10[i,j],
+                "v10": v10[i,j],
+                "u500": u500[i,j],
+                "v500": v500[i,j],
+                "shear": shear[i,j],
+                "tornado": 0
+            })
+
+    grbs.close()
+    print(f"Added {nrows*ncols} cells for {DATE} {HOUR}z")
 
 # ================= SAVE CSV =================
 df = pd.DataFrame(all_samples)
 df.to_csv(OUTPUT_CSV, index=False)
-print("Saved non-tornado samples to:", OUTPUT_CSV)
-print("Total samples:", len(df))
+print(f"\nSaved non-tornado samples to {OUTPUT_CSV}")
+print("DONE.")
