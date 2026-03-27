@@ -50,8 +50,8 @@ for run in RUN_TIMES:
 
     cape = grbs.select(shortName='cape')[0].values
     cin = grbs.select(shortName='cin')[0].values
-    t = grbs.select(shortName='t', level=2)[0].values
-    td = grbs.select(shortName='dpt', level=2)[0].values
+    t = grbs.select(shortName='2t', level=2)[0].values
+    td = grbs.select(shortName='2d', level=2)[0].values
 
     u10 = grbs.select(shortName='10u')[0].values
     v10 = grbs.select(shortName='10v')[0].values
