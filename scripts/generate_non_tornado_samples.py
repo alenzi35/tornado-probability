@@ -15,10 +15,7 @@ os.makedirs("map/data", exist_ok=True)
 
 # ================= NON-TORNADO TIMES =================
 non_tornado_times = [
-    {"date":"20250621","hour":"16"},
-    {"date":"20250702","hour":"22"},
     {"date":"20250825","hour":"18"},
-    {"date":"20251008","hour":"15"}
 ]
 
 FCST = "01"  # 1-hour lead time
