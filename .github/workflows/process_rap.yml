@@ -49,16 +49,23 @@ jobs:
         run: |
           echo "Listing map/data contents:"
           ls -l map/data
- 
+    
       # ----------------------------
       # 6. Generate non-tornado samples
+      # ----------------------------
+      - name: Generate tornado dataset
+        run: |
+          python scripts/generate_tornado_samples.py
+          
+      # ----------------------------
+      # 7. Generate non-tornado samples
       # ----------------------------
       - name: Generate non-tornado dataset
         run: |
           python scripts/generate_non_tornado_samples.py
 
       # ----------------------------
-      # 7. Commit dataset
+      # 8. Commit dataset
       # ----------------------------
       - name: Commit and push dataset
         run: |
