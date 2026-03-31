@@ -5,21 +5,15 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-# ================= CONFIG =================
-
-INPUT_CSV = "map/data/1hr_samples.csv"
+INPUT_CSV = "map/data/tornado_spatiotemporal.csv"
 OUTPUT_CSV = "map/data/rap_tornado_samples.csv"
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ================= LOAD TORNADO CSV =================
-
 df = pd.read_csv(INPUT_CSV)
 
 samples = []
-
-# ================= GRIB VARIABLE PICKER =================
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
     for g in grbs:
@@ -35,11 +29,9 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
         return g
     raise RuntimeError(f"{shortname} not found")
 
-# ================= MAIN LOOP =================
-
 for _, row in df.iterrows():
 
-    dt = datetime.strptime(f"{row['Date']} {row['Valid time']}", "%Y-%m-%d %H:%M")
+    dt = datetime.strptime(f"{row['Date']} {row['Valid time']}", "%b %d %Y %H:%M")
 
     date = dt.strftime("%Y%m%d")
     hour = dt.strftime("%H")
@@ -70,12 +62,10 @@ for _, row in df.iterrows():
 
     lats, lons = cape_msg.latlons()
 
-    # ================= FIND NEAREST GRID CELL =================
-
     dist = (lats - row["Latitude"])**2 + (lons - row["Longitude"])**2
     i, j = np.unravel_index(np.argmin(dist), dist.shape)
 
-    sample = {
+    samples.append({
         "datetime": dt,
         "latitude": row["Latitude"],
         "longitude": row["Longitude"],
@@ -83,14 +73,10 @@ for _, row in df.iterrows():
         "CIN": float(cin[i,j]),
         "SRH": float(srh[i,j]),
         "tornado": 1
-    }
-
-    samples.append(sample)
-
-# ================= SAVE =================
+    })
 
 out = pd.DataFrame(samples)
 out.to_csv(OUTPUT_CSV, index=False)
 
-print("Saved tornado samples:", OUTPUT_CSV)
-print("Total samples:", len(out))
+print("Saved:", OUTPUT_CSV)
+print("Samples:", len(out))
