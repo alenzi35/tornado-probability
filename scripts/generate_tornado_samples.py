@@ -7,7 +7,7 @@ from datetime import datetime
 
 # ================= CONFIG =================
 
-INPUT_CSV = "map/data/tornado_spatiotemporal.csv"
+INPUT_CSV = "map/data/1hr_samples.csv"
 OUTPUT_CSV = "map/data/rap_tornado_samples.csv"
 
 DATA_DIR = "data"
