@@ -49,94 +49,110 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=Non
 
 # ================= PROCESS EACH TORNADO =================
 
-for _, row in df.iterrows():
+for idx, row in df.iterrows():
 
-    dt = datetime.strptime(f"{row['Date']} {row['Valid time']}", "%b %d %Y %H:%M")
+    try:
 
-    DATE = dt.strftime("%Y%m%d")
-    HOUR = dt.strftime("%H")
+        dt = datetime.strptime(f"{row['Date']} {row['Valid time']}", "%b %d %Y %H:%M")
 
-    print(f"\nProcessing tornado {DATE} {HOUR}z")
+        DATE = dt.strftime("%Y%m%d")
+        HOUR = dt.strftime("%H")
 
-    RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-    local_file = f"{DATA_DIR}/rap_{DATE}_{HOUR}z_f{FCST}.grib2"
+        print(f"\nProcessing tornado {idx+1}/{len(df)}  {DATE} {HOUR}z")
 
-    if not os.path.isfile(local_file):
-        print("Downloading", RAP_URL)
-        urllib.request.urlretrieve(RAP_URL, local_file)
+        RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+        local_file = f"{DATA_DIR}/rap_{DATE}_{HOUR}z_f{FCST}.grib2"
 
-    grbs = pygrib.open(local_file)
+        if not os.path.isfile(local_file):
+            print("Downloading", RAP_URL)
+            urllib.request.urlretrieve(RAP_URL, local_file)
 
-    # ================= VARIABLES =================
+        grbs = pygrib.open(local_file)
 
-    grbs.seek(0)
-    cape = np.nan_to_num(pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000).values)
+        # ================= VARIABLES =================
 
-    grbs.seek(0)
-    cin = np.nan_to_num(pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000).values)
+        grbs.seek(0)
+        cape = np.nan_to_num(pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000).values)
 
-    grbs.seek(0)
-    hlcy = np.nan_to_num(pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000).values)
+        grbs.seek(0)
+        cin = np.nan_to_num(pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000).values)
 
-    grbs.seek(0)
-    t2m = np.nan_to_num(pick_var(grbs, "2t", "heightAboveGround", level=2).values)
+        grbs.seek(0)
+        hlcy = np.nan_to_num(pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000).values)
 
-    grbs.seek(0)
-    d2m = np.nan_to_num(pick_var(grbs, "2d", "heightAboveGround", level=2).values)
+        grbs.seek(0)
+        t2m = np.nan_to_num(pick_var(grbs, "2t", "heightAboveGround", level=2).values)
 
-    grbs.seek(0)
-    u10 = np.nan_to_num(pick_var(grbs, "10u", "heightAboveGround", level=10).values)
+        grbs.seek(0)
+        d2m = np.nan_to_num(pick_var(grbs, "2d", "heightAboveGround", level=2).values)
 
-    grbs.seek(0)
-    v10 = np.nan_to_num(pick_var(grbs, "10v", "heightAboveGround", level=10).values)
+        grbs.seek(0)
+        u10 = np.nan_to_num(pick_var(grbs, "10u", "heightAboveGround", level=10).values)
 
-    grbs.seek(0)
-    u500 = np.nan_to_num(pick_var(grbs, "u", "isobaricInhPa", level=500).values)
+        grbs.seek(0)
+        v10 = np.nan_to_num(pick_var(grbs, "10v", "heightAboveGround", level=10).values)
 
-    grbs.seek(0)
-    v500 = np.nan_to_num(pick_var(grbs, "v", "isobaricInhPa", level=500).values)
+        grbs.seek(0)
+        u500 = np.nan_to_num(pick_var(grbs, "u", "isobaricInhPa", level=500).values)
 
-    # ================= DERIVED VARIABLES =================
+        grbs.seek(0)
+        v500 = np.nan_to_num(pick_var(grbs, "v", "isobaricInhPa", level=500).values)
 
-    lcl = (t2m - d2m) * 125
-    shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
+        # ================= DERIVED VARIABLES =================
 
-    lats, lons = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000).latlons()
+        lcl = (t2m - d2m) * 125
+        shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
 
-    # ================= FIND NEAREST GRID CELL =================
+        lats, lons = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000).latlons()
 
-    dist = (lats - row["Latitude"])**2 + (lons - row["Longitude"])**2
-    i, j = np.unravel_index(np.argmin(dist), dist.shape)
+        # ================= FIND NEAREST GRID CELL =================
 
-    samples.append({
+        dist = (lats - row["Latitude"])**2 + (lons - row["Longitude"])**2
+        i, j = np.unravel_index(np.argmin(dist), dist.shape)
 
-        "date": DATE,
-        "hour": HOUR,
+        sample = {
 
-        "lat": row["Latitude"],
-        "lon": row["Longitude"],
+            "date": DATE,
+            "hour": HOUR,
 
-        "cape": cape[i,j],
-        "cin": cin[i,j],
-        "hlcy": hlcy[i,j],
+            "lat": row["Latitude"],
+            "lon": row["Longitude"],
 
-        "t2m": t2m[i,j],
-        "d2m": d2m[i,j],
+            "cape": cape[i,j],
+            "cin": cin[i,j],
+            "hlcy": hlcy[i,j],
 
-        "lcl": lcl[i,j],
-        "shear": shear[i,j],
+            "t2m": t2m[i,j],
+            "d2m": d2m[i,j],
 
-        "tornado": 1
-    })
+            "lcl": lcl[i,j],
+            "shear": shear[i,j],
 
-    grbs.close()
+            "tornado": 1
+        }
+
+        samples.append(sample)
+
+        grbs.close()
+
+        # ================= SAVE PROGRESS EVERY SAMPLE =================
+
+        pd.DataFrame(samples).to_csv(OUTPUT_CSV, index=False)
+
+        print("Saved sample", idx+1)
+
+    except Exception as e:
+
+        print("ERROR processing row", idx)
+        print(e)
+
+        continue
 
 
-# ================= SAVE =================
+# ================= FINAL SAVE =================
 
 out = pd.DataFrame(samples)
-
 out.to_csv(OUTPUT_CSV, index=False)
 
-print("\nSaved tornado samples:", OUTPUT_CSV)
-print("Total:", len(out))
+print("\nFINAL SAVE:", os.path.abspath(OUTPUT_CSV))
+print("Total samples:", len(out))
