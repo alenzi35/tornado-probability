@@ -51,18 +51,11 @@ jobs:
           ls -l map/data || true
 
       # ----------------------------
-      # 6. Generate tornado samples
+      # 6. Run Logistic Regression
       # ----------------------------
-      - name: Generate tornado dataset
+      - name: Run Logistic Regression
         run: |
-          python scripts/generate_tornado_samples.py
-
-      # ----------------------------
-      # 7. Generate non-tornado samples
-      # ----------------------------
-      - name: Generate non-tornado dataset
-        run: |
-          python scripts/generate_non_tornado_samples.py
+          python scripts/train_lr_model.py
 
       # ----------------------------
       # 8. Verify files exist
