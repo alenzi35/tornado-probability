@@ -1,17 +1,16 @@
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score
+from sklearn.preprocessing import StandardScaler
 
 # ================= LOAD DATA =================
 
 tornado = pd.read_csv("map/data/rap_tornado_samples.csv")
 non_tornado = pd.read_csv("map/data/rap_non_tornado_samples.csv")
 
-df = pd.concat([tornado, non_tornado], ignore_index=True)
+data = pd.concat([tornado, non_tornado], ignore_index=True)
 
-print("Total samples:", len(df))
-print("Tornado samples:", df["tornado"].sum())
+print("Total samples:", len(data))
+print("Tornado samples:", data["tornado"].sum())
 
 # ================= FEATURES =================
 
@@ -23,38 +22,26 @@ features = [
     "shear"
 ]
 
-X = df[features]
-y = df["tornado"]
+X = data[features]
+y = data["tornado"]
 
-# ================= TRAIN TEST SPLIT =================
+# ================= NORMALIZE =================
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    random_state=42,
-    stratify=y
-)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# ================= TRAIN MODEL =================
+# ================= TRAIN LR =================
 
 model = LogisticRegression(max_iter=1000)
 
-model.fit(X_train, y_train)
+model.fit(X_scaled, y)
 
-# ================= EVALUATE =================
+# ================= RESULTS =================
 
-pred = model.predict_proba(X_test)[:,1]
+print("\nIntercept:")
+print(model.intercept_[0])
 
-auc = roc_auc_score(y_test, pred)
-
-print("\nAUC:", auc)
-
-# ================= PRINT EQUATION =================
-
-print("\nLogistic Regression Equation\n")
-
-print("Intercept =", model.intercept_[0])
+print("\nCoefficients:")
 
 for name, coef in zip(features, model.coef_[0]):
-    print(f"{name}: {coef}")
+    print(name, coef)
