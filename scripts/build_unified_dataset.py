@@ -1,60 +1,91 @@
-import json
+```python
 import pandas as pd
-import os
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_auc_score
 
 # ================= FILE PATHS =================
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TORNADO_CSV = "map/data/rap_tornado_samples.csv"
+NON_TORNADO_CSV = "map/data/rap_non_tornado_samples.csv"
 
-TORNADO_CSV = os.path.join(BASE_DIR, "map", "data", "1hr_samples.csv")
-OUTPUT_JSON = os.path.join(BASE_DIR, "map", "data", "rap_unified_dataset.json")
+# ================= LOAD DATA =================
 
-print("Looking for tornado CSV at:", TORNADO_CSV)
+print("Loading datasets...")
 
-# ================= CHECK FILE =================
+tor = pd.read_csv(TORNADO_CSV)
+non_tor = pd.read_csv(NON_TORNADO_CSV)
 
-if not os.path.isfile(TORNADO_CSV):
-    raise FileNotFoundError(f"Tornado CSV not found at {TORNADO_CSV}")
+print(f"Tornado samples: {len(tor)}")
+print(f"Non-tornado samples: {len(non_tor)}")
 
-# ================= LOAD CSV =================
+# Combine
+data = pd.concat([tor, non_tor], ignore_index=True)
 
-print("Loading tornado CSV...")
+print(f"Total samples: {len(data)}")
 
-tornado_df = pd.read_csv(TORNADO_CSV)
+# ================= CLEAN DATA =================
 
-print(f"Loaded {len(tornado_df)} tornado samples.")
+# Drop any NaNs just in case
+data = data.replace([np.inf, -np.inf], np.nan)
+data = data.dropna()
 
-# ================= BUILD DATASET =================
+print(f"Samples after cleaning: {len(data)}")
 
-samples = []
+# ================= OPTIONAL FILTER (HIGH IMPACT) =================
+# Only keep storm-capable environments
 
-for _, row in tornado_df.iterrows():
+data = data[(data["cape"] > 100) & (data["hlcy"] > 50)]
 
-    sample = {
-        "cape": float(row["CAPE"]),
-        "cin": float(row["CIN"]),
-        "srh": float(row["SRH"]),
-        "lcl": float(row["LCL"]),
-        "shear": float(row["Shear"]),
-        "tornado": 1
-    }
+print(f"Samples after environment filter: {len(data)}")
 
-    samples.append(sample)
+# ================= FEATURES =================
 
-# ================= SAVE UNIFIED DATASET =================
+features = [
+    "cape",
+    "cin",
+    "hlcy",
+    "lcl",
+    "shear"
+]
 
-output = {
-    "total_samples": len(samples),
-    "tornado_count": len(samples),
-    "non_tornado_count": 0,
-    "samples": samples
-}
+X = data[features]
+y = data["tornado"]
 
-with open(OUTPUT_JSON, "w") as f:
-    json.dump(output, f)
+# ================= NORMALIZE =================
 
-print("\nUnified dataset saved to:", OUTPUT_JSON)
-print("Total samples:", output["total_samples"])
-print("Tornado samples:", output["tornado_count"])
-print("Non-tornado samples:", output["non_tornado_count"])
-print("DONE.")
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# ================= TRAIN MODEL =================
+
+print("\nTraining logistic regression...")
+
+model = LogisticRegression(
+    max_iter=1000,
+    class_weight="balanced"
+)
+
+model.fit(X_scaled, y)
+
+# ================= OUTPUT RESULTS =================
+
+print("\n===== MODEL RESULTS =====")
+
+print("\nIntercept:")
+print(model.intercept_[0])
+
+print("\nCoefficients:")
+for name, coef in zip(features, model.coef_[0]):
+    print(f"{name}: {coef}")
+
+# ================= MODEL SKILL =================
+
+probs = model.predict_proba(X_scaled)[:, 1]
+auc = roc_auc_score(y, probs)
+
+print("\nAUC Score:", auc)
+
+print("\nDONE.")
+```
