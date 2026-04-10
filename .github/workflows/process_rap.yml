@@ -1,5 +1,3 @@
-pip install pygrib numpy pandas requests scikit-learn
-
 name: Build Tornado Training Dataset
 
 on:
