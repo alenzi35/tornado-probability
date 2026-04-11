@@ -32,7 +32,13 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libeccodes-dev
+          sudo apt-get install -y \
+            libeccodes-dev \
+            gdal-bin \
+            libgdal-dev \
+            libproj-dev \
+            proj-data \
+            proj-bin
 
       # ----------------------------
       # 4. Install Python packages
@@ -40,7 +46,17 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pygrib numpy pandas requests scikit-learn
+
+          python -m pip install \
+            pygrib \
+            numpy \
+            pandas \
+            requests \
+            scikit-learn \
+            geopandas \
+            shapely \
+            pyproj \
+            fiona
 
           echo "Installed packages:"
           python -m pip list
@@ -54,7 +70,14 @@ jobs:
           ls -l map/data || true
 
       # ----------------------------
-      # 6. Run Logistic Regression
+      # 6. Regenerate non-tornado dataset
+      # ----------------------------
+      - name: Generate non-tornado dataset
+        run: |
+          python scripts/generate_non_tornado_samples.py
+
+      # ----------------------------
+      # 7. Train Logistic Regression
       # ----------------------------
       - name: Run Logistic Regression
         run: |
@@ -69,14 +92,14 @@ jobs:
           ls -l map/data
 
       # ----------------------------
-      # 9. Commit datasets
+      # 9. Commit datasets / model outputs
       # ----------------------------
       - name: Commit and push datasets
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          git add map/data/*.csv
+          git add map/data/*
 
           git commit -m "Auto update RAP training datasets" || echo "Nothing to commit"
 
