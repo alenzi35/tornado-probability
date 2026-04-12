@@ -2,20 +2,64 @@ import os
 import urllib.request
 import pygrib
 import numpy as np
-import pandas as pd
-from datetime import datetime
+import json
+import datetime
+import requests
+import zipfile
+import io
 
-INPUT_CSV = "map/data/1hr_samples.csv"
-OUTPUT_CSV = "map/data/rap_tornado_samples.csv"
+import geopandas as gpd
+from shapely.geometry import box
+from shapely.prepared import prep
+from pyproj import Proj
+
+# ================= CONFIG =================
 
 DATA_DIR = "data"
+GRIB_PATH = "data/rap.grib2"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
+
+INTERCEPT = -6.556067882978137
+
+COEFFS = {
+    "cape": 0.9580178020907629,
+    "cin": 0.5818863512638779,
+    "hlcy": 0.4664078257171576,
+    "lcl": -1.2597548520852844,
+    "shear": 1.0430428373485474
+}
+
+CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
+
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-df = pd.read_csv(INPUT_CSV)
+# ================= TIME LOGIC =================
 
-samples = []
+def get_target_cycle():
+    now = datetime.datetime.utcnow()
+    run_time = now - datetime.timedelta(hours=1)
+    return run_time.strftime("%Y%m%d"), run_time.strftime("%H")
 
-# ================= VARIABLE PICKER =================
+DATE, HOUR = get_target_cycle()
+FCST = "01"
+
+# ================= DOWNLOAD RAP =================
+
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
+print("Downloading:", RAP_URL)
+
+r = requests.head(RAP_URL)
+if r.status_code != 200:
+    print("RAP file unavailable.")
+    exit(0)
+
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+
+# ================= LOAD GRIB =================
+
+grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
 
@@ -34,111 +78,169 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=Non
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (abs(g.bottomLevel-bottom) < 1 and abs(g.topLevel-top) < 1):
+            if not (
+                abs(g.bottomLevel - bottom) < 1 and
+                abs(g.topLevel - top) < 1
+            ):
                 continue
 
         return g
 
     raise RuntimeError(f"{shortname} not found")
 
-# ================= LOOP THROUGH TORNADOES =================
+# ================= EXTRACT VARIABLES =================
 
-for _, row in df.iterrows():
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
 
-    dt = datetime.strptime(f"{row['Date']} {row['Valid time']}", "%b %d %Y %H:%M")
+grbs.seek(0)
+cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000)
 
-    date = dt.strftime("%Y%m%d")
-    hour = dt.strftime("%H")
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
-    url = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{date}/rap.t{hour}z.awp130bgrbf00.grib2"
-    local_file = f"{DATA_DIR}/rap_{date}_{hour}.grib2"
+grbs.seek(0)
+t2m_msg = pick_var(grbs, "2t", "heightAboveGround", level=2)
 
-    if not os.path.exists(local_file):
-        print("Downloading", url)
-        urllib.request.urlretrieve(url, local_file)
+grbs.seek(0)
+d2m_msg = pick_var(grbs, "2d", "heightAboveGround", level=2)
 
-    print("Processing", local_file)
+grbs.seek(0)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", level=10)
 
-    grbs = pygrib.open(local_file)
+grbs.seek(0)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", level=10)
 
-    # ================= VARIABLES =================
+grbs.seek(0)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", level=500)
 
-    grbs.seek(0)
-    cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
+grbs.seek(0)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", level=500)
 
-    grbs.seek(0)
-    cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000)
+# ================= ARRAYS =================
 
-    grbs.seek(0)
-    hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
+cape = np.nan_to_num(cape_msg.values)
+cin = np.nan_to_num(cin_msg.values)
+hlcy = np.nan_to_num(hlcy_msg.values)
 
-    grbs.seek(0)
-    t2m_msg = pick_var(grbs, "2t", "heightAboveGround", level=2)
+t2m = np.nan_to_num(t2m_msg.values)
+d2m = np.nan_to_num(d2m_msg.values)
 
-    grbs.seek(0)
-    d2m_msg = pick_var(grbs, "2d", "heightAboveGround", level=2)
+u10 = np.nan_to_num(u10_msg.values)
+v10 = np.nan_to_num(v10_msg.values)
 
-    grbs.seek(0)
-    u10_msg = pick_var(grbs, "10u", "heightAboveGround", level=10)
+u500 = np.nan_to_num(u500_msg.values)
+v500 = np.nan_to_num(v500_msg.values)
 
-    grbs.seek(0)
-    v10_msg = pick_var(grbs, "10v", "heightAboveGround", level=10)
+# ================= DERIVED FEATURES =================
 
-    grbs.seek(0)
-    u500_msg = pick_var(grbs, "u", "isobaricInhPa", level=500)
+lcl = (t2m - d2m) * 125
+shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
 
-    grbs.seek(0)
-    v500_msg = pick_var(grbs, "v", "isobaricInhPa", level=500)
+# ================= GRID =================
 
-    # ================= ARRAYS =================
+lats, lons = cape_msg.latlons()
+params = cape_msg.projparams
 
-    cape = np.nan_to_num(cape_msg.values)
-    cin = np.nan_to_num(cin_msg.values)
-    hlcy = np.nan_to_num(hlcy_msg.values)
+proj_lcc = Proj(
+    proj="lcc",
+    lat_1=params["lat_1"],
+    lat_2=params["lat_2"],
+    lat_0=params["lat_0"],
+    lon_0=params["lon_0"],
+    a=params.get("a", 6371229),
+    b=params.get("b", 6371229)
+)
 
-    t2m = np.nan_to_num(t2m_msg.values)
-    d2m = np.nan_to_num(d2m_msg.values)
+x_vals, y_vals = proj_lcc(lons, lats)
 
-    u10 = np.nan_to_num(u10_msg.values)
-    v10 = np.nan_to_num(v10_msg.values)
+# ================= ML PROBABILITY =================
 
-    u500 = np.nan_to_num(u500_msg.values)
-    v500 = np.nan_to_num(v500_msg.values)
+linear = (
+    INTERCEPT
+    + COEFFS["cape"] * cape
+    + COEFFS["cin"] * cin
+    + COEFFS["hlcy"] * hlcy
+    + COEFFS["lcl"] * lcl
+    + COEFFS["shear"] * shear
+)
 
-    lats, lons = cape_msg.latlons()
+prob = 1 / (1 + np.exp(-linear))
 
-    # ================= FIND NEAREST GRID CELL =================
+# ================= CONUS FILTER =================
 
-    dist = (lats - row["Latitude"])**2 + (lons - row["Longitude"])**2
-    i, j = np.unravel_index(np.argmin(dist), dist.shape)
+def download_shapefile(url, folder):
+    resp = requests.get(url)
+    resp.raise_for_status()
 
-    samples.append({
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    z.extractall(folder)
 
-        "datetime": dt,
-        "latitude": row["Latitude"],
-        "longitude": row["Longitude"],
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
 
-        "CAPE": float(cape[i,j]),
-        "CIN": float(cin[i,j]),
-        "SRH": float(hlcy[i,j]),
+    return gpd.read_file(f"{folder}/{shp_file}")
 
-        "T2M": float(t2m[i,j]),
-        "D2M": float(d2m[i,j]),
+print("Downloading CONUS shapefile...")
 
-        "U10": float(u10[i,j]),
-        "V10": float(v10[i,j]),
+states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
-        "U500": float(u500[i,j]),
-        "V500": float(v500[i,j]),
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
+lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
-        "tornado": 1
+conus_poly = lower48_lcc.unary_union
+prepared_conus = prep(conus_poly)
 
-    })
+# ================= BUILD FEATURES =================
 
-# ================= SAVE =================
+features = []
 
-out = pd.DataFrame(samples)
-out.to_csv(OUTPUT_CSV, index=False)
+rows, cols = prob.shape
 
-print("Saved:", OUTPUT_CSV)
-print("Tornado samples:", len(out))
+for i in range(rows):
+    for j in range(cols):
+
+        x = x_vals[i, j]
+        y = y_vals[i, j]
+
+        dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
+        dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
+
+        dx, dy = abs(dx), abs(dy)
+
+        cell_box = box(x, y, x+dx, y+dy)
+
+        if prepared_conus.intersects(cell_box):
+
+            features.append({
+                "x": float(x),
+                "y": float(y),
+                "dx": float(dx),
+                "dy": float(dy),
+
+                "prob": float(prob[i, j]),
+
+                "cape": float(cape[i, j]),
+                "cin": float(cin[i, j]),
+                "hlcy": float(hlcy[i, j]),
+                "lcl": float(lcl[i, j]),
+                "shear": float(shear[i, j])
+            })
+
+print(f"Kept {len(features)} CONUS cells")
+
+# ================= SAVE OUTPUT =================
+
+output = {
+    "run_date": DATE,
+    "run_hour": HOUR,
+    "forecast": FCST,
+    "generated": datetime.datetime.utcnow().isoformat() + "Z",
+    "projection": params,
+    "features": features
+}
+
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(output, f)
+
+print("Saved:", OUTPUT_JSON)
+print("DONE.")
