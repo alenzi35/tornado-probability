@@ -1,6 +1,5 @@
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 
 # ================= LOAD DATA =================
 
@@ -11,6 +10,7 @@ data = pd.concat([tornado, non_tornado], ignore_index=True)
 
 print("Total samples:", len(data))
 print("Tornado samples:", data["tornado"].sum())
+print("Non-tornado samples:", len(data) - data["tornado"].sum())
 
 # ================= FEATURES =================
 
@@ -25,18 +25,26 @@ features = [
 X = data[features]
 y = data["tornado"]
 
-# ================= NORMALIZE =================
+# ================= DEBUG: FEATURE STATS =================
 
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+print("\n================ FEATURE RANGES ================")
+print(X.describe())
+
+print("\n================ SAMPLE TORNADO ROWS ================")
+print(data[data["tornado"] == 1][features].head())
+
+print("\n================ SAMPLE NON-TORNADO ROWS ================")
+print(data[data["tornado"] == 0][features].head())
 
 # ================= TRAIN LR =================
 
 model = LogisticRegression(max_iter=1000)
 
-model.fit(X_scaled, y)
+model.fit(X, y)
 
 # ================= RESULTS =================
+
+print("\n================ MODEL OUTPUT ================")
 
 print("\nIntercept:")
 print(model.intercept_[0])
