@@ -68,7 +68,7 @@ jobs:
       # ----------------------------
       - name: Generate Tornado Probability Map
         run: |
-          python scripts/process_rap.py
+          python scripts/train_lr_model.py
 
       # ----------------------------
       # 7. Verify Output
