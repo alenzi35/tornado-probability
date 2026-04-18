@@ -19,14 +19,14 @@ DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-INTERCEPT = -6.556067882978137
+INTERCEPT = -6.17860506777303
 
 COEFFS = {
-    "cape": 0.9580178020907629,
-    "cin": 0.5818863512638779,
-    "hlcy": 0.4664078257171576,
-    "lcl": -1.2597548520852844,
-    "shear": 1.0430428373485474
+    "cape": 0.0021324189697116643,
+    "cin": 0.008942617762917379,
+    "hlcy": 0.018720917668776572,
+    "lcl": -0.0016170131538717455,
+    "shear": 0.1554364973798813
 }
 
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
