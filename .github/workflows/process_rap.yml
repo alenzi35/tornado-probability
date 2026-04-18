@@ -63,7 +63,7 @@ jobs:
       # ----------------------------
       - name: Train Logistic Regression
         run: |
-          python scripts/train_lr_model.py
+          python scripts/process.rap.py
 
       # ----------------------------
       # 7. Verify outputs
