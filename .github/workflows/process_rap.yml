@@ -1,4 +1,4 @@
-name: Process RAP Tornado Data
+name: Build Tornado Training Dataset
 
 on:
   workflow_dispatch:
@@ -7,13 +7,13 @@ permissions:
   contents: write
 
 jobs:
-  build_probability_map:
+  build_dataset:
     runs-on: ubuntu-latest
 
     steps:
 
       # ----------------------------
-      # 1. Checkout Repo
+      # 1. Checkout repo
       # ----------------------------
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -27,67 +27,62 @@ jobs:
           python-version: "3.11"
 
       # ----------------------------
-      # 3. Install System Dependencies
+      # 3. Install system dependencies
       # ----------------------------
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libeccodes-dev \
-            gdal-bin \
-            libgdal-dev \
-            libproj-dev \
-            proj-data \
-            proj-bin
+          sudo apt-get install -y libeccodes-dev
 
       # ----------------------------
-      # 4. Install Python Dependencies
+      # 4. Install Python packages
       # ----------------------------
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-
           python -m pip install \
             pygrib \
             numpy \
+            pandas \
             requests \
-            geopandas \
-            shapely \
-            pyproj \
-            fiona
+            scikit-learn
+
+          echo "Installed packages:"
+          python -m pip list
 
       # ----------------------------
-      # 5. Debug Existing Output Folder
+      # 5. Check files
       # ----------------------------
-      - name: Check map/data folder
+      - name: Check data folder
         run: |
+          echo "Before training:"
           ls -l map/data || true
 
       # ----------------------------
-      # 6. Run RAP Processing / ML Inference
+      # 6. Run Logistic Regression
       # ----------------------------
-      - name: Generate Tornado Probability Map
+      - name: Train Logistic Regression
         run: |
           python scripts/train_lr_model.py
 
       # ----------------------------
-      # 7. Verify Output
+      # 7. Verify outputs
       # ----------------------------
-      - name: Verify Output
+      - name: Verify outputs
         run: |
+          echo "After training:"
           ls -l map/data
-          test -f map/data/tornado_prob_lcc.json
 
       # ----------------------------
-      # 8. Commit Updated Map
+      # 8. Commit (optional)
       # ----------------------------
-      - name: Commit and Push
+      - name: Commit results
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          git add map/data/tornado_prob_lcc.json
+          git add map/data/* || true
 
-          git commit -m "Auto update tornado probability map" || echo "Nothing to commit"
+          git commit -m "Update training results" || echo "Nothing to commit"
 
           git push
