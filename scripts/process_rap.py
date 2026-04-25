@@ -193,6 +193,7 @@ prepared_conus = prep(conus_poly)
 # ================= BUILD FEATURES =================
 
 features = []
+all_probs = []
 
 rows, cols = prob.shape
 
@@ -211,13 +212,16 @@ for i in range(rows):
 
         if prepared_conus.intersects(cell_box):
 
+            p = float(prob[i, j])
+            all_probs.append(p)
+
             features.append({
                 "x": float(x),
                 "y": float(y),
                 "dx": float(dx),
                 "dy": float(dy),
 
-                "prob": float(prob[i, j]),
+                "prob": p,
 
                 "cape": float(cape[i, j]),
                 "cin": float(cin[i, j]),
@@ -226,7 +230,19 @@ for i in range(rows):
                 "shear": float(shear[i, j])
             })
 
-print(f"Kept {len(features)} CONUS cells")
+# ================= STATS =================
+
+if len(all_probs) > 0:
+    print("\n================ PROBABILITY STATS ================")
+    print("CONUS cells:", len(all_probs))
+    print("Mean probability:", float(np.mean(all_probs)))
+    print("Min probability:", float(np.min(all_probs)))
+    print("Max probability:", float(np.max(all_probs)))
+    print("Std dev:", float(np.std(all_probs)))
+    print("===================================================\n")
+
+else:
+    print("No CONUS cells found!")
 
 # ================= SAVE OUTPUT =================
 
