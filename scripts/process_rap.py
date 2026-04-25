@@ -19,7 +19,7 @@ DATA_DIR = "data"
 GRIB_PATH = "data/rap.grib2"
 OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-INTERCEPT = -17.5
+INTERCEPT = -17
 
 COEFFS = {
     "cape": 0.0021324189697116643,
