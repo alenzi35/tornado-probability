@@ -169,26 +169,28 @@ prob = 1 / (1 + np.exp(-linear))
 
 # ================= CONUS FILTER =================
 
-def download_shapefile(url, folder):
-    resp = requests.get(url)
-    resp.raise_for_status()
+print("Filtering grid cells to CONUS (intersects polygon)...")
+features = []
+rows, cols = prob.shape
 
-    z = zipfile.ZipFile(io.BytesIO(resp.content))
-    z.extractall(folder)
+for i in range(rows):
+    for j in range(cols):
+        x = x_vals[i,j]
+        y = y_vals[i,j]
+        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
+        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
+        dx, dy = abs(dx), abs(dy)
+        cell_box = box(x, y, x+dx, y+dy)
+        if prepared_conus.intersects(cell_box):
+            features.append({
+                "x": float(x),
+                "y": float(y),
+                "dx": float(dx),
+                "dy": float(dy),
+                "prob": float(prob[i,j])
+            })
 
-    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
-
-    return gpd.read_file(f"{folder}/{shp_file}")
-
-print("Downloading CONUS shapefile...")
-
-states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
-
-lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
-lower48_lcc = lower48.to_crs(proj_lcc.srs)
-
-conus_poly = lower48_lcc.unary_union
-prepared_conus = prep(conus_poly)
+print(f"Kept {len(features)} cells inside or touching CONUS.")
 
 # ================= BUILD FEATURES =================
 
