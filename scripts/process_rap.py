@@ -88,7 +88,7 @@ def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=Non
 
     raise RuntimeError(f"{shortname} not found")
 
-# ================= VARIABLES =================
+# ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
@@ -154,7 +154,7 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= PROBABILITY =================
+# ================= ML PROBABILITY =================
 
 linear = (
     INTERCEPT
@@ -167,27 +167,30 @@ linear = (
 
 prob = 1 / (1 + np.exp(-linear))
 
-# ================= CONUS SHAPE =================
+# ================= CONUS FILTER =================
+
+def download_shapefile(url, folder):
+    resp = requests.get(url)
+    resp.raise_for_status()
+
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    z.extractall(folder)
+
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+
+    return gpd.read_file(f"{folder}/{shp_file}")
 
 print("Downloading CONUS shapefile...")
 
-resp = requests.get(CONUS_SHAPE_URL)
-resp.raise_for_status()
-
-z = zipfile.ZipFile(io.BytesIO(resp.content))
-z.extractall("tmp_conus")
-
-shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
-states_gdf = gpd.read_file(f"tmp_conus/{shp_file}")
+states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
 lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
-
 lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
 conus_poly = lower48_lcc.unary_union
 prepared_conus = prep(conus_poly)
 
-# ================= FILTER (FIXED CORE BUG) =================
+# ================= BUILD FEATURES =================
 
 features = []
 all_probs = []
@@ -205,11 +208,7 @@ for i in range(rows):
 
         dx, dy = abs(dx), abs(dy)
 
-        # ✅ FIX: correct cell geometry (THIS WAS THE BUG)
-        cell_box = box(
-            x - dx/2, y - dy/2,
-            x + dx/2, y + dy/2
-        )
+        cell_box = box(x, y, x+dx, y+dy)
 
         if prepared_conus.intersects(cell_box):
 
