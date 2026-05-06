@@ -47,48 +47,39 @@ FCST = "01"
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-
-print("Downloading:", RAP_URL)
+print("Target:", DATE, HOUR, "F01")
+print("URL:", RAP_URL)
 
 r = requests.head(RAP_URL)
 if r.status_code != 200:
-    print("RAP file unavailable.")
+    print("RAP file not ready.")
     exit(0)
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("Downloaded RAP GRIB2")
 
 # ================= LOAD GRIB =================
 
 grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
-
     for g in grbs:
-
         if g.shortName.lower() != shortname.lower():
             continue
-
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
-
         if level is not None and hasattr(g, "level"):
             if abs(g.level - level) > 0.1:
                 continue
-
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (
-                abs(g.bottomLevel - bottom) < 1 and
-                abs(g.topLevel - top) < 1
-            ):
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
-
         return g
-
     raise RuntimeError(f"{shortname} not found")
 
-# ================= EXTRACT VARIABLES =================
+# ================= VARIABLES =================
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
@@ -132,7 +123,7 @@ v10 = np.nan_to_num(v10_msg.values)
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
 
-# ================= DERIVED FEATURES =================
+# ================= DERIVED =================
 
 lcl = (t2m - d2m) * 125
 shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
@@ -154,7 +145,7 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= ML PROBABILITY =================
+# ================= PROBABILITY =================
 
 linear = (
     INTERCEPT
@@ -167,21 +158,17 @@ linear = (
 
 prob = 1 / (1 + np.exp(-linear))
 
-# ================= CONUS FILTER =================
+# ================= CONUS =================
 
 def download_shapefile(url, folder):
     resp = requests.get(url)
     resp.raise_for_status()
-
     z = zipfile.ZipFile(io.BytesIO(resp.content))
     z.extractall(folder)
-
     shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
-
     return gpd.read_file(f"{folder}/{shp_file}")
 
 print("Downloading CONUS shapefile...")
-
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
 lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
@@ -190,11 +177,9 @@ lower48_lcc = lower48.to_crs(proj_lcc.srs)
 conus_poly = lower48_lcc.unary_union
 prepared_conus = prep(conus_poly)
 
-# ================= BUILD FEATURES =================
+# ================= FEATURES =================
 
 features = []
-all_probs = []
-
 rows, cols = prob.shape
 
 for i in range(rows):
@@ -212,16 +197,13 @@ for i in range(rows):
 
         if prepared_conus.intersects(cell_box):
 
-            p = float(prob[i, j])
-            all_probs.append(p)
-
             features.append({
                 "x": float(x),
                 "y": float(y),
                 "dx": float(dx),
                 "dy": float(dy),
 
-                "prob": p,
+                "prob": float(prob[i, j]),
 
                 "cape": float(cape[i, j]),
                 "cin": float(cin[i, j]),
@@ -230,26 +212,13 @@ for i in range(rows):
                 "shear": float(shear[i, j])
             })
 
-# ================= STATS =================
-
-if len(all_probs) > 0:
-    print("\n================ PROBABILITY STATS ================")
-    print("CONUS cells:", len(all_probs))
-    print("Mean probability:", float(np.mean(all_probs)))
-    print("Min probability:", float(np.min(all_probs)))
-    print("Max probability:", float(np.max(all_probs)))
-    print("Std dev:", float(np.std(all_probs)))
-    print("===================================================\n")
-
-else:
-    print("No CONUS cells found!")
-
-# ================= SAVE OUTPUT =================
+# ================= OUTPUT =================
 
 output = {
     "run_date": DATE,
     "run_hour": HOUR,
     "forecast": FCST,
+    "valid": f"{int(HOUR):02d}:00-{(int(HOUR)+1)%24:02d}:00 UTC",
     "generated": datetime.datetime.utcnow().isoformat() + "Z",
     "projection": params,
     "features": features
@@ -260,6 +229,3 @@ with open(OUTPUT_JSON, "w") as f:
 
 print("Saved:", OUTPUT_JSON)
 print("DONE.")
-
-
-
