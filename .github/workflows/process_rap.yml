@@ -58,7 +58,11 @@ jobs:
 
           echo "Installed packages:"
           python -m pip list
-
+          
+      - name: convert_borders_to_lcc.py
+        run: |
+          python scripts/convert_borders_to_lcc.py
+          
       # ----------------------------
       # 5. Run RAP processing (ONLY THIS)
       # ----------------------------
