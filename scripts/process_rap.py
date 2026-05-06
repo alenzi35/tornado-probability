@@ -11,7 +11,7 @@ import io
 import geopandas as gpd
 from shapely.geometry import box
 from shapely.prepared import prep
-from pyproj import Proj
+from pyproj import Proj, CRS
 
 # ================= CONFIG =================
 
@@ -34,7 +34,7 @@ CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_sta
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= TIME LOGIC =================
+# ================= TIME =================
 
 def get_target_cycle():
     now = datetime.datetime.utcnow()
@@ -52,7 +52,7 @@ print("URL:", RAP_URL)
 
 r = requests.head(RAP_URL)
 if r.status_code != 200:
-    print("RAP file not ready.")
+    print("RAP not available.")
     exit(0)
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
@@ -158,7 +158,7 @@ linear = (
 
 prob = 1 / (1 + np.exp(-linear))
 
-# ================= CONUS =================
+# ================= CONUS SHAPE =================
 
 def download_shapefile(url, folder):
     resp = requests.get(url)
@@ -172,12 +172,17 @@ print("Downloading CONUS shapefile...")
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
 lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
-lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
-conus_poly = lower48_lcc.unary_union
-prepared_conus = prep(conus_poly)
+lcc_crs = CRS.from_proj4(proj_lcc.srs)
+lower48_lcc = lower48.to_crs(lcc_crs)
 
-# ================= FEATURES =================
+conus_poly = lower48_lcc.unary_union.buffer(0)
+
+# ================= HARD CLIP (FIXED) =================
+
+print("Applying hard CONUS bounding box clip...")
+
+minx, miny, maxx, maxy = conus_poly.bounds
 
 features = []
 rows, cols = prob.shape
@@ -188,29 +193,29 @@ for i in range(rows):
         x = x_vals[i, j]
         y = y_vals[i, j]
 
+        # HARD CLIP ONLY (stable)
+        if not (minx <= x <= maxx and miny <= y <= maxy):
+            continue
+
         dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
         dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
 
-        dx, dy = abs(dx), abs(dy)
+        features.append({
+            "x": float(x),
+            "y": float(y),
+            "dx": float(abs(dx)),
+            "dy": float(abs(dy)),
 
-        cell_box = box(x, y, x+dx, y+dy)
+            "prob": float(prob[i, j]),
 
-        if prepared_conus.intersects(cell_box):
+            "cape": float(cape[i, j]),
+            "cin": float(cin[i, j]),
+            "hlcy": float(hlcy[i, j]),
+            "lcl": float(lcl[i, j]),
+            "shear": float(shear[i, j])
+        })
 
-            features.append({
-                "x": float(x),
-                "y": float(y),
-                "dx": float(dx),
-                "dy": float(dy),
-
-                "prob": float(prob[i, j]),
-
-                "cape": float(cape[i, j]),
-                "cin": float(cin[i, j]),
-                "hlcy": float(hlcy[i, j]),
-                "lcl": float(lcl[i, j]),
-                "shear": float(shear[i, j])
-            })
+print(f"Kept {len(features)} CONUS-bounded grid points.")
 
 # ================= OUTPUT =================
 
