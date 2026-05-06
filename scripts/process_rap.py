@@ -9,7 +9,7 @@ import zipfile
 import io
 
 import geopandas as gpd
-from shapely.geometry import box
+from shapely.geometry import box, Point
 from shapely.prepared import prep
 from pyproj import Proj
 
@@ -34,7 +34,7 @@ CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_sta
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= TIME LOGIC =================
+# ================= TIME =================
 
 def get_target_cycle():
     now = datetime.datetime.utcnow()
@@ -48,11 +48,11 @@ FCST = "01"
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 
-print("Downloading:", RAP_URL)
+print("Target:", DATE, HOUR, "F01")
+print("URL:", RAP_URL)
 
-r = requests.head(RAP_URL)
-if r.status_code != 200:
-    print("RAP file unavailable.")
+if requests.head(RAP_URL).status_code != 200:
+    print("RAP file not ready.")
     exit(0)
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
@@ -62,33 +62,21 @@ urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
 grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
-
     for g in grbs:
-
         if g.shortName.lower() != shortname.lower():
             continue
-
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
-
         if level is not None and hasattr(g, "level"):
             if abs(g.level - level) > 0.1:
                 continue
-
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (
-                abs(g.bottomLevel - bottom) < 1 and
-                abs(g.topLevel - top) < 1
-            ):
+            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
                 continue
-
         return g
-
     raise RuntimeError(f"{shortname} not found")
-
-# ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
@@ -132,7 +120,7 @@ v10 = np.nan_to_num(v10_msg.values)
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
 
-# ================= DERIVED FEATURES =================
+# ================= DERIVED =================
 
 lcl = (t2m - d2m) * 125
 shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
@@ -154,7 +142,7 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= ML PROBABILITY =================
+# ================= PROB =================
 
 linear = (
     INTERCEPT
@@ -167,32 +155,28 @@ linear = (
 
 prob = 1 / (1 + np.exp(-linear))
 
-# ================= CONUS FILTER =================
+# ================= CONUS =================
 
-print("Filtering grid cells to CONUS (intersects polygon)...")
-features = []
-rows, cols = prob.shape
+print("Loading CONUS shapefile...")
 
-for i in range(rows):
-    for j in range(cols):
-        x = x_vals[i,j]
-        y = y_vals[i,j]
-        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
-        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
-        dx, dy = abs(dx), abs(dy)
-        cell_box = box(x, y, x+dx, y+dy)
-        if prepared_conus.intersects(cell_box):
-            features.append({
-                "x": float(x),
-                "y": float(y),
-                "dx": float(dx),
-                "dy": float(dy),
-                "prob": float(prob[i,j])
-            })
+resp = requests.get(CONUS_SHAPE_URL)
+resp.raise_for_status()
 
-print(f"Kept {len(features)} cells inside or touching CONUS.")
+z = zipfile.ZipFile(io.BytesIO(resp.content))
+z.extractall("tmp_conus")
 
-# ================= BUILD FEATURES =================
+shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+states = gpd.read_file(f"tmp_conus/{shp_file}")
+
+lower48 = states[~states["STUSPS"].isin(["AK", "HI", "PR"])]
+
+lower48_lcc = lower48.to_crs(proj_lcc.srs)
+conus_poly = lower48_lcc.unary_union
+prepared_conus = prep(conus_poly)
+
+# ================= FILTER (FIXED VERSION) =================
+
+print("Filtering CONUS grid cells...")
 
 features = []
 all_probs = []
@@ -210,12 +194,11 @@ for i in range(rows):
 
         dx, dy = abs(dx), abs(dy)
 
-        cell_box = box(x, y, x+dx, y+dy)
+        # ✅ FIX: use cell center instead of intersects
+        cx = x + dx / 2
+        cy = y + dy / 2
 
-        if prepared_conus.intersects(cell_box):
-
-            p = float(prob[i, j])
-            all_probs.append(p)
+        if prepared_conus.contains(Point(cx, cy)):
 
             features.append({
                 "x": float(x),
@@ -223,7 +206,7 @@ for i in range(rows):
                 "dx": float(dx),
                 "dy": float(dy),
 
-                "prob": p,
+                "prob": float(prob[i, j]),
 
                 "cape": float(cape[i, j]),
                 "cin": float(cin[i, j]),
@@ -232,21 +215,21 @@ for i in range(rows):
                 "shear": float(shear[i, j])
             })
 
+            all_probs.append(prob[i, j])
+
 # ================= STATS =================
 
-if len(all_probs) > 0:
-    print("\n================ PROBABILITY STATS ================")
-    print("CONUS cells:", len(all_probs))
-    print("Mean probability:", float(np.mean(all_probs)))
-    print("Min probability:", float(np.min(all_probs)))
-    print("Max probability:", float(np.max(all_probs)))
-    print("Std dev:", float(np.std(all_probs)))
-    print("===================================================\n")
+print(f"Kept {len(features)} CONUS cells")
 
-else:
-    print("No CONUS cells found!")
+if all_probs:
+    print("\n=== PROB STATS ===")
+    print("Mean:", float(np.mean(all_probs)))
+    print("Min:", float(np.min(all_probs)))
+    print("Max:", float(np.max(all_probs)))
+    print("Std:", float(np.std(all_probs)))
+    print("==================\n")
 
-# ================= SAVE OUTPUT =================
+# ================= OUTPUT =================
 
 output = {
     "run_date": DATE,
