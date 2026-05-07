@@ -11,7 +11,7 @@ import io
 import geopandas as gpd
 from shapely.geometry import box
 from shapely.prepared import prep
-from pyproj import Proj, CRS
+from pyproj import Proj
 
 # ================= CONFIG =================
 
@@ -34,7 +34,7 @@ CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_sta
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= TIME =================
+# ================= TIME LOGIC =================
 
 def get_target_cycle():
     now = datetime.datetime.utcnow()
@@ -47,39 +47,48 @@ FCST = "01"
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
-print("Target:", DATE, HOUR, "F01")
-print("URL:", RAP_URL)
+
+print("Downloading:", RAP_URL)
 
 r = requests.head(RAP_URL)
 if r.status_code != 200:
-    print("RAP not available.")
+    print("RAP file unavailable.")
     exit(0)
 
 urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
-print("Downloaded RAP GRIB2")
 
 # ================= LOAD GRIB =================
 
 grbs = pygrib.open(GRIB_PATH)
 
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
+
     for g in grbs:
+
         if g.shortName.lower() != shortname.lower():
             continue
+
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
+
         if level is not None and hasattr(g, "level"):
             if abs(g.level - level) > 0.1:
                 continue
+
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+            if not (
+                abs(g.bottomLevel - bottom) < 1 and
+                abs(g.topLevel - top) < 1
+            ):
                 continue
+
         return g
+
     raise RuntimeError(f"{shortname} not found")
 
-# ================= VARIABLES =================
+# ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
@@ -123,7 +132,7 @@ v10 = np.nan_to_num(v10_msg.values)
 u500 = np.nan_to_num(u500_msg.values)
 v500 = np.nan_to_num(v500_msg.values)
 
-# ================= DERIVED =================
+# ================= DERIVED FEATURES =================
 
 lcl = (t2m - d2m) * 125
 shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
@@ -145,7 +154,7 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= PROBABILITY =================
+# ================= ML PROBABILITY =================
 
 linear = (
     INTERCEPT
@@ -158,33 +167,34 @@ linear = (
 
 prob = 1 / (1 + np.exp(-linear))
 
-# ================= CONUS SHAPE =================
+# ================= CONUS FILTER =================
 
 def download_shapefile(url, folder):
     resp = requests.get(url)
     resp.raise_for_status()
+
     z = zipfile.ZipFile(io.BytesIO(resp.content))
     z.extractall(folder)
+
     shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+
     return gpd.read_file(f"{folder}/{shp_file}")
 
 print("Downloading CONUS shapefile...")
+
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
 lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
+lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
-lcc_crs = CRS.from_proj4(proj_lcc.srs)
-lower48_lcc = lower48.to_crs(lcc_crs)
+conus_poly = lower48_lcc.unary_union
+prepared_conus = prep(conus_poly)
 
-conus_poly = lower48_lcc.unary_union.buffer(0)
-
-# ================= HARD CLIP (FIXED) =================
-
-print("Applying hard CONUS bounding box clip...")
-
-minx, miny, maxx, maxy = conus_poly.bounds
+# ================= BUILD FEATURES =================
 
 features = []
+all_probs = []
+
 rows, cols = prob.shape
 
 for i in range(rows):
@@ -193,37 +203,53 @@ for i in range(rows):
         x = x_vals[i, j]
         y = y_vals[i, j]
 
-        # HARD CLIP ONLY (stable)
-        if not (minx <= x <= maxx and miny <= y <= maxy):
-            continue
-
         dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
         dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
 
-        features.append({
-            "x": float(x),
-            "y": float(y),
-            "dx": float(abs(dx)),
-            "dy": float(abs(dy)),
+        dx, dy = abs(dx), abs(dy)
 
-            "prob": float(prob[i, j]),
+        cell_box = box(x, y, x+dx, y+dy)
 
-            "cape": float(cape[i, j]),
-            "cin": float(cin[i, j]),
-            "hlcy": float(hlcy[i, j]),
-            "lcl": float(lcl[i, j]),
-            "shear": float(shear[i, j])
-        })
+        if prepared_conus.intersects(cell_box):
 
-print(f"Kept {len(features)} CONUS-bounded grid points.")
+            p = float(prob[i, j])
+            all_probs.append(p)
 
-# ================= OUTPUT =================
+            features.append({
+                "x": float(x),
+                "y": float(y),
+                "dx": float(dx),
+                "dy": float(dy),
+
+                "prob": p,
+
+                "cape": float(cape[i, j]),
+                "cin": float(cin[i, j]),
+                "hlcy": float(hlcy[i, j]),
+                "lcl": float(lcl[i, j]),
+                "shear": float(shear[i, j])
+            })
+
+# ================= STATS =================
+
+if len(all_probs) > 0:
+    print("\n================ PROBABILITY STATS ================")
+    print("CONUS cells:", len(all_probs))
+    print("Mean probability:", float(np.mean(all_probs)))
+    print("Min probability:", float(np.min(all_probs)))
+    print("Max probability:", float(np.max(all_probs)))
+    print("Std dev:", float(np.std(all_probs)))
+    print("===================================================\n")
+
+else:
+    print("No CONUS cells found!")
+
+# ================= SAVE OUTPUT =================
 
 output = {
     "run_date": DATE,
     "run_hour": HOUR,
     "forecast": FCST,
-    "valid": f"{int(HOUR):02d}:00-{(int(HOUR)+1)%24:02d}:00 UTC",
     "generated": datetime.datetime.utcnow().isoformat() + "Z",
     "projection": params,
     "features": features
@@ -234,3 +260,6 @@ with open(OUTPUT_JSON, "w") as f:
 
 print("Saved:", OUTPUT_JSON)
 print("DONE.")
+
+
+
