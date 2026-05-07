@@ -50,6 +50,7 @@ FCST = "01"
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
 print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
@@ -68,19 +69,34 @@ print("Downloaded RAP GRIB2")
 
 grbs = pygrib.open(GRIB_PATH)
 
-def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None):
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
+
     for g in grbs:
+
         if g.shortName.lower() != shortname.lower():
             continue
+
         if typeOfLevel and g.typeOfLevel != typeOfLevel:
             continue
+
+        if level is not None and hasattr(g, "level"):
+            if abs(g.level - level) > 0.1:
+                continue
+
         if bottom is not None and top is not None:
             if not hasattr(g, "bottomLevel"):
                 continue
-            if not (abs(g.bottomLevel - bottom) < 1 and abs(g.topLevel - top) < 1):
+            if not (
+                abs(g.bottomLevel - bottom) < 1 and
+                abs(g.topLevel - top) < 1
+            ):
                 continue
+
         return g
+
     raise RuntimeError(f"{shortname} not found")
+
+# ================= EXTRACT VARIABLES =================
 
 grbs.seek(0)
 cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
@@ -127,7 +143,11 @@ v500 = np.nan_to_num(v500_msg.values)
 # ================= DERIVED FEATURES =================
 
 lcl = (t2m - d2m) * 125
-shear = np.sqrt((u500 - u10)**2 + (v500 - v10)**2)
+
+shear = np.sqrt(
+    (u500 - u10)**2 +
+    (v500 - v10)**2
+)
 
 # ================= GRID =================
 
@@ -146,7 +166,7 @@ proj_lcc = Proj(
 
 x_vals, y_vals = proj_lcc(lons, lats)
 
-# ================= ML PROBABILITY =================
+# ================= CALC PROB =================
 
 linear = (
     INTERCEPT
@@ -159,70 +179,70 @@ linear = (
 
 prob = 1 / (1 + np.exp(-linear))
 
-lats, lons = cape_msg.latlons()
-params = cape_msg.projparams
-
-proj_lcc = Proj(
-    proj="lcc",
-    lat_1=params["lat_1"],
-    lat_2=params["lat_2"],
-    lat_0=params["lat_0"],
-    lon_0=params["lon_0"],
-    a=params.get("a", 6371229),
-    b=params.get("b", 6371229)
-)
-
-x_vals, y_vals = proj_lcc(lons, lats)
-
-# ================= CALC PROB =================
-
-linear = INTERCEPT + COEFFS["CAPE"]*cape + COEFFS["CIN"]*cin + COEFFS["HLCY"]*hlcy + COEFFS["LCL"]*lcl + COEFFS["SHEAR"]*shear
-prob = 1 / (1 + np.exp(-linear))
-
 # ================= DOWNLOAD CONUS SHAPE =================
 
 def download_shapefile(url, folder):
     resp = requests.get(url)
     resp.raise_for_status()
+
     z = zipfile.ZipFile(io.BytesIO(resp.content))
     z.extractall(folder)
+
     shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+
     return gpd.read_file(f"{folder}/{shp_file}")
 
 print("Downloading CONUS shapefile...")
+
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
 # Keep only lower 48 states
-lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK","HI","PR"])]
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
 
 # Project to RAP LCC
 lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
-# Merge into a single CONUS polygon
+# Merge into single polygon
 conus_poly = lower48_lcc.unary_union
 prepared_conus = prep(conus_poly)
 
 # ================= FILTER CELLS =================
 
-print("Filtering grid cells to CONUS (intersects polygon)...")
+print("Filtering grid cells to CONUS...")
+
 features = []
+
 rows, cols = prob.shape
 
 for i in range(rows):
     for j in range(cols):
-        x = x_vals[i,j]
-        y = y_vals[i,j]
-        dx = x_vals[i,j+1] - x if j < cols-1 else x - x_vals[i,j-1]
-        dy = y_vals[i+1,j] - y if i < rows-1 else y - y_vals[i-1,j]
+
+        x = x_vals[i, j]
+        y = y_vals[i, j]
+
+        dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
+        dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
+
         dx, dy = abs(dx), abs(dy)
+
         cell_box = box(x, y, x+dx, y+dy)
+
         if prepared_conus.intersects(cell_box):
+
             features.append({
                 "x": float(x),
                 "y": float(y),
                 "dx": float(dx),
                 "dy": float(dy),
-                "prob": float(prob[i,j])
+
+                "prob": float(prob[i, j]),
+
+                "cape": float(cape[i, j]),
+                "cin": float(cin[i, j]),
+                "hlcy": float(hlcy[i, j]),
+
+                "lcl": float(lcl[i, j]),
+                "shear": float(shear[i, j])
             })
 
 print(f"Kept {len(features)} cells inside or touching CONUS.")
@@ -237,7 +257,7 @@ output = {
     "run_hour": HOUR,
     "forecast": "F01",
     "valid": f"{valid_start}-{valid_end} UTC",
-    "generated": datetime.datetime.utcnow().isoformat()+"Z",
+    "generated": datetime.datetime.utcnow().isoformat() + "Z",
     "projection": params,
     "features": features
 }
