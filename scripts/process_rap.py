@@ -260,6 +260,3 @@ with open(OUTPUT_JSON, "w") as f:
 
 print("Saved:", OUTPUT_JSON)
 print("DONE.")
-
-
-
