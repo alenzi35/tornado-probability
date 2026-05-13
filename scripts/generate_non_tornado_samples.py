@@ -23,10 +23,10 @@ os.makedirs("map/data", exist_ok=True)
 
 # ================= NON-TORNADO TIMES =================
 non_tornado_times = [
-    {"date":"20250825","hour":"18"},
+    {"date":"20250629","hour":"18"},
 ]
 
-FCST = "01"
+FCST = "00"
 
 # ================= PICK VAR =================
 def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
