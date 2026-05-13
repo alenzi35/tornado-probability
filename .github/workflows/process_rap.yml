@@ -71,6 +71,18 @@ jobs:
         run: |
           python scripts/convert_borders_to_lcc.py
 
+      - name: Generate non-tornado samples
+        run: |
+          python scripts/generate_non_tornado_samples.py
+
+      - name: Generate tornado samples
+        run: |
+          python scripts/generate_tornado_samples.py
+  
+      - name: Train LR model
+        run: |
+          python scripts/train_lr_model.py
+
       # ----------------------------
       # 7. Commit + push updated files
       # ----------------------------
