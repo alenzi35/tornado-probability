@@ -55,7 +55,7 @@ jobs:
             pyproj \
             shapely \
             fiona \
-            requests
+            requests \
             scikit-learn
 
       # ----------------------------
