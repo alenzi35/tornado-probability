@@ -178,6 +178,8 @@ linear = (
 )
 
 prob = 1 / (1 + np.exp(-linear))
+  print("Current mean probability (decimal):", np.mean(prob))
+    print("Current mean probability (%):", np.mean(prob)*100)
 
 # ================= DOWNLOAD CONUS SHAPE =================
 
