@@ -31,8 +31,8 @@ COEFFS = {
 
 # ================= OPTIONAL CUSTOM DATE/TIME =================
 
-CUSTOM_DATE = None   # e.g. 20250620
-CUSTOM_HOUR = None   # e.g. 23
+CUSTOM_DATE = 20250621   # e.g. 20250620
+CUSTOM_HOUR = 04   # e.g. 23
 
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
