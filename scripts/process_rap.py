@@ -29,6 +29,11 @@ COEFFS = {
     "shear": 0.2774384553299831
 }
 
+# ================= OPTIONAL CUSTOM DATE/TIME =================
+
+CUSTOM_DATE = None   # e.g. 20250620
+CUSTOM_HOUR = None   # e.g. 23
+
 # US Census lower 48 states 5m shapefile
 CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
@@ -38,20 +43,31 @@ os.makedirs("map/data", exist_ok=True)
 # ================= TIME LOGIC =================
 
 def get_target_cycle():
+
+    # --- optional override ---
+    if CUSTOM_DATE is not None and CUSTOM_HOUR is not None:
+        return str(CUSTOM_DATE), f"{int(CUSTOM_HOUR):02d}"
+
+    # --- automatic RAP cycle ---
     now = datetime.datetime.utcnow()
     run_time = now - datetime.timedelta(hours=1)
+
     date = run_time.strftime("%Y%m%d")
     hour = run_time.strftime("%H")
+
     return date, hour
 
+
 DATE, HOUR = get_target_cycle()
+
 FCST = "01"
+
+print("Target:", DATE, HOUR, "F01")
 
 # ================= DOWNLOAD RAP =================
 
 RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
 
-print("Target:", DATE, HOUR, "F01")
 print("URL:", RAP_URL)
 
 def url_exists(url):
@@ -178,8 +194,9 @@ linear = (
 )
 
 prob = 1 / (1 + np.exp(-linear))
+
 print("Current mean probability (decimal):", np.mean(prob))
-print("Current mean probability (%):", np.mean(prob)*100)
+print("Current mean probability (%):", np.mean(prob) * 100)
 
 # ================= DOWNLOAD CONUS SHAPE =================
 
@@ -198,13 +215,10 @@ print("Downloading CONUS shapefile...")
 
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
 
-# Keep only lower 48 states
 lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
 
-# Project to RAP LCC
 lower48_lcc = lower48.to_crs(proj_lcc.srs)
 
-# Merge into single polygon
 conus_poly = lower48_lcc.unary_union
 prepared_conus = prep(conus_poly)
 
@@ -227,7 +241,7 @@ for i in range(rows):
 
         dx, dy = abs(dx), abs(dy)
 
-        cell_box = box(x, y, x+dx, y+dy)
+        cell_box = box(x, y, x + dx, y + dy)
 
         if prepared_conus.intersects(cell_box):
 
