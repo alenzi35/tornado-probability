@@ -202,6 +202,7 @@ canvas.addEventListener("mousemove", e => {
     tooltip.innerHTML =
 `<b>Tornado Probability</b><br>
 ${(hit.prob * 100).toFixed(3)} %<br><br>
+
 CAPE: ${hit.cape ? hit.cape.toFixed(0) : "0"} J/kg<br>
 CIN: ${hit.cin ? hit.cin.toFixed(0) : "-0"} J/kg<br>
 SRH (0-1km): ${hit.hlcy ? hit.hlcy.toFixed(0) : "0"} m²/s²<br><br>
