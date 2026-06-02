@@ -198,9 +198,6 @@ prob = 1 / (1 + np.exp(-linear))
 print("Current mean probability (decimal):", np.mean(prob))
 print("Current mean probability (%):", np.mean(prob) * 100)
 
-max_prob = np.max(prob)
-print("Maximum probability (%):", max_prob * 100)
-
 # ================= DOWNLOAD CONUS SHAPE =================
 
 def download_shapefile(url, folder):
