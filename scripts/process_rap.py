@@ -200,6 +200,15 @@ print("Current mean probability (%):", np.mean(prob) * 100)
 
 max_prob = np.max(prob)
 print("Maximum probability (%):", max_prob * 100)
+p = prob.flatten()
+
+# avoid log(0)
+p = np.clip(p, 1e-12, 1 - 1e-12)
+
+any_tornado_prob = 1 - np.exp(np.sum(np.log(1 - p)))
+
+print("P(any tornado in domain) (stable approx):", any_tornado_prob)
+print("P(any tornado in domain) (%):", any_tornado_prob * 100)
 
 # ================= DOWNLOAD CONUS SHAPE =================
 
