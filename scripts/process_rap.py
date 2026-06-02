@@ -31,7 +31,7 @@ COEFFS = {
 
 # ================= OPTIONAL CUSTOM DATE/TIME =================
 
-CUSTOM_DATE = 20250621   # e.g. 20250620
+CUSTOM_DATE = 20240507   # e.g. 20250620
 CUSTOM_HOUR = 4 # e.g. 23
 
 # US Census lower 48 states 5m shapefile
