@@ -107,7 +107,7 @@ fetch("map/data/tornado_prob_lcc.json")
   });
 
 function probToColor(p) {
-  if (p < 0.004) return 'white';
+  if (p < 0.001) return 'white';
   else if (p <= 0.01) return 'green';
   else if (p <= 0.02) return 'brown';
   else return 'yellow';
