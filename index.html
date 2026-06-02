@@ -2,52 +2,121 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>LCC Tornado Probability Map</title>
 
 <style>
   body {
     margin: 0;
     overflow: hidden;
-    background: #111;
+    background: #0b0f14;
+    font-family: system-ui, Arial, sans-serif;
+    color: white;
   }
 
   canvas {
     display: block;
   }
 
-  #tooltip {
+  /* TOP BAR */
+  #topbar {
     position: absolute;
-    padding: 6px 10px;
-    background: rgba(0,0,0,0.85);
-    color: white;
-    border-radius: 5px;
-    pointer-events: none;
-    display: none;
-    font-family: sans-serif;
-    font-size: 13px;
-    white-space: nowrap;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 14px;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(6px);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 20;
+    font-size: 14px;
+  }
+
+  #title {
+    font-weight: 600;
+    letter-spacing: 0.5px;
   }
 
   #forecastInfo {
+    font-size: 12px;
+    opacity: 0.9;
+    text-align: right;
+  }
+
+  /* TOOLTIP */
+  #tooltip {
     position: absolute;
-    top: 10px;
-    left: 10px;
-    padding: 8px 12px;
-    background: rgba(0,0,0,0.7);
+    padding: 8px 10px;
+    background: rgba(0,0,0,0.9);
     color: white;
-    font-family: sans-serif;
+    border-radius: 8px;
+    pointer-events: none;
+    display: none;
     font-size: 13px;
-    border-radius: 6px;
-    z-index: 10;
+    white-space: nowrap;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  /* LEGEND */
+  #legend {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    background: rgba(0,0,0,0.75);
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    z-index: 20;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    margin-top: 4px;
+  }
+
+  .box {
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+    border-radius: 3px;
+  }
+
+  /* LOADING */
+  #loading {
+    position: absolute;
+    inset: 0;
+    background: #0b0f14;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    font-size: 16px;
   }
 </style>
 </head>
 
 <body>
 
+<div id="loading">Loading tornado probability data…</div>
+
+<div id="topbar">
+  <div id="title">LCC Tornado Probability Map</div>
+  <div id="forecastInfo">Waiting for forecast…</div>
+</div>
+
 <canvas id="mapCanvas"></canvas>
 <div id="tooltip"></div>
-<div id="forecastInfo">Loading forecast…</div>
+
+<div id="legend">
+  <b>Probability</b>
+  <div class="legend-item"><div class="box" style="background:white"></div> &lt; 0.1%</div>
+  <div class="legend-item"><div class="box" style="background:green"></div> 0.1% – 1%</div>
+  <div class="legend-item"><div class="box" style="background:brown"></div> 1% – 2%</div>
+  <div class="legend-item"><div class="box" style="background:yellow"></div> &gt; 2%</div>
+</div>
 
 <script>
 
@@ -55,6 +124,7 @@ const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
 const infoBox = document.getElementById("forecastInfo");
+const loading = document.getElementById("loading");
 
 let scale = 1;
 let offsetX = 0;
@@ -70,7 +140,6 @@ function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
@@ -101,6 +170,8 @@ fetch("map/data/tornado_prob_lcc.json")
     infoBox.innerHTML =
       `Run: ${runDate} ${pad(runHour)}Z (${fcst})<br>
        Valid: ${pad(validStart)}:00-${pad(validEnd)}:00 UTC`;
+
+    loading.style.display = "none";
 
     fitView();
     draw();
@@ -179,7 +250,6 @@ function screenToLCC(px,py){
   };
 }
 
-// FIXED TOOLTIP
 canvas.addEventListener("mousemove", e => {
 
   const {x, y} = screenToLCC(e.offsetX, e.offsetY);
@@ -216,7 +286,6 @@ LCL: ${hit.lcl ? hit.lcl.toFixed(0) : "0"} m<br>
 });
 
 canvas.addEventListener("wheel",e=>{
-
   e.preventDefault();
 
   const z=e.deltaY<0?1.15:0.87;
@@ -225,9 +294,7 @@ canvas.addEventListener("wheel",e=>{
   offsetY=e.offsetY-z*(e.offsetY-offsetY);
 
   scale*=z;
-
   draw();
-
 });
 
 canvas.addEventListener("mousedown",e=>{
@@ -239,7 +306,6 @@ canvas.addEventListener("mousedown",e=>{
 window.addEventListener("mouseup",()=>dragging=false);
 
 window.addEventListener("mousemove",e=>{
-
   if(!dragging) return;
 
   offsetX+=e.clientX-lastX;
@@ -249,7 +315,6 @@ window.addEventListener("mousemove",e=>{
   lastY=e.clientY;
 
   draw();
-
 });
 
 </script>
