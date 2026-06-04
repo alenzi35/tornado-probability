@@ -1,3 +1,10 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Tornado Probability Map</title>
+
 <style>
   body {
     margin: 0;
@@ -10,7 +17,7 @@
     display: block;
   }
 
-  /* SYSTEM LABEL (top-left) */
+  /* Top-left system label */
   #title {
     position: absolute;
     top: 10px;
@@ -20,9 +27,10 @@
     letter-spacing: 1px;
     text-transform: uppercase;
     z-index: 10;
+    pointer-events: none;
   }
 
-  /* FORECAST INFO (top-right, monospace like real model output) */
+  /* Top-right forecast metadata */
   #forecastInfo {
     position: absolute;
     top: 10px;
@@ -31,11 +39,12 @@
     font-size: 11px;
     color: rgba(255,255,255,0.75);
     text-align: right;
-    z-index: 10;
     line-height: 1.4;
+    z-index: 10;
+    pointer-events: none;
   }
 
-  /* TOOLTIP (data-only, no decoration) */
+  /* Tooltip (clean data readout) */
   #tooltip {
     position: absolute;
     padding: 6px 8px;
@@ -48,7 +57,7 @@
     white-space: nowrap;
   }
 
-  /* LEGEND (no box, just inline reference) */
+  /* Minimal legend */
   #legend {
     position: absolute;
     bottom: 10px;
@@ -57,8 +66,10 @@
     color: rgba(255,255,255,0.55);
     line-height: 1.6;
     z-index: 10;
+    pointer-events: none;
   }
 
+  /* Loading screen */
   #loading {
     position: absolute;
     inset: 0;
@@ -71,3 +82,228 @@
     z-index: 50;
   }
 </style>
+</head>
+
+<body>
+
+<div id="loading">Loading tornado probability data…</div>
+
+<div id="title">Tornado Probability Field</div>
+
+<div id="forecastInfo">Loading forecast…</div>
+
+<div id="legend">
+WHITE <0.1% · GREEN 0.1–1% · BROWN 1–2% · YELLOW >2%
+</div>
+
+<div id="tooltip"></div>
+
+<canvas id="mapCanvas"></canvas>
+
+<script>
+
+const canvas = document.getElementById("mapCanvas");
+const ctx = canvas.getContext("2d");
+
+const tooltip = document.getElementById("tooltip");
+const infoBox = document.getElementById("forecastInfo");
+const loading = document.getElementById("loading");
+
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+
+let dragging = false;
+let lastX, lastY;
+
+let cells = [];
+let borders = [];
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+/* LOAD BORDERS */
+fetch("map/data/borders_lcc.json")
+  .then(r => r.json())
+  .then(data => {
+    borders = data.features;
+    fitView();
+    draw();
+  });
+
+/* LOAD FORECAST */
+fetch("map/data/tornado_prob_lcc.json")
+  .then(r => r.json())
+  .then(data => {
+
+    cells = data.features;
+
+    const runDate = data.run_date;
+    const runHour = parseInt(data.run_hour, 10);
+    const fcst = data.forecast;
+
+    const fcstHour = runHour + 1;
+    const validStart = fcstHour % 24;
+    const validEnd = (fcstHour + 1) % 24;
+
+    const pad = n => n.toString().padStart(2, "0");
+
+    infoBox.innerHTML =
+`RUN  ${runDate} ${pad(runHour)}Z (${fcst})
+VALID ${pad(validStart)}:00–${pad(validEnd)}:00 UTC`;
+
+    loading.style.display = "none";
+
+    fitView();
+    draw();
+  });
+
+function probToColor(p) {
+  if (p < 0.001) return "white";
+  if (p <= 0.01) return "green";
+  if (p <= 0.02) return "brown";
+  return "yellow";
+}
+
+function fitView() {
+  if (!cells.length) return;
+
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+
+  cells.forEach(c => {
+    minX = Math.min(minX, c.x);
+    maxX = Math.max(maxX, c.x + c.dx);
+    minY = Math.min(minY, c.y);
+    maxY = Math.max(maxY, c.y + c.dy);
+  });
+
+  borders.forEach(line => {
+    line.forEach(([x, y]) => {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+  });
+
+  const rx = maxX - minX;
+  const ry = maxY - minY;
+
+  scale = Math.min(canvas.width / rx, canvas.height / ry) * 0.9;
+
+  offsetX = canvas.width / 2 - (minX + rx / 2) * scale;
+  offsetY = canvas.height / 2 + (minY + ry / 2) * scale;
+}
+
+function draw() {
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  ctx.setTransform(scale,0,0,-scale,offsetX,offsetY);
+
+  /* cells */
+  for (const c of cells) {
+    ctx.fillStyle = probToColor(c.prob);
+    ctx.fillRect(c.x, c.y, c.dx, c.dy);
+  }
+
+  /* borders */
+  ctx.strokeStyle = "rgba(255,255,255,0.6)";
+  ctx.lineWidth = 1 / scale;
+
+  ctx.beginPath();
+
+  for (const line of borders) {
+    for (let i = 0; i < line.length; i++) {
+      const [x, y] = line[i];
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+  }
+
+  ctx.stroke();
+}
+
+function screenToLCC(px, py) {
+  return {
+    x: (px - offsetX) / scale,
+    y: -(py - offsetY) / scale
+  };
+}
+
+/* TOOLTIP */
+canvas.addEventListener("mousemove", e => {
+
+  const {x, y} = screenToLCC(e.offsetX, e.offsetY);
+
+  let hit = null;
+
+  for (const c of cells) {
+    if (x >= c.x && x <= c.x + c.dx && y >= c.y && y <= c.y + c.dy) {
+      hit = c;
+      break;
+    }
+  }
+
+  if (!hit) {
+    tooltip.style.display = "none";
+    return;
+  }
+
+  tooltip.style.display = "block";
+  tooltip.style.left = (e.pageX + 10) + "px";
+  tooltip.style.top = (e.pageY + 10) + "px";
+
+  tooltip.innerHTML =
+`PROB ${(hit.prob * 100).toFixed(3)}%
+CAPE ${hit.cape ?? 0}
+CIN ${hit.cin ?? 0}
+SRH ${hit.hlcy ?? 0}
+LCL ${hit.lcl ?? 0}
+SHEAR ${hit.shear ?? 0}`;
+});
+
+/* ZOOM */
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+
+  const z = e.deltaY < 0 ? 1.15 : 0.87;
+
+  offsetX = e.offsetX - z * (e.offsetX - offsetX);
+  offsetY = e.offsetY - z * (e.offsetY - offsetY);
+
+  scale *= z;
+  draw();
+});
+
+/* PAN */
+canvas.addEventListener("mousedown", e => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+window.addEventListener("mouseup", () => dragging = false);
+
+window.addEventListener("mousemove", e => {
+  if (!dragging) return;
+
+  offsetX += e.clientX - lastX;
+  offsetY += e.clientY - lastY;
+
+  lastX = e.clientX;
+  lastY = e.clientY;
+
+  draw();
+});
+
+</script>
+
+</body>
+</html>
