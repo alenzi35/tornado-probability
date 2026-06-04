@@ -3,83 +3,135 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>LCC Tornado Probability Map</title>
+<title>Tornado Grid</title>
 
 <style>
-  body {
-    margin: 0;
-    overflow: hidden;
-    background: #000;
-    font-family: Arial, sans-serif;
-  }
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #000;
+  font-family: system-ui, -apple-system, Arial, sans-serif;
+}
 
-  canvas {
-    display: block;
-  }
+/* subtle atmospheric grid background */
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 
-  /* Forecast text (minimal overlay, no box) */
-  #forecastInfo {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    color: rgba(255,255,255,0.85);
-    font-size: 12px;
-    line-height: 1.4;
-    z-index: 10;
-    text-shadow: 0 0 2px black;
-    pointer-events: none;
-  }
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
 
-  /* Tooltip (sharp, utilitarian) */
-  #tooltip {
-    position: absolute;
-    padding: 6px 8px;
-    background: rgba(0,0,0,0.95);
-    color: white;
-    border: 1px solid rgba(255,255,255,0.2);
-    pointer-events: none;
-    display: none;
-    font-size: 12px;
-    white-space: nowrap;
-  }
+  background-size: 40px 40px;
+  z-index: 0;
+}
 
-  /* Legend (simple text, no box UI feel) */
-  #legend {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    font-size: 11px;
-    color: rgba(255,255,255,0.7);
-    line-height: 1.5;
-    z-index: 10;
-    pointer-events: none;
-  }
+canvas {
+  display: block;
+  position: relative;
+  z-index: 1;
+}
 
-  /* Loading screen */
-  #loading {
-    position: absolute;
-    inset: 0;
-    background: #000;
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    font-size: 14px;
-  }
+/* TOP INFO */
+#forecastInfo {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+
+  color: rgba(255,255,255,0.85);
+  font-size: 12px;
+  line-height: 1.4;
+
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  pointer-events: none;
+}
+
+/* BRAND */
+#brand {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  color: rgba(255,255,255,0.8);
+  font-size: 12px;
+  letter-spacing: 2px;
+  pointer-events: none;
+}
+
+#mark {
+  width: 14px;
+  height: 14px;
+
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.6) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.6) 1px, transparent 1px);
+
+  background-size: 4px 4px;
+  opacity: 0.8;
+}
+
+/* TOOLTIP */
+#tooltip {
+  position: absolute;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.92);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: white;
+
+  font-size: 12px;
+  white-space: nowrap;
+
+  pointer-events: none;
+  display: none;
+  z-index: 30;
+}
+
+/* LEGEND */
+#legend {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 20;
+
+  font-size: 11px;
+  color: rgba(255,255,255,0.65);
+  line-height: 1.6;
+
+  pointer-events: none;
+}
+
+.legend-line::before {
+  content: "■";
+  margin-right: 6px;
+}
 </style>
 </head>
 
 <body>
 
-<div id="loading">Loading tornado probability data…</div>
+<!-- BRAND -->
+<div id="brand">
+  <div id="mark"></div>
+  <div>TORNADO GRID</div>
+</div>
 
-<div id="forecastInfo">Loading forecast…</div>
+<!-- INFO -->
+<div id="forecastInfo">Loading Tornado Grid…</div>
+
+<!-- LEGEND -->
 <div id="legend">
-  WHITE &lt; 0.1%<br>
-  GREEN 0.1–1%<br>
-  BROWN 1–2%<br>
-  YELLOW &gt; 2%
+  <div class="legend-line">WHITE — &lt;0.1% background</div>
+  <div class="legend-line">GREEN — 0.1–1% weak</div>
+  <div class="legend-line">BROWN — 1–2% enhanced</div>
+  <div class="legend-line">YELLOW — &gt;2% significant</div>
 </div>
 
 <canvas id="mapCanvas"></canvas>
@@ -91,7 +143,6 @@ const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
 const infoBox = document.getElementById("forecastInfo");
-const loading = document.getElementById("loading");
 
 let scale = 1;
 let offsetX = 0;
@@ -119,7 +170,7 @@ fetch("map/data/borders_lcc.json")
     draw();
   });
 
-/* LOAD PROBABILITY DATA */
+/* LOAD FORECAST */
 fetch("map/data/tornado_prob_lcc.json")
   .then(r => r.json())
   .then(data => {
@@ -127,20 +178,20 @@ fetch("map/data/tornado_prob_lcc.json")
     cells = data.features;
 
     const runDate = data.run_date;
-    const runHour = parseInt(data.run_hour, 10);
+    const runHour = parseInt(data.run_hour,10);
     const fcst = data.forecast;
 
     const fcstHour = runHour + 1;
     const validStart = fcstHour % 24;
     const validEnd = (fcstHour + 1) % 24;
 
-    function pad(n){ return n.toString().padStart(2,"0"); }
+    function pad(n){return n.toString().padStart(2,"0");}
 
     infoBox.innerHTML =
-      `Run: ${runDate} ${pad(runHour)}Z (${fcst})<br>
-       Valid: ${pad(validStart)}:00-${pad(validEnd)}:00 UTC`;
-
-    loading.style.display = "none";
+`<b>Tornado Grid</b><br>
+Probabilistic convective field<br><br>
+Run: ${runDate} ${pad(runHour)}Z<br>
+Valid: ${pad(validStart)}–${pad(validEnd)} UTC`;
 
     fitView();
     draw();
@@ -192,15 +243,13 @@ function draw(){
 
   ctx.setTransform(scale,0,0,-scale,offsetX,offsetY);
 
-  /* cells */
   cells.forEach(c=>{
-    ctx.fillStyle = probToColor(c.prob);
+    ctx.fillStyle=probToColor(c.prob);
     ctx.fillRect(c.x,c.y,c.dx,c.dy);
   });
 
-  /* borders */
-  ctx.strokeStyle = "rgba(255,255,255,0.6)";
-  ctx.lineWidth = 1/scale;
+  ctx.strokeStyle="black";
+  ctx.lineWidth=1/scale;
 
   ctx.beginPath();
 
@@ -243,11 +292,11 @@ canvas.addEventListener("mousemove", e => {
 
     tooltip.innerHTML =
 `<b>${(hit.prob * 100).toFixed(3)}%</b><br>
-CAPE: ${hit.cape || 0}<br>
-CIN: ${hit.cin || 0}<br>
-SRH: ${hit.hlcy || 0}<br>
-LCL: ${hit.lcl || 0}<br>
-Shear: ${hit.shear || 0}`;
+CAPE: ${hit.cape ?? 0}<br>
+CIN: ${hit.cin ?? 0}<br>
+SRH: ${hit.hlcy ?? 0}<br>
+LCL: ${hit.lcl ?? 0}<br>
+Shear: ${hit.shear ?? 0}`;
 
   } else {
     tooltip.style.display = "none";
@@ -256,35 +305,35 @@ Shear: ${hit.shear || 0}`;
 });
 
 /* ZOOM */
-canvas.addEventListener("wheel", e => {
+canvas.addEventListener("wheel",e=>{
   e.preventDefault();
 
-  const z = e.deltaY < 0 ? 1.15 : 0.87;
+  const z=e.deltaY<0?1.15:0.87;
 
-  offsetX = e.offsetX - z * (e.offsetX - offsetX);
-  offsetY = e.offsetY - z * (e.offsetY - offsetY);
+  offsetX=e.offsetX-z*(e.offsetX-offsetX);
+  offsetY=e.offsetY-z*(e.offsetY-offsetY);
 
-  scale *= z;
+  scale*=z;
   draw();
 });
 
 /* PAN */
-canvas.addEventListener("mousedown", e => {
-  dragging = true;
-  lastX = e.clientX;
-  lastY = e.clientY;
+canvas.addEventListener("mousedown",e=>{
+  dragging=true;
+  lastX=e.clientX;
+  lastY=e.clientY;
 });
 
-window.addEventListener("mouseup", () => dragging = false);
+window.addEventListener("mouseup",()=>dragging=false);
 
-window.addEventListener("mousemove", e => {
-  if (!dragging) return;
+window.addEventListener("mousemove",e=>{
+  if(!dragging) return;
 
-  offsetX += e.clientX - lastX;
-  offsetY += e.clientY - lastY;
+  offsetX+=e.clientX-lastX;
+  offsetY+=e.clientY-lastY;
 
-  lastX = e.clientX;
-  lastY = e.clientY;
+  lastX=e.clientX;
+  lastY=e.clientY;
 
   draw();
 });
