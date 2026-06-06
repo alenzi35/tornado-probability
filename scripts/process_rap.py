@@ -1,111 +1,65 @@
 import os
 import urllib.request
-import pygrib
 import numpy as np
 import json
 import datetime
 import requests
 import zipfile
 import io
+import rasterio
 
 import geopandas as gpd
 from shapely.geometry import box
 from shapely.prepared import prep
-from pyproj import Proj
+from pyproj import CRS
 
 # ================= CONFIG =================
 
 DATA_DIR = "data"
-GRIB_PATH = "data/nbm.grib2"
+GRIB_PATH = "data/nbm.tif"
 OUTPUT_JSON = "map/data/tornado_prob_nbm_lcc.json"
-
-CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("map/data", exist_ok=True)
 
-# ================= TIME =================
+# ================= FILE SOURCE =================
 
-def get_target_cycle():
-    now = datetime.datetime.utcnow()
-    run_time = now - datetime.timedelta(hours=1)
+NBM_URL = "https://noaa-nbm-pds.s3.amazonaws.com/blendv5.0/conus/2026/06/06/1500/spctor4hr/blendv5.0_conus_spctor4hr_2026-06-06T15%3A00_2026-06-06T19%3A00.tif"
 
-    date = run_time.strftime("%Y%m%d")
-    hour = run_time.strftime("%H")
-
-    return date, hour
-
-DATE, HOUR = get_target_cycle()
-
-FCST = "006"  # NBM commonly uses 3h steps (f003, f006, etc.)
-
-print("Target:", DATE, HOUR, "F" + FCST)
+# US Census lower 48 states shapefile
+CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 # ================= DOWNLOAD NBM =================
-
-NBM_URL = f"https://noaa-nbm-grib2-pds.s3.amazonaws.com/blend.{DATE}/{HOUR}/grib2/blend.t{HOUR}z.core.f{FCST}.co.grib2"
-
-print("URL:", NBM_URL)
 
 def url_exists(url):
     r = requests.head(url)
     return r.status_code == 200
+
+print("Checking NBM file...")
 
 if not url_exists(NBM_URL):
     print("NBM file not ready yet. Skipping.")
     exit(0)
 
 urllib.request.urlretrieve(NBM_URL, GRIB_PATH)
-print("Downloaded NBM GRIB2")
+print("Downloaded NBM GeoTIFF")
 
-# ================= LOAD GRIB =================
+# ================= LOAD RASTER =================
 
-grbs = pygrib.open(GRIB_PATH)
+with rasterio.open(GRIB_PATH) as src:
+    prob = src.read(1).astype(float)
+    transform = src.transform
+    crs = src.crs
 
-def pick_torprob(grbs):
+print("Raw mean probability:", np.nanmean(prob))
 
-    for g in grbs:
-        name = getattr(g, "shortName", "").lower()
-        if name == "torprob":
-            return g
-
-        # fallback (NBM inconsistency)
-        if "tor" in name and "prob" in name:
-            return g
-
-    raise RuntimeError("TORPROB not found")
-
-grbs.seek(0)
-tor_msg = pick_torprob(grbs)
-
-# ================= ARRAY =================
-
-prob = np.nan_to_num(tor_msg.values)
-
-# convert to percent if needed
+# normalize if needed
 if np.nanmax(prob) <= 1.0:
     prob = prob * 100.0
 
-print("Mean probability (%):", np.mean(prob))
+print("Current mean probability (%):", np.nanmean(prob))
 
-# ================= GRID =================
-
-lats, lons = tor_msg.latlons()
-params = tor_msg.projparams
-
-proj_lcc = Proj(
-    proj="lcc",
-    lat_1=params["lat_1"],
-    lat_2=params["lat_2"],
-    lat_0=params["lat_0"],
-    lon_0=params["lon_0"],
-    a=params.get("a", 6371229),
-    b=params.get("b", 6371229)
-)
-
-x_vals, y_vals = proj_lcc(lons, lats)
-
-# ================= CONUS MASK =================
+# ================= DOWNLOAD CONUS SHAPE =================
 
 def download_shapefile(url, folder):
     resp = requests.get(url)
@@ -121,15 +75,18 @@ def download_shapefile(url, folder):
 print("Downloading CONUS shapefile...")
 
 states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+
 lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
 
-lower48_lcc = lower48.to_crs(proj_lcc.srs)
-conus_poly = lower48_lcc.unary_union
+# reproject to raster CRS
+lower48 = lower48.to_crs(crs)
+
+conus_poly = lower48.unary_union
 prepared_conus = prep(conus_poly)
 
-# ================= FILTER GRID =================
+# ================= FILTER CELLS =================
 
-print("Filtering grid cells...")
+print("Filtering grid cells to CONUS...")
 
 features = []
 
@@ -138,13 +95,26 @@ rows, cols = prob.shape
 for i in range(rows):
     for j in range(cols):
 
-        x = x_vals[i, j]
-        y = y_vals[i, j]
+        val = prob[i, j]
 
-        dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
-        dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
+        if np.isnan(val):
+            continue
 
-        dx, dy = abs(dx), abs(dy)
+        # convert raster index → spatial coords
+        x, y = rasterio.transform.xy(transform, i, j)
+
+        # approximate cell size
+        if j < cols - 1:
+            x2, _ = rasterio.transform.xy(transform, i, j + 1)
+            dx = abs(x2 - x)
+        else:
+            dx = 0
+
+        if i < rows - 1:
+            _, y2 = rasterio.transform.xy(transform, i + 1, j)
+            dy = abs(y2 - y)
+        else:
+            dy = 0
 
         cell_box = box(x, y, x + dx, y + dy)
 
@@ -155,19 +125,25 @@ for i in range(rows):
                 "y": float(y),
                 "dx": float(dx),
                 "dy": float(dy),
-                "prob": float(prob[i, j])
+                "prob": float(val)
             })
 
 print(f"Kept {len(features)} CONUS cells")
 
 # ================= OUTPUT =================
 
+valid_start = "15:00"
+valid_end = "19:00"
+
 output = {
-    "run_date": DATE,
-    "run_hour": HOUR,
-    "forecast": "F" + FCST,
+    "run_date": "2026-06-06",
+    "run_hour": "15",
+    "forecast": "SPCTOR4HR",
+    "valid": f"{valid_start}-{valid_end} UTC",
     "generated": datetime.datetime.utcnow().isoformat() + "Z",
-    "projection": params,
+    "projection": {
+        "crs": str(crs)
+    },
     "features": features
 }
 
