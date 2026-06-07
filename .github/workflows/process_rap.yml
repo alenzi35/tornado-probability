@@ -48,6 +48,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install \
+            rasterio \
             pygrib \
             numpy \
             xarray \
