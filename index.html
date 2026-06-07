@@ -216,7 +216,32 @@ fetch("map/data/tornado_prob_lcc.json")
   .then(r => r.json())
   .then(data => {
 
-    cells = data.features;
+    const width = data.width;
+const height = data.height;
+const [a,b,c,d,e,f] = data.transform;
+
+cells = [];
+
+for (let i = 0; i < height; i++) {
+  for (let j = 0; j < width; j++) {
+
+    const idx = i * width + j;
+    const p = data.probabilities[idx];
+
+    if (p === null) continue;
+
+    const x = a * j + c;
+    const y = e * i + f;
+
+    cells.push({
+      x,
+      y,
+      dx: Math.abs(a),
+      dy: Math.abs(e),
+      prob: p
+    });
+  }
+}
 
     const runDate = data.run_date;
     const runHour = parseInt(data.run_hour,10);
