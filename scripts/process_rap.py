@@ -1,122 +1,96 @@
-import os
-import urllib.request
-import numpy as np
-import json
-import datetime
-import requests
 import rasterio
+import numpy as np
+import matplotlib.pyplot as plt
 
-# ================= CONFIG =================
-
-DATA_DIR = "data"
-RASTER_PATH = "data/nbm.tif"
-OUTPUT_JSON = "map/data/tornado_prob_nbm_lcc.json"
-
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs("map/data", exist_ok=True)
-
-NBM_URL = "https://noaa-nbm-pds.s3.amazonaws.com/blendv5.0/conus/2026/06/06/1500/spctor4hr/blendv5.0_conus_spctor4hr_2026-06-06T15%3A00_2026-06-06T19%3A00.tif"
+PATH = "data/nbm.tif"
 
 
-# ================= DOWNLOAD =================
+print("\n==============================")
+print("NBM GEO TIFF FULL INSPECTION")
+print("==============================\n")
 
-def url_exists(url):
-    return requests.head(url).status_code == 200
+with rasterio.open(PATH) as src:
 
-print("Checking NBM file...")
+    # ---------------- BASIC INFO ----------------
+    print("Driver:", src.driver)
+    print("CRS:", src.crs)
+    print("Width:", src.width)
+    print("Height:", src.height)
+    print("Bands:", src.count)
+    print("Dtypes:", src.dtypes)
+    print("\n------------------------------\n")
 
-if not url_exists(NBM_URL):
-    print("NBM not ready")
-    exit(0)
-
-urllib.request.urlretrieve(NBM_URL, RASTER_PATH)
-print("Downloaded NBM")
-
-
-# ================= LOAD + AUTO BAND DETECTION =================
-
-with rasterio.open(RASTER_PATH) as src:
-
-    print("Raster bands:", src.count)
-
+    # ---------------- BAND ANALYSIS ----------------
     best_band = None
-    best_range = 0
+    best_range = -1
 
-    # pick band with highest variability (this fixes your issue)
     for i in range(1, src.count + 1):
-        arr = src.read(i).astype(float)
 
-        arr_clean = arr[~np.isnan(arr)]
-        if len(arr_clean) == 0:
+        band = src.read(i).astype(float)
+
+        band_clean = band[~np.isnan(band)]
+
+        if len(band_clean) == 0:
             continue
 
-        r = np.nanmax(arr_clean) - np.nanmin(arr_clean)
+        mn = np.nanmin(band_clean)
+        mx = np.nanmax(band_clean)
+        mean = np.nanmean(band_clean)
+        unique_sample = len(np.unique(band_clean[:10000]))
 
-        print(f"Band {i} min/max:", np.nanmin(arr_clean), np.nanmax(arr_clean))
+        rng = mx - mn
 
-        if r > best_range:
-            best_range = r
+        print(f"Band {i}")
+        print("  min:", mn)
+        print("  max:", mx)
+        print("  mean:", mean)
+        print("  sample unique count:", unique_sample)
+        print("  range:", rng)
+        print("------------------------------")
+
+        if rng > best_range:
+            best_range = rng
             best_band = i
 
-    print("Selected band:", best_band)
+    print("\nSelected most informative band:", best_band)
 
-    prob = src.read(best_band).astype(float)
-    transform = src.transform
-    crs = src.crs
+    # ---------------- LOAD BEST BAND ----------------
+    data = src.read(best_band).astype(float)
 
+# ---------------- GLOBAL STATS ----------------
 
-# ================= CLEAN DATA =================
+flat = data.flatten()
+flat = flat[~np.isnan(flat)]
 
-prob = np.nan_to_num(prob)
+print("\n==============================")
+print("GLOBAL STATISTICS")
+print("==============================")
 
-mx = np.nanmax(prob)
+print("Min:", np.min(flat))
+print("Max:", np.max(flat))
+print("Mean:", np.mean(flat))
+print("Median:", np.median(flat))
+print("Unique values (sample):", len(np.unique(flat[:200000])))
 
-print("FINAL RAW RANGE:", np.nanmin(prob), mx)
+# ---------------- TOP VALUES ----------------
 
-# normalize safely
-if mx <= 1.5:
-    prob *= 100.0
+print("\nTop hotspots:")
+top_idx = np.dstack(np.unravel_index(np.argsort(flat)[-10:], data.shape))[0]
+print(top_idx)
 
-rows, cols = prob.shape
+# ---------------- HISTOGRAM ----------------
 
-dx = abs(transform.a)
-dy = abs(transform.e)
+plt.figure()
+plt.hist(flat, bins=60)
+plt.title("NBM Value Distribution")
+plt.xlabel("Value")
+plt.ylabel("Frequency")
+plt.show()
 
-origin_x = transform.c
-origin_y = transform.f
+# ---------------- SPATIAL SNAPSHOT ----------------
 
-flat = prob.flatten()
-
-
-# ================= OUTPUT =================
-
-output = {
-    "run_date": "2026-06-06",
-    "run_hour": "15",
-    "forecast": "SPCTOR4HR",
-    "generated": datetime.datetime.utcnow().isoformat() + "Z",
-
-    "width": cols,
-    "height": rows,
-
-    "dx": dx,
-    "dy": dy,
-
-    "transform": [origin_x, origin_y],
-
-    "crs": str(crs),
-
-    "probabilities": [
-        None if np.isnan(v) else round(float(v), 2)
-        for v in flat
-    ]
-}
-
-
-# ================= SAVE =================
-
-with open(OUTPUT_JSON, "w") as f:
-    json.dump(output, f, separators=(",", ":"))
-
-print("Saved:", OUTPUT_JSON)
-print("DONE")
+plt.figure()
+plt.imshow(data, cmap="turbo")
+plt.title("NBM Spatial Field (best band)")
+plt.colorbar()
+plt.show()
