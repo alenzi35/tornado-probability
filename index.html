@@ -6,121 +6,87 @@
 <title>Tornado Probability Map</title>
 
 <style>
-  html {
-    scroll-behavior: smooth;
-  }
+html { scroll-behavior: smooth; }
 
-  body {
-    margin: 0;
-    background: #111;
-    font-family: sans-serif;
-  }
+body {
+  margin: 0;
+  background: #111;
+  font-family: sans-serif;
+}
 
-  /* NAVBAR */
+/* NAVBAR */
+header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 60px;
 
-  header {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 
-    height: 60px;
+  padding: 0 24px;
+  background: rgba(0,0,0,0.25);
+  backdrop-filter: blur(8px);
 
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  z-index: 1000;
+  box-sizing: border-box;
+}
 
-    padding: 0 24px;
+.logo {
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+}
 
-    background: rgba(0,0,0,0.25);
-    backdrop-filter: blur(8px);
+nav {
+  display: flex;
+  gap: 24px;
+}
 
-    z-index: 1000;
-    box-sizing: border-box;
-  }
+nav a {
+  color: white;
+  text-decoration: none;
+  font-size: 14px;
+  opacity: 0.9;
+}
 
-  .logo {
-    color: white;
-    font-size: 16px;
-    font-weight: 600;
-  }
+nav a:hover { opacity: 1; }
 
-  nav {
-    display: flex;
-    gap: 24px;
-  }
+/* MAP */
+#hero {
+  position: relative;
+  height: 100vh;
+  overflow: hidden;
+}
 
-  nav a {
-    color: white;
-    text-decoration: none;
-    font-size: 14px;
-    opacity: 0.9;
-  }
+canvas { display: block; }
 
-  nav a:hover {
-    opacity: 1;
-  }
+/* TOOLTIP */
+#tooltip {
+  position: absolute;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.85);
+  color: white;
+  border-radius: 5px;
+  pointer-events: none;
+  display: none;
+  font-size: 13px;
+  white-space: nowrap;
+  z-index: 100;
+}
 
-  /* MAP SECTION */
-
-  #hero {
-    position: relative;
-    height: 100vh;
-    overflow: hidden;
-  }
-
-  canvas {
-    display: block;
-  }
-
-  /* ORIGINAL TOOLTIP */
-
-  #tooltip {
-    position: absolute;
-    padding: 6px 10px;
-    background: rgba(0,0,0,0.85);
-    color: white;
-    border-radius: 5px;
-    pointer-events: none;
-    display: none;
-    font-family: sans-serif;
-    font-size: 13px;
-    white-space: nowrap;
-    z-index: 100;
-  }
-
-  /* ORIGINAL FORECAST BOX */
-
-  #forecastInfo {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    padding: 8px 12px;
-    background: rgba(0,0,0,0.7);
-    color: white;
-    font-family: sans-serif;
-    font-size: 13px;
-    border-radius: 6px;
-    z-index: 10;
-  }
-
-  /* CONTENT */
-
-  .content {
-    background: white;
-    color: #222;
-    padding: 80px 10%;
-    line-height: 1.7;
-  }
-
-  .content h2 {
-    margin-top: 0;
-    font-size: 32px;
-  }
-
-  .content p {
-    max-width: 900px;
-  }
+/* INFO BOX */
+#forecastInfo {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  font-size: 13px;
+  border-radius: 6px;
+  z-index: 10;
+}
 </style>
 </head>
 
@@ -128,7 +94,6 @@
 
 <header>
   <div class="logo">Tornado Probability Mapping System</div>
-
   <nav>
     <a href="#about">About</a>
     <a href="#methodology">Methodology</a>
@@ -137,41 +102,9 @@
 </header>
 
 <section id="hero">
-
   <canvas id="mapCanvas"></canvas>
-
   <div id="tooltip"></div>
-
-  <div id="forecastInfo">
-    Loading forecast…
-  </div>
-
-</section>
-
-<section id="about" class="content">
-  <h2>About</h2>
-
-  <p>
-    Replace this text with information about your tornado probability model,
-    forecasting philosophy, objectives, and intended use.
-  </p>
-</section>
-
-<section id="methodology" class="content">
-  <h2>Methodology</h2>
-
-  <p>
-    Replace this section with CAPE, CIN, helicity, shear, LCL and probability
-    generation details.
-  </p>
-</section>
-
-<section id="faq" class="content">
-  <h2>FAQ</h2>
-
-  <p>
-    Add frequently asked questions here.
-  </p>
+  <div id="forecastInfo">Loading forecast…</div>
 </section>
 
 <script>
@@ -192,88 +125,80 @@ let cells = [];
 let borders = [];
 
 function resizeCanvas() {
-
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-
-  if (cells.length) {
-    draw();
-  }
+  if (cells.length) draw();
 }
 
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
+/* ================= BORDERS ================= */
+
 fetch("map/data/borders_lcc.json")
   .then(r => r.json())
   .then(data => {
     borders = data.features;
-    fitView();
     draw();
   });
 
-fetch("map/data/tornado_prob_lcc.json")
+/* ================= NBM DATA ================= */
+
+fetch("map/data/tornado_prob_nbm_lcc.json")
   .then(r => r.json())
   .then(data => {
 
     const width = data.width;
-const height = data.height;
-const [a,b,c,d,e,f] = data.transform;
+    const height = data.height;
+    const [a,b,c,d,e,f] = data.transform;
+    const probs = data.probabilities;
 
-cells = [];
+    cells = [];
 
-for (let i = 0; i < height; i++) {
-  for (let j = 0; j < width; j++) {
+    for (let i = 0; i < height; i++) {
+      for (let j = 0; j < width; j++) {
 
-    const idx = i * width + j;
-    const p = data.probabilities[idx];
+        const idx = i * width + j;
+        const p = probs[idx];
 
-    if (p === null) continue;
+        if (p === null || p === undefined) continue;
 
-    const x = a * j + c;
-    const y = e * i + f;
+        const x = a * j + c;
+        const y = e * i + f;
 
-    cells.push({
-      x,
-      y,
-      dx: Math.abs(a),
-      dy: Math.abs(e),
-      prob: p
-    });
-  }
-}
-
-    const runDate = data.run_date;
-    const runHour = parseInt(data.run_hour,10);
-    const fcst = data.forecast;
-
-    const fcstHour = runHour + 1;
-    const validStart = fcstHour % 24;
-    const validEnd = (fcstHour + 1) % 24;
-
-    function pad(n){
-      return n.toString().padStart(2,"0");
+        cells.push({
+          x,
+          y,
+          dx: Math.abs(a),
+          dy: Math.abs(e),
+          prob: p
+        });
+      }
     }
 
+    const pad = n => n.toString().padStart(2,"0");
+
     infoBox.innerHTML =
-      `Run: ${runDate} ${pad(runHour)}Z (${fcst})<br>
-       Valid: ${pad(validStart)}:00-${pad(validEnd)}:00 UTC`;
+      `Run: ${data.run_date} ${pad(data.run_hour)}Z (${data.forecast})<br>
+       Generated: ${data.generated}`;
 
     fitView();
     draw();
   });
 
-function probToColor(p) {
+/* ================= COLOR ================= */
 
-  if (p < 0.001) return 'white';
-  else if (p <= 0.01) return 'green';
-  else if (p <= 0.02) return 'brown';
+function probToColor(p) {
+  if (p < 0.01) return 'white';
+  else if (p <= 1) return 'green';
+  else if (p <= 2) return 'brown';
   else return 'yellow';
 }
 
-function fitView() {
+/* ================= VIEW ================= */
 
-  if (cells.length === 0) return;
+function fitView() {
+  if (!cells.length) return;
 
   let minX=Infinity,maxX=-Infinity;
   let minY=Infinity,maxY=-Infinity;
@@ -303,20 +228,21 @@ function fitView() {
   offsetY=canvas.height/2+(minY+ry/2)*scale;
 }
 
-function draw(){
+/* ================= DRAW ================= */
 
+function draw() {
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
   ctx.setTransform(scale,0,0,-scale,offsetX,offsetY);
 
   cells.forEach(c=>{
-    ctx.fillStyle=probToColor(c.prob);
+    ctx.fillStyle = probToColor(c.prob);
     ctx.fillRect(c.x,c.y,c.dx,c.dy);
   });
 
-  ctx.strokeStyle="black";
-  ctx.lineWidth=1/scale;
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 1/scale;
 
   ctx.beginPath();
 
@@ -329,6 +255,8 @@ function draw(){
 
   ctx.stroke();
 }
+
+/* ================= INTERACTION ================= */
 
 function screenToLCC(px,py){
   return {
@@ -344,7 +272,6 @@ canvas.addEventListener("mousemove", e => {
   let hit = null;
 
   for (const c of cells) {
-
     if (
       x >= c.x &&
       x <= c.x + c.dx &&
@@ -357,43 +284,32 @@ canvas.addEventListener("mousemove", e => {
   }
 
   if (hit) {
-
     tooltip.style.display = "block";
     tooltip.style.left = (e.pageX + 12) + "px";
     tooltip.style.top = (e.pageY + 12) + "px";
 
     tooltip.innerHTML =
 `<b>Tornado Probability</b><br>
-${(hit.prob * 100).toFixed(3)} %<br><br>
-
-CAPE: ${hit.cape ? hit.cape.toFixed(0) : "0"} J/kg<br>
-CIN: ${hit.cin ? hit.cin.toFixed(0) : "-0"} J/kg<br>
-SRH (0-1km): ${hit.hlcy ? hit.hlcy.toFixed(0) : "0"} m²/s²<br>
-LCL: ${hit.lcl ? hit.lcl.toFixed(0) : "0"} m<br>
-0–6 km Shear: ${hit.shear ? hit.shear.toFixed(1) : "0.0"} m/s`;
-
+${hit.prob.toFixed(2)} %`;
   } else {
-
     tooltip.style.display = "none";
   }
 });
 
 canvas.addEventListener("wheel",e=>{
-
   e.preventDefault();
 
-  const z=e.deltaY<0?1.15:0.87;
+  const z = e.deltaY < 0 ? 1.15 : 0.87;
 
-  offsetX=e.offsetX-z*(e.offsetX-offsetX);
-  offsetY=e.offsetY-z*(e.offsetY-offsetY);
+  offsetX = e.offsetX - z*(e.offsetX-offsetX);
+  offsetY = e.offsetY - z*(e.offsetY-offsetY);
 
-  scale*=z;
+  scale *= z;
 
   draw();
 });
 
 canvas.addEventListener("mousedown",e=>{
-
   dragging=true;
   lastX=e.clientX;
   lastY=e.clientY;
@@ -402,11 +318,10 @@ canvas.addEventListener("mousedown",e=>{
 window.addEventListener("mouseup",()=>dragging=false);
 
 window.addEventListener("mousemove",e=>{
-
   if(!dragging) return;
 
-  offsetX+=e.clientX-lastX;
-  offsetY+=e.clientY-lastY;
+  offsetX += e.clientX-lastX;
+  offsetY += e.clientY-lastY;
 
   lastX=e.clientX;
   lastY=e.clientY;
