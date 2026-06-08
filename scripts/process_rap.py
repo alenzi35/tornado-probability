@@ -1,33 +1,53 @@
-import rasterio
+import os
+import urllib.request
 import numpy as np
+import rasterio
 import matplotlib.pyplot as plt
 
-PATH = "data/nbm.tif"
+# ================= CONFIG =================
 
+BASE_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(BASE_DIR, "..", "data")
+PATH = os.path.join(DATA_DIR, "nbm.tif")
 
-print("\n==============================")
-print("NBM GEO TIFF FULL INSPECTION")
-print("==============================\n")
+URL = "https://noaa-nbm-pds.s3.amazonaws.com/blendv5.0/conus/2026/06/06/1500/spctor4hr/blendv5.0_conus_spctor4hr_2026-06-06T15%3A00_2026-06-06T19%3A00.tif"
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ================= DOWNLOAD IF NEEDED =================
+
+if not os.path.exists(PATH):
+    print("Downloading NBM file...")
+    urllib.request.urlretrieve(URL, PATH)
+    print("Download complete.")
+else:
+    print("NBM file already exists.")
+
+# ================= OPEN RASTER =================
 
 with rasterio.open(PATH) as src:
 
-    # ---------------- BASIC INFO ----------------
+    print("\n==============================")
+    print("NBM FILE INSPECTION")
+    print("==============================\n")
+
     print("Driver:", src.driver)
     print("CRS:", src.crs)
     print("Width:", src.width)
     print("Height:", src.height)
     print("Bands:", src.count)
     print("Dtypes:", src.dtypes)
+
     print("\n------------------------------\n")
 
-    # ---------------- BAND ANALYSIS ----------------
     best_band = None
     best_range = -1
+
+    # ================= BAND ANALYSIS =================
 
     for i in range(1, src.count + 1):
 
         band = src.read(i).astype(float)
-
         band_clean = band[~np.isnan(band)]
 
         if len(band_clean) == 0:
@@ -36,15 +56,12 @@ with rasterio.open(PATH) as src:
         mn = np.nanmin(band_clean)
         mx = np.nanmax(band_clean)
         mean = np.nanmean(band_clean)
-        unique_sample = len(np.unique(band_clean[:10000]))
-
         rng = mx - mn
 
         print(f"Band {i}")
         print("  min:", mn)
         print("  max:", mx)
         print("  mean:", mean)
-        print("  sample unique count:", unique_sample)
         print("  range:", rng)
         print("------------------------------")
 
@@ -52,33 +69,26 @@ with rasterio.open(PATH) as src:
             best_range = rng
             best_band = i
 
-    print("\nSelected most informative band:", best_band)
+    print("\nSelected band:", best_band)
 
-    # ---------------- LOAD BEST BAND ----------------
     data = src.read(best_band).astype(float)
 
-# ---------------- GLOBAL STATS ----------------
+# ================= CLEAN FLATTEN =================
 
 flat = data.flatten()
 flat = flat[~np.isnan(flat)]
 
 print("\n==============================")
-print("GLOBAL STATISTICS")
+print("GLOBAL STATS")
 print("==============================")
 
 print("Min:", np.min(flat))
 print("Max:", np.max(flat))
 print("Mean:", np.mean(flat))
 print("Median:", np.median(flat))
-print("Unique values (sample):", len(np.unique(flat[:200000])))
+print("Unique sample:", len(np.unique(flat[:200000])))
 
-# ---------------- TOP VALUES ----------------
-
-print("\nTop hotspots:")
-top_idx = np.dstack(np.unravel_index(np.argsort(flat)[-10:], data.shape))[0]
-print(top_idx)
-
-# ---------------- HISTOGRAM ----------------
+# ================= HISTOGRAM =================
 
 plt.figure()
 plt.hist(flat, bins=60)
@@ -87,10 +97,10 @@ plt.xlabel("Value")
 plt.ylabel("Frequency")
 plt.show()
 
-# ---------------- SPATIAL SNAPSHOT ----------------
+# ================= SPATIAL VIEW =================
 
 plt.figure()
 plt.imshow(data, cmap="turbo")
-plt.title("NBM Spatial Field (best band)")
+plt.title("NBM Selected Band Field")
 plt.colorbar()
 plt.show()
