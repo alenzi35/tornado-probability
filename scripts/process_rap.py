@@ -1,106 +1,296 @@
 import os
 import urllib.request
+import pygrib
 import numpy as np
-import rasterio
-import matplotlib.pyplot as plt
+import json
+import datetime
+import requests
+import zipfile
+import io
+
+import geopandas as gpd
+from shapely.geometry import box
+from shapely.prepared import prep
+from pyproj import Proj
 
 # ================= CONFIG =================
 
-BASE_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(BASE_DIR, "..", "data")
-PATH = os.path.join(DATA_DIR, "nbm.tif")
+DATA_DIR = "data"
+GRIB_PATH = "data/rap.grib2"
+OUTPUT_JSON = "map/data/tornado_prob_lcc.json"
 
-URL = "https://noaa-nbm-pds.s3.amazonaws.com/blendv5.0/conus/2026/06/06/1500/spctor4hr/blendv5.0_conus_spctor4hr_2026-06-06T15%3A00_2026-06-06T19%3A00.tif"
+INTERCEPT = -24.35
+
+COEFFS = {
+    "cape": 0.0007945647876223339,
+    "cin": 0.021372469094865523,
+    "hlcy": 0.022311258467003214,
+    "lcl": -0.0012882944616761658,
+    "shear": 0.2774384553299831
+}
+
+# ================= OPTIONAL CUSTOM DATE/TIME =================
+
+CUSTOM_DATE = 20220718   # e.g. 20250620
+CUSTOM_HOUR = 0 # e.g. 23
+
+# US Census lower 48 states 5m shapefile
+CONUS_SHAPE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_state_5m.zip"
 
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs("map/data", exist_ok=True)
 
-# ================= DOWNLOAD IF NEEDED =================
+# ================= TIME LOGIC =================
 
-if not os.path.exists(PATH):
-    print("Downloading NBM file...")
-    urllib.request.urlretrieve(URL, PATH)
-    print("Download complete.")
-else:
-    print("NBM file already exists.")
+def get_target_cycle():
 
-# ================= OPEN RASTER =================
+    # --- optional override ---
+    if CUSTOM_DATE is not None and CUSTOM_HOUR is not None:
+        return str(CUSTOM_DATE), f"{int(CUSTOM_HOUR):02d}"
 
-with rasterio.open(PATH) as src:
+    # --- automatic RAP cycle ---
+    now = datetime.datetime.utcnow()
+    run_time = now - datetime.timedelta(hours=1)
 
-    print("\n==============================")
-    print("NBM FILE INSPECTION")
-    print("==============================\n")
+    date = run_time.strftime("%Y%m%d")
+    hour = run_time.strftime("%H")
 
-    print("Driver:", src.driver)
-    print("CRS:", src.crs)
-    print("Width:", src.width)
-    print("Height:", src.height)
-    print("Bands:", src.count)
-    print("Dtypes:", src.dtypes)
+    return date, hour
 
-    print("\n------------------------------\n")
 
-    best_band = None
-    best_range = -1
+DATE, HOUR = get_target_cycle()
 
-    # ================= BAND ANALYSIS =================
+FCST = "01"
 
-    for i in range(1, src.count + 1):
+print("Target:", DATE, HOUR, "F01")
 
-        band = src.read(i).astype(float)
-        band_clean = band[~np.isnan(band)]
+# ================= DOWNLOAD RAP =================
 
-        if len(band_clean) == 0:
+RAP_URL = f"https://noaa-rap-pds.s3.amazonaws.com/rap.{DATE}/rap.t{HOUR}z.awip32f{FCST}.grib2"
+
+print("URL:", RAP_URL)
+
+def url_exists(url):
+    r = requests.head(url)
+    return r.status_code == 200
+
+if not url_exists(RAP_URL):
+    print("RAP file not ready yet. Skipping.")
+    exit(0)
+
+urllib.request.urlretrieve(RAP_URL, GRIB_PATH)
+print("Downloaded RAP GRIB2")
+
+# ================= LOAD GRIB =================
+
+grbs = pygrib.open(GRIB_PATH)
+
+def pick_var(grbs, shortname, typeOfLevel=None, bottom=None, top=None, level=None):
+
+    for g in grbs:
+
+        if g.shortName.lower() != shortname.lower():
             continue
 
-        mn = np.nanmin(band_clean)
-        mx = np.nanmax(band_clean)
-        mean = np.nanmean(band_clean)
-        rng = mx - mn
+        if typeOfLevel and g.typeOfLevel != typeOfLevel:
+            continue
 
-        print(f"Band {i}")
-        print("  min:", mn)
-        print("  max:", mx)
-        print("  mean:", mean)
-        print("  range:", rng)
-        print("------------------------------")
+        if level is not None and hasattr(g, "level"):
+            if abs(g.level - level) > 0.1:
+                continue
 
-        if rng > best_range:
-            best_range = rng
-            best_band = i
+        if bottom is not None and top is not None:
+            if not hasattr(g, "bottomLevel"):
+                continue
+            if not (
+                abs(g.bottomLevel - bottom) < 1 and
+                abs(g.topLevel - top) < 1
+            ):
+                continue
 
-    print("\nSelected band:", best_band)
+        return g
 
-    data = src.read(best_band).astype(float)
+    raise RuntimeError(f"{shortname} not found")
 
-# ================= CLEAN FLATTEN =================
+# ================= EXTRACT VARIABLES =================
 
-flat = data.flatten()
-flat = flat[~np.isnan(flat)]
+grbs.seek(0)
+cape_msg = pick_var(grbs, "cape", "pressureFromGroundLayer", 0, 9000)
 
-print("\n==============================")
-print("GLOBAL STATS")
-print("==============================")
+grbs.seek(0)
+cin_msg = pick_var(grbs, "cin", "pressureFromGroundLayer", 0, 9000)
 
-print("Min:", np.min(flat))
-print("Max:", np.max(flat))
-print("Mean:", np.mean(flat))
-print("Median:", np.median(flat))
-print("Unique sample:", len(np.unique(flat[:200000])))
+grbs.seek(0)
+hlcy_msg = pick_var(grbs, "hlcy", "heightAboveGroundLayer", 0, 1000)
 
-# ================= HISTOGRAM =================
+grbs.seek(0)
+t2m_msg = pick_var(grbs, "2t", "heightAboveGround", level=2)
 
-plt.figure()
-plt.hist(flat, bins=60)
-plt.title("NBM Value Distribution")
-plt.xlabel("Value")
-plt.ylabel("Frequency")
-plt.show()
+grbs.seek(0)
+d2m_msg = pick_var(grbs, "2d", "heightAboveGround", level=2)
 
-# ================= SPATIAL VIEW =================
+grbs.seek(0)
+u10_msg = pick_var(grbs, "10u", "heightAboveGround", level=10)
 
-plt.figure()
-plt.imshow(data, cmap="turbo")
-plt.title("NBM Selected Band Field")
-plt.colorbar()
-plt.show()
+grbs.seek(0)
+v10_msg = pick_var(grbs, "10v", "heightAboveGround", level=10)
+
+grbs.seek(0)
+u500_msg = pick_var(grbs, "u", "isobaricInhPa", level=500)
+
+grbs.seek(0)
+v500_msg = pick_var(grbs, "v", "isobaricInhPa", level=500)
+
+# ================= ARRAYS =================
+
+cape = np.nan_to_num(cape_msg.values)
+cin = np.nan_to_num(cin_msg.values)
+hlcy = np.nan_to_num(hlcy_msg.values)
+
+t2m = np.nan_to_num(t2m_msg.values)
+d2m = np.nan_to_num(d2m_msg.values)
+
+u10 = np.nan_to_num(u10_msg.values)
+v10 = np.nan_to_num(v10_msg.values)
+
+u500 = np.nan_to_num(u500_msg.values)
+v500 = np.nan_to_num(v500_msg.values)
+
+# ================= DERIVED FEATURES =================
+
+lcl = (t2m - d2m) * 125
+
+shear = np.sqrt(
+    (u500 - u10)**2 +
+    (v500 - v10)**2
+)
+
+# ================= GRID =================
+
+lats, lons = cape_msg.latlons()
+params = cape_msg.projparams
+
+proj_lcc = Proj(
+    proj="lcc",
+    lat_1=params["lat_1"],
+    lat_2=params["lat_2"],
+    lat_0=params["lat_0"],
+    lon_0=params["lon_0"],
+    a=params.get("a", 6371229),
+    b=params.get("b", 6371229)
+)
+
+x_vals, y_vals = proj_lcc(lons, lats)
+
+# ================= CALC PROB =================
+
+linear = (
+    INTERCEPT
+    + COEFFS["cape"] * cape
+    + COEFFS["cin"] * cin
+    + COEFFS["hlcy"] * hlcy
+    + COEFFS["lcl"] * lcl
+    + COEFFS["shear"] * shear
+)
+
+prob = 1 / (1 + np.exp(-linear))
+
+print("Current mean probability (decimal):", np.mean(prob))
+print("Current mean probability (%):", np.mean(prob) * 100)
+
+# ================= DOWNLOAD CONUS SHAPE =================
+
+def download_shapefile(url, folder):
+    resp = requests.get(url)
+    resp.raise_for_status()
+
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    z.extractall(folder)
+
+    shp_file = [f for f in z.namelist() if f.endswith(".shp")][0]
+
+    return gpd.read_file(f"{folder}/{shp_file}")
+
+print("Downloading CONUS shapefile...")
+
+states_gdf = download_shapefile(CONUS_SHAPE_URL, "tmp_conus")
+
+lower48 = states_gdf[~states_gdf["STUSPS"].isin(["AK", "HI", "PR"])]
+
+lower48_lcc = lower48.to_crs(proj_lcc.srs)
+
+conus_poly = lower48_lcc.unary_union
+prepared_conus = prep(conus_poly)
+
+# ================= FILTER CELLS =================
+
+print("Filtering grid cells to CONUS...")
+
+features = []
+
+rows, cols = prob.shape
+
+for i in range(rows):
+    for j in range(cols):
+
+        x = x_vals[i, j]
+        y = y_vals[i, j]
+
+        dx = x_vals[i, j+1] - x if j < cols-1 else x - x_vals[i, j-1]
+        dy = y_vals[i+1, j] - y if i < rows-1 else y - y_vals[i-1, j]
+
+        dx, dy = abs(dx), abs(dy)
+
+        cell_box = box(x, y, x + dx, y + dy)
+
+        if prepared_conus.intersects(cell_box):
+
+            features.append({
+                "x": float(x),
+                "y": float(y),
+                "dx": float(dx),
+                "dy": float(dy),
+
+                "prob": float(prob[i, j]),
+
+                "cape": float(cape[i, j]),
+                "cin": float(cin[i, j]),
+                "hlcy": float(hlcy[i, j]),
+
+                "lcl": float(lcl[i, j]),
+                "shear": float(shear[i, j])
+            })
+
+print(f"Kept {len(features)} cells inside or touching CONUS.")
+
+# ================= OUTPUT =================
+
+valid_start = f"{int(HOUR):02d}:00"
+valid_end = f"{(int(HOUR)+1)%24:02d}:00"
+
+output = {
+    "run_date": DATE,
+    "run_hour": HOUR,
+    "forecast": "F01",
+    "valid": f"{valid_start}-{valid_end} UTC",
+    "generated": datetime.datetime.utcnow().isoformat() + "Z",
+    "projection": params,
+    "features": features
+}
+
+with open(OUTPUT_JSON, "w") as f:
+    json.dump(output, f)
+
+print("Saved:", OUTPUT_JSON)
+print("DONE.")
+
+Binary exceedance and not ML product, continue RAP development
+
+0xB943E4542e567991c2e605cc059Fe7339C0A261C RECEIVE STABLE
+
+bc1qpy5ew74uapwrdefs4hakzh4049httam32qs9f0 MY ADDRESS
+bc1q6gm82z8pw8yazqts8r4kvyuu6g0gsderu0xttm SEND BTC
+Q2S68V LOAN
+
+Near field communication sensors idea
+Augur and polymarket
