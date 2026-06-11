@@ -283,14 +283,3 @@ with open(OUTPUT_JSON, "w") as f:
 
 print("Saved:", OUTPUT_JSON)
 print("DONE.")
-
-Binary exceedance and not ML product, continue RAP development
-
-0xB943E4542e567991c2e605cc059Fe7339C0A261C RECEIVE STABLE
-
-bc1qpy5ew74uapwrdefs4hakzh4049httam32qs9f0 MY ADDRESS
-bc1q6gm82z8pw8yazqts8r4kvyuu6g0gsderu0xttm SEND BTC
-Q2S68V LOAN
-
-Near field communication sensors idea
-Augur and polymarket
